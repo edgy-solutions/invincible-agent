@@ -116,6 +116,8 @@ def route(monkeypatch):
         body = {"identifier": nid, "entitled_domains": list(domains)}
         if user_email is not None:
             body["user_email"] = user_email
+        from tests._helpers.verified_caller import install
+        install(monkeypatch, mod, user_email or "", list(domains))  # the VERIFIED caller
         r = TestClient(mod.app).post("/resolve_instance", json=body)
         assert r.status_code == 200, r.text
         return [c["instance_id"] for c in r.json()["candidates"]]

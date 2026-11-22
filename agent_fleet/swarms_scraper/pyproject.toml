@@ -6,7 +6,7 @@ dependencies = [
     # Mesh membership package — transport auth (the app dependency) + the ONE general
     # mint. PINNED TO A TAG: this package governs fleet auth, so a floating ref would let
     # one SDK commit change every engine's security behaviour at rebuild.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.20",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.26",
     "fastapi",
     "uvicorn[standard]",
     "pydantic",
@@ -14,7 +14,7 @@ dependencies = [
     "litellm",
     "baml-py==0.219.0",
     "python-dotenv",
-    "langfuse",
+    "langfuse<5",
 ]
 
 [build-system]

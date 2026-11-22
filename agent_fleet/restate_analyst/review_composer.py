@@ -100,8 +100,12 @@ def resolve_subject_via_engine_o(mpn: str, *, on_behalf_of: str = "",
     error — it routes to the re-link path in the driver.
 
     ``on_behalf_of`` is the PERSON this lookup runs for (ruling (a), 2026-10-10: a service lookup runs
-    on behalf of the task's requesting person; for a review, the ingest's dropper). It is sent as the
-    caller (`user_email`), with ``entitled_domains`` EMPTY: the dropper sees their own drop with no
+    on behalf of the task's requesting person; for a review, the ingest's dropper). This is a DECLARED
+    DELEGATION (architect 11-19): this process authenticates as itself (``svc:engine-a``) and states
+    the person in ``on_behalf_of``. Engine O honours it only with its ``door: engine-o`` row for
+    ``svc:engine-a`` (policy/gateway_delegates.yaml); without the row, engine O binds ``svc:engine-a``
+    itself and the person's drop stays unresolved. It is also sent as `user_email`, with
+    ``entitled_domains`` EMPTY: the dropper sees their own drop with no
     domain at all, and this process holds no domains of theirs to send. A domains list is never an
     entitlement, so none is invented here. Blank = no person: engine-o answers seeded content only."""
     # svc:engine-a — this process's own identity, named HERE. THE SITE THAT STAYED INVISIBLE:
@@ -109,7 +113,13 @@ def resolve_subject_via_engine_o(mpn: str, *, on_behalf_of: str = "",
     # missed because the enumeration that found it was scoped to registration callers.
     resp = requests.post(
         f"{engine_o_url}/resolve_instance",
-        json={"identifier": mpn, "user_email": on_behalf_of or "", "entitled_domains": []},
+        # The delegation is `on_behalf_of`. An engine O from before it refuses the unknown field
+        # (422: the SDK model forbids extras), which raises here and routes to the re-link path,
+        # the same outcome as no delegation; so engine O rolls with or before this process.
+        # `user_email` stays in the request's shape only: a verified service caller's body
+        # identity binds nothing.
+        json={"identifier": mpn, "user_email": on_behalf_of or "", "entitled_domains": [],
+              "on_behalf_of": on_behalf_of or ""},
         timeout=_HTTP_TIMEOUT,
         headers=outbound_auth_headers(
             client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",

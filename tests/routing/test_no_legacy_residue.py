@@ -80,6 +80,8 @@ from __future__ import annotations
 import os
 import pytest
 
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 try:
     from neo4j import GraphDatabase
 except ImportError:

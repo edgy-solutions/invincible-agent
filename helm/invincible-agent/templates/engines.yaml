@@ -37,6 +37,8 @@
 {{- $eng := .values }}
 {{- if $eng.enabled }}
 {{- $ov := include "invincible-agent.policyOverlayActive" (dict "root" $ "component" .component) }}
+{{- /* Engine O alone mounts the chart's copy of the delegates file (architect 11-19). */}}
+{{- $isO := eq .component "engine-o" }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -52,6 +54,10 @@ spec:
       {{- include "invincible-agent.selectorLabels" (dict "component" .component "root" $) | nindent 6 }}
   template:
     metadata:
+      {{- if $isO }}
+      annotations:
+        checksum/engine-o-delegates: {{ $.Files.Get "files/policy/gateway_delegates.yaml" | sha256sum }}
+      {{- end }}
       labels:
         {{- include "invincible-agent.labels" $ | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" .component "root" $) | nindent 8 }}
@@ -64,8 +70,17 @@ spec:
       {{- if $ov }}
       initContainers:
         {{- include "invincible-agent.policyOverlayInit" (dict "root" $ "component" .component) | nindent 8 }}
+      {{- end }}
+      {{- if or $ov $isO }}
       volumes:
+        {{- if $ov }}
         {{- include "invincible-agent.policyOverlayVolumes" (dict "root" $ "component" .component) | nindent 8 }}
+        {{- end }}
+        {{- if $isO }}
+        - name: engine-o-delegates
+          configMap:
+            name: {{ $.Release.Name }}-engine-o-delegates
+        {{- end }}
       {{- end }}
       containers:
         - name: {{ .component }}
@@ -102,6 +117,11 @@ spec:
             # hand-set path cannot disagree with what the init container delivered.
             {{- include "invincible-agent.policyOverlayEnv" (dict "root" $ "component" .component) | nindent 12 }}
             {{- end }}
+            {{- if $isO }}
+            # Engine O reads its delegation rows from the mounted chart copy, on every call.
+            - name: ENGINE_O_DELEGATES_FILE
+              value: /etc/iagent/delegates/gateway_delegates.yaml
+            {{- end }}
             # Token checks (SDK transport_auth, v0.9.20+). LAST: a container env beats the configmap's
             # envFrom, and the last duplicate beats `env` above, so no hand-set value can widen them.
             {{- include "invincible-agent.engineTokenEnv" $ | nindent 12 }}
@@ -109,9 +129,16 @@ spec:
             # The gateway's own token lists (dag-tools v0.14.0+): the BFF's, rendered after everything.
             {{- include "invincible-agent.gatewayTokenEnv" $ | nindent 12 }}
             {{- end }}
-          {{- if $ov }}
+          {{- if or $ov $isO }}
           volumeMounts:
+            {{- if $ov }}
             {{- include "invincible-agent.policyOverlayMounts" (dict "root" $ "component" .component) | nindent 12 }}
+            {{- end }}
+            {{- if $isO }}
+            - name: engine-o-delegates
+              mountPath: /etc/iagent/delegates
+              readOnly: true
+            {{- end }}
           {{- end }}
           resources:
             {{- toYaml $eng.resources | nindent 12 }}

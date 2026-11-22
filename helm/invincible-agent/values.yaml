@@ -46,10 +46,10 @@ global:
   # rendered image that still carries only a tag. The map is keyed by repository, so a component
   # `image.tag` override on a row below is ignored; change the row instead.
   imageDigests:
-    # 0.14.0 (read 2026-11-11 by Docker-Content-Digest; index incl. linux/arm64; = :sha-33a0262)
-    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:deedd6c91aba8e91c3ae1b03bc9ce2bc9140a07fd920f30eb2e6de57cde787fe"
-    # 0.14.0 (read 2026-11-11 by Docker-Content-Digest; index incl. linux/arm64; = :sha-33a0262)
-    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:f8cbcad8769c42db89a7219ebb843c7b6b657ef1fb3ccfb105088491dccd9a34"
+    # 0.17.0 (read 2026-11-19 by Docker-Content-Digest; index incl. linux/arm64; = :sha-a85c5f9)
+    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:1dcf1229fcdd227773a22bd4edd3c57e9b295b68f991def0f30ccd015da71e83"
+    # 0.17.0 (read 2026-11-19 by Docker-Content-Digest; index incl. linux/arm64; = :sha-a85c5f9)
+    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:a5bc71a89083556c8ad9daf32f1e5d7d18918eb8d4f52c07e7484ac9f074c989"
     # Kept over 1555b341 (source e5612fa: the CP1252 repair AND the V_CHARACTERISTICS fold, not reviewed),
     # architect 11-05; board 01M6P5ZAJ382FBHEQDA23941EA carries both forward on a reviewed build.
     # reviewed 09-23 (`master` build of 1aa2cbe) (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -185,7 +185,37 @@ global:
     # arm64 (plus two attestation manifests); the abbreviated tag and this digest with its last hex
     # altered both answer 404. 312064b..52cc9a6 changes src/ and build.yml only: no Dockerfile or
     # package.json change, no import.meta.env read added, and no feature-flag change.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:be1360d7448baab07e3ee4d7a4215176301b7d76559c1cb702ddb22bf43ac324"
+    # RE-PINNED FOR 0.4.90 (ruled 2026-11-17: cortex rides at be1d177, not 2fd8711):
+    # 52cc9a6 -> be1d1778d08525a68e2bebb07819078b2cfbf16d, digest d02e6481. 52cc9a6 is its ancestor,
+    # so every 52cc9a6 line above still holds. It adds:
+    # - a task opened from the list is drawn whole and centred; the notice title wraps (ed6bfce);
+    # - promoted-by reads the person, and the routing panel shows one persona (f090d93);
+    # - a /me/queue row without task_id or kind is a refusal, not a skip (d713dd0);
+    # - where-used draws a table (2fd8711);
+    # - no question goes out until the entitlement list has loaded (be1d177).
+    # Measured before pinning: the full-sha tag resolves to this digest; the same read for 2fd8711
+    # returns 109cc351, the digest recorded on 2026-11-16 (the control). 52cc9a6..be1d177 changes no
+    # Dockerfile or package.json and adds no import.meta.env read. It needs a BFF that carries #386
+    # (per-viewer tasks), which is in 0.4.89.
+    # RE-PINNED FOR 0.4.91 (architect via Chris, 2026-11-19 two-day order: "cortex at 1660b84 (digest
+    # from cortex's report)"): be1d177 -> 1660b84e2941bdce1e453488420cdb8d49224c25, digest cf64568d.
+    # be1d177 is its ancestor, so every be1d177 line above still holds. It adds:
+    # - the answer footer shows this answer's own time, with a chain total apart (ceffdc7);
+    # - a served plain refusal reason is the card's line, the code behind "detail" (885d228). With no
+    #   served message the card is unchanged;
+    # - where-used: an absent cell shows the served reason, row before envelope (cac60cc). Its
+    #   producer is #448 (b1e42ff5), on master and not in 0.4.90;
+    # - review card: a row with no proposal shows the served reason and its candidate dispositions,
+    #   none pre-selected (a675a36). Its producer is #450 (d2bd3b42), on master and not in 0.4.90;
+    # - a New marker for a persona granted on refresh (1ab4ff7); seven where-used columns fit 640 px
+    #   (e6e2668); the stage card header wraps (73f1b3b); an extraction warning is one bounded line
+    #   (f70056b).
+    # Measured before pinning: the full-sha tag resolves to this digest, an OCI index with amd64 and
+    # arm64 (plus two attestation manifests); the abbreviated tag and this digest with its last hex
+    # altered both answer 404; the same read for be1d177 returns d02e6481 (the control).
+    # be1d177..1660b84 changes src/ only: no Dockerfile, package.json, entrypoint or workflow change,
+    # and no import.meta.env read added.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:cf64568d8b59cce54861967072ac3db54072068b9bd37817599e007e578d0766"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -557,6 +587,16 @@ agentFleet:
     # OPENAI_API_KEY: "..."                       # for an OpenAI-compat
                                                   # backend (LiteLLM/vLLM)
     BAML_LOG_LEVEL: "info"
+    # Reasoning effort on the engine-o routing calls (OFF: none of these is set).
+    # Each is read per call from the environment: low | medium | high (anything
+    # else is a warning and OFF). SUBJECT = ClassifyDomainIntent, VERB =
+    # ClassifyPredicate, SLOTS = FillVerbSlots. Unset = off; requests are
+    # byte-identical to today's. Switching one on is a values change Chris
+    # approves, with the routing baseline's before-and-after per combination in
+    # hand.
+    # IAGENT_ROUTING_EFFORT_SUBJECT: "low"
+    # IAGENT_ROUTING_EFFORT_VERB: "low"
+    # IAGENT_ROUTING_EFFORT_SLOTS: "low"
 
     # --- Embedding gateway (agent_fleet/utils/embed.py) ---
     # All Weaviate vector writes + reads in iagent code go through this
@@ -1059,7 +1099,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.20"
+  meshSdkVersion: "v0.9.26"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
@@ -1195,13 +1235,17 @@ userDeployments:
         AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
-        PUBLOG_S3_BUCKET: "publog-lake"
-        # DataHub GMS base URL (NOT the GraphQL endpoint). Used by
-        # any IO manager that emits the URN of materialized assets
-        # directly to DataHub via the REST API. Service name is
-        # "datahub-datahub-gms" — the prefix comes from the acryl
-        # helm chart's release name.
-        DATAHUB_SERVER: "http://datahub-datahub-gms:8080"
+        # Every name here must be one pub-tools' code reads; the chart
+        # once set PUBLOG_S3_BUCKET and DATAHUB_SERVER, which nothing
+        # read. tests/test_pub_tools_chart_env_is_read_by_its_code.py
+        # holds the reader of each name.
+        # Read by pub-tools publog_instance/component.yaml (lake root).
+        PUBLOG_S3_BUCKET_URL: "s3://publog-lake"
+        # DataHub GMS base URL (NOT the GraphQL endpoint), read by
+        # pub-tools datahub_lineage/component.yaml for the lineage
+        # sensor. Service name is "datahub-datahub-gms" — the prefix
+        # comes from the acryl helm chart's release name.
+        DATAHUB_GMS_URL: "http://datahub-datahub-gms:8080"
         # Cap DuckDB's memory. Its default budget is a fraction of
         # DETECTED SYSTEM RAM, not the pod's cgroup limit, so on a large
         # PUB LOG CSV it exceeds the limit and the pod is OOMKilled
@@ -1238,7 +1282,8 @@ userDeployments:
         AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
-        PUBLOG_S3_BUCKET: "publog-lake"
+        # The broker loads the same Definitions, so it reads the same name.
+        PUBLOG_S3_BUCKET_URL: "s3://publog-lake"
       # resources:
       #   requests: { cpu: 50m, memory: 128Mi }
       #   limits:   { cpu: 500m, memory: 512Mi }
@@ -2647,9 +2692,11 @@ policyOverlay:
     engine-fin:
       - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS}
       - {dir: fin_export_profiles, env: FIN_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
+      - {dir: fin_instances, env: FIN_INSTANCE_OVERLAY_DIRS, optional: true}
     cortex-bff:
       - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
       - {dir: exports, env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
+      - {dir: menu_blocks, env: MENU_BLOCK_OVERLAY_DIRS, optional: true}
 
 # STARTUP sync for task_grant_sync ONLY (task_audience `actor` relations —
 # policy/sync/task_grant_sync.py), as a post-install/post-upgrade helm hook Job. Narrower than

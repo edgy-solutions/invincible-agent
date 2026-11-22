@@ -43,7 +43,7 @@ EXPECTED = {"error": "no_person",
 
 
 @pytest.fixture
-def eo(monkeypatch):
+def eo(monkeypatch, _the_caller_is_verified):
     from agent_fleet.ontology_service import main as mod
     reached: list = []
 
@@ -53,12 +53,16 @@ def eo(monkeypatch):
 
     monkeypatch.setattr(mod.b, "FillVerbSlots", _model)
     mod._test_reached = reached
+    mod._test_caller = _the_caller_is_verified
     return mod
 
 
 def _post(eo, **body):
     from agent_fleet.planning_agent.slots import slots_for
     from fastapi.testclient import TestClient
+    # The caller is the VERIFIED token, not the body (lane 74): the `user_email` a case names is
+    # who the token says they are, and the body carries no identity at all.
+    eo._test_caller.as_(str(body.pop("user_email", "")).strip())
     base = {"query": "q", "verb_iri": "mesh:planFundingGap",
             "declarations": json.dumps(slots_for("plan_funding_gap"))}
     return TestClient(eo.app).post("/fill_slots", json={**base, **body})
@@ -86,6 +90,7 @@ def test_CONTROL_a_person_with_the_same_stubs_is_answered(eo):
 
 
 def test_the_in_process_call_is_refused_too(eo):
+    eo._test_caller.as_("")
     from agent_fleet.planning_agent.slots import slots_for
     r = asyncio.run(eo.fill_slots(eo.FillSlotsRequest(
         query="q", verb_iri="mesh:planFundingGap",
@@ -196,3 +201,12 @@ def test_only_the_supervisor_calls_fill_slots_so_one_resolved_intent_site_is_eno
     assert "src/iagent/defs/dynamic_supervisor.py" in found, (
         "the detector does not see the one known caller; it proves nothing")
     assert found == {"src/iagent/defs/dynamic_supervisor.py"}, found
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name alice@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "alice@example.com", ["SUSTAINMENT"])

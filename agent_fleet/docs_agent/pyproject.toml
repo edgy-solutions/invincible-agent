@@ -16,7 +16,7 @@ dependencies = [
     # nothing tied this engine to v0.9.1: the pin is for transport auth and the ONE mint, which
     # v0.9.2 carries unchanged (`_FASTAPI_MISSING` still at 4 occurrences in transport_auth.py,
     # the same check the pin runbook records for the 0.9.1 -> 0.9.2 move).
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.20",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.26",
     "fastapi",
     # THE SERVER, AND ONLY ONE. The agent image's CMD branches: hypercorn if
     # `/app/.venv/bin/hypercorn` exists, else uvicorn. Declaring hypercorn makes the first branch
@@ -47,7 +47,7 @@ dependencies = [
     # store driver — it reads no corpus and answers nothing. It enters at the binding (main.py,
     # through the /app/telemetry.py shim) only; the core may still not import it
     # (tests/docs/test_explain_refuses_before_it_renders.py::test_the_core_holds_no_driver).
-    "provenance-telemetry==0.2.1",
+    "provenance-telemetry==0.2.2",
 ]
 
 # DELIBERATELY THIN, and the omissions are the argument.
@@ -82,3 +82,8 @@ dependencies = [
 # `/app/.venv`; the CMD then fails with `/app/.venv/bin/python: not found` and the engine
 # crash-loops. A conditional written to tolerate an absent file cannot distinguish "this service
 # needs no venv" from "this service's inputs are missing".
+
+# Cap the langfuse client below 5 (it arrives only through provenance-telemetry, which
+# allows <6): client 5 needs a Langfuse server on v4.59.0+. Lifted when that is confirmed.
+[tool.uv]
+constraint-dependencies = ["langfuse<5"]

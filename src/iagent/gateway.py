@@ -34,12 +34,14 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 import uuid
 import weakref
 from contextlib import asynccontextmanager
 from datetime import date as _date, datetime, timezone
 from typing import AsyncGenerator, Any, Literal, Optional
+from types import SimpleNamespace
 
 import httpx
 from dotenv import load_dotenv
@@ -59,7 +61,10 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, oauth2_scheme, User
 from . import identity_exchange
-from .trace_spans import observed_trace, MAPPING, build_trace_values, current_span_id, request_trace_id
+from .trace_spans import (
+    observed_trace, MAPPING, build_trace_values, current_span_id, request_trace_id,
+    request_trace_context, trace_id_for, format_traceparent, parse_traceparent, annotate_span,
+)
 from iagent_mesh import Refusal as _Refusal
 from iagent_mesh.review_coverage import ReviewShapeRow
 from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
@@ -596,6 +601,23 @@ def _start_ingest_watchdog() -> "Optional[asyncio.Task]":
 async def lifespan(application: FastAPI):
     """Startup/shutdown lifecycle — verify DB connection on boot."""
     await init_db()
+    # A content kind's `on_promotion` row must name a workflow that declares a start this BFF can
+    # build; a misdeclared row refuses the start (rows without it are skipped).
+    from . import content_kinds as _ck, promotion_start as _ps
+
+    def _gwd(workflow_id: str):      # imported on first use: no row, no import
+        from agent_fleet.restate_analyst.workflow_definition import get_workflow_definition
+        return get_workflow_definition(workflow_id)
+    # Unreadable registrations are not this check's to refuse: they fail closed where they fail
+    # today (`/ingest`), and booting the BFF never depended on them. A READABLE row that is
+    # misdeclared does refuse the start.
+    try:
+        _regs = _ck.registrations()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("on_promotion check skipped: content-kind registrations unreadable: %s: %s",
+                       type(exc).__name__, exc)
+        _regs = ()
+    _ps.check_declared_starts(_regs, get_definition=_gwd, modes=_ps.MODES)
     # HITL substrate: ensure the human_task_projection table exists in the
     # Electric-replicated Postgres. Non-fatal when PROJECTOR_POSTGRES_DSN is
     # unset (local/dev boot) — the substrate is dormant, never a boot blocker.
@@ -604,6 +626,18 @@ async def lifespan(application: FastAPI):
         from . import human_tasks
         await run_in_threadpool(human_tasks.apply_migration)
         logger.info("human_task_projection migration applied")
+        # An approved access grant lives in the decision ledger, not in a file in the pod:
+        # re-apply the ledger so a restart keeps every approved grant. Never a boot blocker.
+        try:
+            _re = await run_in_threadpool(human_tasks.reapply_ledger_grants)
+            logger.info("access grants re-applied from the ledger: %s",
+                        _re.get("skipped") or f"ok={_re.get('ok')} grants={_re.get('grants')}")
+            # a revocation whose reader was not removed (the directory was down) is retried here
+            _rv = await run_in_threadpool(human_tasks.retry_pending_revocations)
+            logger.info("pending revocations retried: %s", _rv)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("access grant re-apply failed (grants stay in the ledger): %s",
+                           type(exc).__name__)
     except human_tasks.HumanTaskConfigError as exc:
         logger.info("HITL substrate dormant (no PG DSN): %s", exc)
     except Exception as exc:
@@ -1611,6 +1645,85 @@ async def create_access_request(
             "approvers": len(result.get("recipients", []))}
 
 
+_MESH_REVOKE_ACCESS = "mesh:revokeAccessGrant"
+
+
+class RevokeAccessGrantRequest(_BaseModel):
+    """Revoke one reader grant: which grant (subject, asset, kind) and WHY."""
+    subject: str
+    asset: str
+    kind: str = "dataset"
+    reason: str
+
+
+@app.post("/access_grants/revoke")
+async def revoke_access_grant(
+    req: RevokeAccessGrantRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Revoke a reader grant by RECORDING the revocation in the decision ledger (who revoked it,
+    when, why). Nothing is deleted: the grant's own row, if it was approved at runtime, stays. The
+    grant may come from committed policy or from the ledger; a revocation removes it from the
+    effective set whichever it was. Who may revoke is a capability row (`mesh:revokeAccessGrant`
+    in capability_grants.yaml), asked of the directory like every other effect.
+
+    The act is recorded first and stands. The route then removes that ONE reader from the
+    directory (never a listing, never a prune: the seed stays the one pruner). Removed: 200
+    `effective: now`. Not removed (the directory could not be reached): 202 `effective: not yet`
+    with `removed: false`, the act still recorded; it is retried at the next start, by repeating
+    this request, and by the seed's next sync. It is never shown as done. Idempotent: a grant
+    already revoked answers `already_revoked` (and retries the removal), and the first revoker
+    stays on record."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    try:
+        allowed = await run_in_threadpool(
+            lambda: human_tasks.check_can_invoke(_MESH_REVOKE_ACCESS, current_user.authz_id))
+    except human_tasks.AuthorizationUnavailable as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer could not be asked, or its answer could not be read",
+        }) from exc
+    if not allowed:
+        from .authz.refusal import policy_refusal
+        raise policy_refusal(
+            "not_entitled_to_revoke_access", policy_id=f"capability_grants:{_MESH_REVOKE_ACCESS}",
+            missing_binding=f"can_invoke {_MESH_REVOKE_ACCESS}",
+            message=f"{current_user.authz_id} may not revoke access grants",
+            extra={"capability": _MESH_REVOKE_ACCESS})
+    try:
+        added = await run_in_threadpool(
+            lambda: human_tasks.record_revocation(
+                subject=req.subject, asset=req.asset, kind=req.kind,
+                revoked_by=current_user.authz_id, reason=req.reason))
+    except human_tasks.NoSuchGrant as exc:
+        raise HTTPException(status_code=404, detail={
+            "error": "no_such_grant", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={
+            "error": "revocation_incomplete", "message": str(exc)}) from exc
+    except Exception as exc:  # noqa: BLE001 -- not recorded means not revoked; say so
+        logger.error("access revocation not recorded: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail={
+            "error": "ledger_unavailable",
+            "message": "the decision ledger could not record the revocation; nothing changed",
+        }) from exc
+    removal = await run_in_threadpool(
+        lambda: human_tasks.remove_revoked_reader(req.subject, req.asset, req.kind))
+    body = {"subject": req.subject, "asset": req.asset, "kind": req.kind,
+            "revoked": True, "already_revoked": not added, "removed": bool(removal.get("removed"))}
+    if removal.get("removed"):
+        return {**body, "effective": "now"}
+    if removal.get("superseded"):
+        extra = {"restored": removal["restored"]} if "restored" in removal else {}
+        return {**body, **extra, "effective": "superseded: a later grant of this key stands"}
+    return JSONResponse(status_code=202, content={
+        **body, "effective": "not yet",
+        "message": "the revocation is recorded, but the directory could not remove the reader yet; "
+                   "it is retried at the next start and at the seed's next sync, and repeating "
+                   "this request retries it now"})
+
+
 class TriageTaskRequest(_BaseModel):
     """File a TRIAGE task: an input that could not be prepared for review, routed to
     the humans who own the answer about it.
@@ -1906,6 +2019,50 @@ async def get_my_needs_you(on_behalf_of: Optional[str] = None,
             "delegated": delegation}
 
 
+class MenuBlock(_BaseModel):
+    subject: str
+    archetype: str
+    persona_fit: list[str]
+    domain_fit: list[str]
+    declared_by: str
+
+
+class MenuBlockInvalid(_BaseModel):
+    source: str
+    reason: str
+
+
+class MenuBlocksResponse(_BaseModel):
+    composed: bool
+    blocks: list[MenuBlock]
+    invalid: list[MenuBlockInvalid]
+
+
+@app.get("/menu_blocks", response_model=MenuBlocksResponse)
+async def get_menu_blocks(current_user: User = Depends(get_current_user)):
+    """The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by
+    (subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves
+    it, cortex reads it.
+
+    NOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,
+    and `persona_fit` / `domain_fit` only RANK, they never gate.
+
+    NOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay
+    dir configured, or one is unreadable); it never means "no blocks". `composed: true` with
+    `blocks: []` means this deployment declares none. A client replaces a hand-written row only
+    with a served block for the SAME subject. A row that does not validate, or that shares its
+    (subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at
+    ERROR.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import menu_blocks
+
+    result = await run_in_threadpool(menu_blocks.compose)
+    for bad in result.invalid:
+        logger.error("menu block %s is invalid: %s", bad["source"], bad["reason"])
+    return {"composed": result.composed, "blocks": result.blocks, "invalid": result.invalid}
+
+
 @app.get("/task_kinds")
 async def get_task_kinds(current_user: User = Depends(get_current_user)):
     """Every declared species and its contract — the menu, readable without attempting it.
@@ -2057,6 +2214,10 @@ class ReviewStartRequest(_BaseModel):
     # NOT the notice id — see _ingress_idempotency_key. Absent for hand-driven ops calls,
     # which are then honestly non-idempotent rather than falsely deduplicated.
     request_key: Optional[str] = None
+    # RE-ISSUE: the workflow id of the grouped review this request re-issues. Restate workflow keys
+    # are single-use, so a review whose run can no longer be woken is re-issued under a DERIVED
+    # request key that points back (`review_keys.reissue_request_key`). Absent = a normal start.
+    reissue_of: Optional[str] = None
     # ARTIFACT LOCATION — a full `s3://bucket/key`, and the ONE client-suppliable input to the
     # admission posture. A SEPARATE field from `request_key` on purpose: that one is the artifact's
     # IDENTITY (`{epoch}{ETag}-{key}`) and exists for ingress idempotency. They were conflated for a
@@ -2213,6 +2374,39 @@ async def start_review(
     is subject to the ingress idempotency key below: within its retention window a
     re-drive of an unchanged artifact REPLAYS the prior response rather than executing."""
     raw_token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    return await _start_review_core(req, current_user=current_user, raw_token=raw_token)
+
+
+async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
+                             raw_token: str) -> dict:
+    """The body of `POST /reviews`, callable without a request: the route and a promotion's
+    declared start (`_start_declared_review`) send the start the same way."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    _reissue_of = (req.reissue_of or "").strip()
+    _forwarded_key = req.request_key
+    if _reissue_of:
+        from agent_fleet.restate_analyst.review_keys import (  # noqa: PLC0415
+            compose_workflow_id, reissue_request_key,
+        )
+        # Same source, same approver: the BFF stamps the approver from the token, so only the
+        # identity that started a review can re-issue it, and only from the same artifact.
+        _derived = compose_workflow_id(req.notice_id, current_user.authz_id, req.request_key)
+        if _derived != _reissue_of:
+            raise HTTPException(status_code=422, detail={
+                "error": "reissue_source_mismatch", "reissue_of": _reissue_of, "derived": _derived})
+        # Never re-issue a decided review. `superseded` is allowed so a retry after a partial
+        # success can complete.
+        _statuses = await run_in_threadpool(human_tasks.task_row_statuses, "grouped:" + _reissue_of)
+        if not _statuses:
+            raise HTTPException(status_code=409, detail={
+                "error": "reissue_nothing_to_supersede", "reissue_of": _reissue_of})
+        if any(st not in ("pending", "superseded") for st in _statuses):
+            raise HTTPException(status_code=409, detail={
+                "error": "reissue_of_a_resolved_review", "statuses": list(_statuses)})
+        _forwarded_key = reissue_request_key(req.request_key or "", _reissue_of)
     body = {
         "notice_id": req.notice_id,
         "doc_type": req.doc_type,
@@ -2234,6 +2428,8 @@ async def start_review(
     # attempt died unable to ever produce a review again. Live at work 2026-07-31: eleven
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
+    if _reissue_of:
+        body["request_key"] = _forwarded_key   # the DERIVED key: a new workflow key, pointing back
     body["ingest_id"] = req.ingest_id or ""   # rebuilding hop: absent here = absent downstream
     body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
     # THE ARTIFACT'S LOCATION — a DIFFERENT field from the identity above, and the entire admission
@@ -2244,7 +2440,6 @@ async def start_review(
     body["artifact_uri"] = req.artifact_uri or ""
     # THE PERSON the composition's lookups run for: derived from the artifact above, never from the
     # body (ruling (a)). ReviewStartRequest declares no such field, so a caller cannot assert one.
-    from starlette.concurrency import run_in_threadpool
     body["on_behalf_of"] = await run_in_threadpool(_review_on_behalf_of, body["artifact_uri"])
     # ADMISSION FACTS ARE NO LONGER FORWARDED (ADR-0034 phase 1.3, consumer half). ReviewStarter
     # DERIVES `format_fingerprint` and `pipeline_version` from the artifact `artifact_uri` points at,
@@ -2260,7 +2455,7 @@ async def start_review(
         # Idempotency at the FRONT DOOR: a retry after a client timeout attaches to the
         # in-flight composition instead of racing a second one against it. Absent when the
         # caller named no artifact — no header, honestly non-idempotent.
-        _idem = _ingress_idempotency_key(req.request_key, current_user.authz_id)
+        _idem = _ingress_idempotency_key(_forwarded_key, current_user.authz_id)
         _headers = {"idempotency-key": _idem} if _idem else {}
         async with httpx.AsyncClient(timeout=_start_timeout) as client:
             rr = await client.post(
@@ -2308,7 +2503,69 @@ async def start_review(
         # request (422). The auto-starter service surfaces this as a failed Dagster run; a human caller
         # gets a clean 403. (Who may REVIEW is a separate gate, downstream at the task layer.)
         raise HTTPException(status_code=403, detail=out)
+    if _reissue_of and out.get("status") == "STARTED":
+        _new_id = out.get("workflow_id")
+        if _new_id == _reissue_of:
+            raise HTTPException(status_code=500, detail={
+                "error": "reissue_collided", "reissue_of": _reissue_of})
+        _n = await run_in_threadpool(lambda: human_tasks.supersede_open_task(
+            "grouped:" + _reissue_of, superseded_by=_new_id))
+        out["reissue"] = {"superseded_workflow_id": _reissue_of,
+                          "superseded_task_id": "grouped:" + _reissue_of,
+                          "rows_superseded": _n}
     return out
+
+
+async def _start_declared_review(subject, *, done: dict, applied_by: Optional[str],
+                                 current_user: "User", raw_token: str,
+                                 domain: str) -> Optional[dict]:
+    """The start the promoted record's content kind declares (`on_promotion`), or None when the
+    kind declares none (the route's response is then unchanged).
+
+    Runs after the decision record stands, on a fresh act AND on a replay (a retry finishes the
+    job; the start is idempotent on `promotion:{record}:{workflow}`). On a replay only the person
+    whose act the record stores re-sends it. The promotion is never rolled back: a failure is
+    reported in the result and logged, and acting again re-sends the start."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, promotion_start
+
+    def _definition(workflow_id: str):
+        from agent_fleet.restate_analyst.workflow_definition import (  # noqa: PLC0415
+            get_workflow_definition,
+        )
+        return get_workflow_definition(workflow_id)
+
+    ds = None
+    try:
+        ds = await run_in_threadpool(lambda: promotion_start.declared_start(
+            subject.content_kind, by_kind=content_kinds.by_kind, get_definition=_definition))
+        if ds is None:
+            return None
+        key = promotion_start.promotion_request_key(done["record_id"], ds.workflow_id)
+        replayed = bool(done.get("replayed"))
+        if replayed and applied_by != current_user.authz_id:
+            return {"status": "not_restarted",
+                    "reason": "only the promoter's retry re-sends the start"}
+        build = promotion_start.MODES.get(ds.mode)
+        if build is None:
+            raise promotion_start.PromotionStartUndeclared(
+                f"workflow {ds.workflow_id!r} declares start mode {ds.mode!r}")
+        payload = await run_in_threadpool(lambda: build(
+            subject, domain=domain, request_key=key, bucket=_ARTIFACT_BUCKET,
+            read_manifest=_read_extraction_manifest, review_key_of=_review_json_key,
+            read_review=_read_review_json))
+        out = await _start_review_core(
+            ReviewStartRequest(**payload), current_user=current_user, raw_token=raw_token)
+        return {"status": "retried" if replayed else "started", "workflow": ds.workflow_id,
+                "request_key": key, "outcome": out.get("status")}
+    except Exception as exc:  # noqa: BLE001 -- the promotion stands; the start is reported, not raised
+        detail = exc.detail if isinstance(exc, HTTPException) else None
+        reason = (detail.get("error") if isinstance(detail, dict) else None) or type(exc).__name__
+        logger.warning("promotion start failed: ingest_id=%s workflow=%s: %s: %s",
+                       getattr(subject, "ingest_id", None), getattr(ds, "workflow_id", None),
+                       type(exc).__name__, exc)
+        return {"status": "failed", "reason": reason}
 
 
 def _restate_key(k: str) -> str:
@@ -2342,20 +2599,11 @@ def _restate_refusal_message(resp) -> str:
     return str(body)[:500]
 
 
-@app.get("/reviews/{workflow_id}/batch")
-async def get_review_batch(
-    workflow_id: str,
-    current_user: User = Depends(get_current_user),
-):
-    """Fetch the reviewer's grouped-review batch (parts + proposed dispositions + needs_review flags) so
-    the UI can show it before deciding — a blind accept-all can't handle a needs_review row, which is a
-    mandatory per-item exception. EXISTENCE-ORACLE-SAFE: the caller must hold THIS grouped task in their
-    OWN pending queue (same authz_id filter as /act); a caller who isn't the approver gets 404, never a
-    peek at another approver's batch. engine-a's get_batch serves only the per-approver-authored state."""
-    from starlette.concurrency import run_in_threadpool
-    from . import human_tasks
-    rows = await _pending_for_actor(current_user, current_user.authz_id,
-                                    "GET /reviews/{workflow_id}/batch")
+async def _gated_grouped_batch(workflow_id: str, current_user: User, route: str):
+    """The batch routes' shared gate: the caller must hold THIS grouped task in their OWN pending
+    queue (404 `review_not_found` otherwise, before any workflow read), then the workflow's
+    get_batch is read. Returns (the caller's pending task row, get_batch's body)."""
+    rows = await _pending_for_actor(current_user, current_user.authz_id, route)
     match = next((t for t in rows
                   if t.get("workflow_id") == workflow_id and t.get("kind") == "grouped_review"), None)
     if match is None:
@@ -2370,11 +2618,32 @@ async def get_review_batch(
             rr.raise_for_status()
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"error": "review_batch_unreachable", "message": str(exc)})
-    b = rr.json()
+    return match, rr.json()
+
+
+@app.get("/reviews/{workflow_id}/batch")
+async def get_review_batch(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch the reviewer's grouped-review batch (parts + proposed dispositions + needs_review flags) so
+    the UI can show it before deciding — a blind accept-all can't handle a needs_review row, which is a
+    mandatory per-item exception. EXISTENCE-ORACLE-SAFE: the caller must hold THIS grouped task in their
+    OWN pending queue (same authz_id filter as /act); a caller who isn't the approver gets 404, never a
+    peek at another approver's batch. engine-a's get_batch serves only the per-approver-authored state."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    match, b = await _gated_grouped_batch(workflow_id, current_user,
+                                          "GET /reviews/{workflow_id}/batch")
     # Map engine-a state items -> the UI ReviewItem shape (mpn/subject/proposed_disposition/needs_review).
+    # proposal_outcome / candidate_dispositions / abstention_reason are served so the card says why a
+    # row has no proposal; absent on reviews composed before this field existed (None / []).
     items = [{"mpn": it.get("mpn"), "subject": it.get("subject"),
               "proposed_disposition": it.get("proposed_disposition"),
-              "needs_review": bool(it.get("needs_review", False))} for it in b.get("items", [])]
+              "needs_review": bool(it.get("needs_review", False)),
+              "proposal_outcome": it.get("proposal_outcome"),
+              "candidate_dispositions": list(it.get("candidate_dispositions") or []),
+              "abstention_reason": it.get("abstention_reason")} for it in b.get("items", [])]
     return {
         "batch_id": match["task_id"],        # the grouped HumanTask id — what /act is addressed on
         "notice_id": b.get("notice_id"),
@@ -2483,7 +2752,54 @@ def _resolve_notice_prefix(notice_id: str) -> "Optional[str]":
     return _NOTICE_PREFIX_INDEX.get(notice_id)
 
 
-def _read_notice_provenance_from_store(prefix: str) -> list:
+def _review_source_buckets() -> "frozenset[str]":
+    """The buckets a review's source reference may name, read from CONFIG at call time.
+
+    The provenance route reads whatever bucket a review's stored `artifact_uri` names, with the BFF's
+    own store credentials; unconfined, a reference to a foreign bucket makes the BFF a confused
+    deputy. So the reference is confined to this set. `REVIEW_SOURCE_BUCKETS` (comma-separated)
+    wins when set and non-empty; otherwise `ARTIFACT_BUCKET` (the bucket the extraction sensor builds
+    every `artifact_uri` from) is the one member. With neither set the set is EMPTY and every
+    reference is refused (fail closed)."""
+    raw = os.environ.get("REVIEW_SOURCE_BUCKETS") or ""
+    names = frozenset(x.strip() for x in raw.split(",") if x.strip())
+    if names:
+        return names
+    one = (os.environ.get("ARTIFACT_BUCKET") or "").strip()
+    return frozenset({one}) if one else frozenset()
+
+
+def _review_source_prefix(
+    artifact_uri: str, allowed: "Optional[frozenset[str]]" = None
+) -> "Optional[tuple[str, str]]":
+    """(bucket, prefix) of a review's own source from its `s3://<bucket>/<key>` reference, where the
+    key ends `/review.json` and the prefix is the key minus that suffix. Judged on the PARSED parts.
+    None for anything else: a scheme other than `s3`; a bucket that is not an exact member of
+    `allowed` (None or empty `allowed` refuses everything: there is no unconfined mode); params,
+    query or fragment; a key with an empty, `.` or `..` segment, a backslash or a control character;
+    another file; an empty prefix."""
+    from urllib.parse import urlparse
+
+    if not allowed:
+        return None
+    u = urlparse(artifact_uri or "")
+    if u.scheme != "s3" or not str(artifact_uri).startswith("s3://") or u.netloc not in allowed:
+        return None
+    if u.params or u.query or u.fragment:
+        return None
+    key = u.path[1:] if u.path.startswith("/") else u.path
+    if "\\" in key or ";" in key or any(ord(c) < 32 or ord(c) == 127 for c in key):
+        return None
+    if any(seg in ("", ".", "..") for seg in key.split("/")):
+        return None
+    suffix = "/review.json"
+    if not key.endswith(suffix):
+        return None
+    prefix = key[: -len(suffix)]
+    return (u.netloc, prefix) if prefix else None
+
+
+def _read_notice_provenance_from_store(prefix: str, *, bucket: str = _ARTIFACT_BUCKET) -> list:
     """Read a notice's REAL provenance from MinIO: review.json (the extracted
     values + bboxes + match metadata) joined to its table CROPS. No full-page
     render exists (doc-tools defers the page rasterizer), so the crop IS the
@@ -2501,7 +2817,7 @@ def _read_notice_provenance_from_store(prefix: str) -> list:
     )
 
     def _get_json(key: str):
-        return _json.loads(s3.get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read())
+        return _json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
 
     review = _get_json(f"{prefix}/review.json")
     manifest = _get_json(f"{prefix}/manifest.json")
@@ -2626,6 +2942,56 @@ async def notice_provenance(
         # never fabricated placeholder evidence that masks the failure as green.
         logger.warning("notice provenance read failed for %s (prefix %s): %s", notice_id, prefix, exc)
         return {"notice_id": notice_id, "page_image_url": None, "items": [], "source": "error"}
+
+
+@app.get("/reviews/{workflow_id}/provenance")
+async def review_provenance(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """The review card's evidence, resolved from the review's OWN source reference (the
+    `artifact_uri` the workflow kept), never from a fixed prefix. Same gate as the batch route: the
+    caller must hold this grouped task in their own pending queue."""
+    from starlette.concurrency import run_in_threadpool
+    _match, b = await _gated_grouped_batch(workflow_id, current_user,
+                                           "GET /reviews/{workflow_id}/provenance")
+    notice_id = b.get("notice_id")
+    artifact_uri = str(b.get("artifact_uri") or "")
+    bucket = None
+    prefix = None
+    if artifact_uri:
+        resolved_by = "review_source"
+        src = _review_source_prefix(artifact_uri, _review_source_buckets())
+        if src is None:
+            # The review HAS a reference; a scan could find a different artifact, so never fall back.
+            resolved_by = "review_source_unreadable"
+            logger.info("review provenance for %s resolved_by=%s", workflow_id, resolved_by)
+            return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                    "source": "none", "resolved_by": resolved_by}
+        bucket, prefix = src
+    else:
+        # Fallback only for reviews composed before the reference was kept; it scans the fixed
+        # root and is to be removed once those reviews are closed.
+        resolved_by = "notice_id_index"
+        prefix = await run_in_threadpool(lambda: _resolve_notice_prefix(notice_id))
+        if not prefix:
+            logger.info("review provenance for %s resolved_by=%s (no prefix)", workflow_id, resolved_by)
+            return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                    "source": "none", "resolved_by": resolved_by}
+    logger.info("review provenance for %s resolved_by=%s", workflow_id, resolved_by)
+    try:
+        if bucket is None:
+            items = await run_in_threadpool(lambda: _read_notice_provenance_from_store(prefix))
+        else:
+            items = await run_in_threadpool(
+                lambda: _read_notice_provenance_from_store(prefix, bucket=bucket))
+        return {"notice_id": notice_id, "page_image_url": None, "items": items,
+                "source": "doc-tools", "resolved_by": resolved_by}
+    except Exception as exc:  # noqa: BLE001
+        # HONEST degrade, as the notice route: empty, reason logged without keys or credentials.
+        logger.warning("review provenance read failed for %s: %s", workflow_id, type(exc).__name__)
+        return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                "source": "error", "resolved_by": resolved_by}
 
 
 # ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────
@@ -5067,12 +5433,16 @@ class CanvasSeedConflict(_BaseModel):
     detail: CanvasSeedConflictDetail
 
 
-def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
+def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list, bearer: str = ""):
     """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
     `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
     because `decide_disposition` calls it synchronously; the caller runs the whole disposition
     in a threadpool so this never blocks the event loop. Raises on connect/timeout, which the
-    disposition files as `no_provider` rather than as a menu."""
+    disposition files as `no_provider` rather than as a menu.
+
+    `bearer` is the CALLER'S OWN token, forwarded as-is (never minted): engine O binds the person and
+    their grants from the verified token and ignores `user_email` / `entitled_domains` in the body,
+    so a call without it is read as anonymous."""
     def _enumerate(class_uri: str, *, bound_slots: dict | None = None) -> dict:
         _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
         with httpx.Client(timeout=5.0) as client:
@@ -5081,6 +5451,7 @@ def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
                 json={"class_uri": class_uri, "bound_slots": _bound,
                       "user_email": user_email,
                       "entitled_domains": list(entitled_domains or [])},
+                **({"headers": {"Authorization": f"Bearer {bearer}"}} if bearer else {}),
             )
         resp.raise_for_status()
         return resp.json() or {}
@@ -5098,7 +5469,8 @@ def _canvas_seed_domains(request, ent) -> list[str] | None:
     return None
 
 
-async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User):
+async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User,
+                           bearer: str = ""):
     """The ask for a 409'd seed, or None when no unbound slot is askable.
 
     Built by the SAME disposition the chat path uses (`decide_disposition` + `ask_card`) from
@@ -5125,7 +5497,10 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
 
     ent = current_user.entitlements
     domains = _canvas_seed_domains(request, ent) or sorted({c.domain for c in ent.cells})
-    enum = _canvas_seed_enumerator(user_email=current_user.authz_id, entitled_domains=domains)
+    enum = _canvas_seed_enumerator(
+        user_email=current_user.authz_id, entitled_domains=domains,
+        **({"bearer": bearer} if bearer else {}),
+    )
 
     def _build():
         disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
@@ -5234,6 +5609,36 @@ async def canvas_seed(
                            "(or user_persona) too",
             },
         )
+    # THE SERVER OWNS THE DOMAIN LIST (Lane 1, 2026-11-16). A client-sent `active_domains` is a
+    # REQUEST for a cell, never a grant of one. Before this gate the 409 path's ask
+    # (`_canvas_seed_ask`) forwarded the client's list to engine-o's `/enumerate_instances` as
+    # `entitled_domains`, and engine-o decides origin visibility from that list
+    # (`origin_entitlement.can_consume`), so a domain the caller does not hold widened what the
+    # ask enumerated. Same rule as `/orchestrate`: every named domain must be entitled under the
+    # named persona, and one miss refuses the whole request; nothing is silently dropped.
+    if request.active_persona and request.active_domains:
+        _missing = [d for d in request.active_domains
+                    if not current_user.entitlements.contains(request.active_persona, d)]
+        if _missing:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            # The body mirrors `/orchestrate`'s `cell_not_entitled` so an access request can be
+            # built from it; the WARN aggregates denials for ops as `/orchestrate`'s does.
+            _extra = {
+                "requested": {"persona": request.active_persona,
+                              "domains": list(request.active_domains)},
+                "requested_missing": _missing,
+                "entitled_cells": [{"persona": c.persona, "domain": c.domain}
+                                   for c in current_user.entitlements.cells],
+            }
+            _refusal_exc = _policy_refusal(
+                "cell_not_entitled", policy_id="groups",
+                missing_binding=f"a_group_granting({request.active_persona}, {_missing[0]})",
+                message=f"you hold no cell under persona {request.active_persona} "
+                        f"for domains {_missing}",
+                extra=_extra,
+            )
+            logger.warning("canvas_seed_cell_not_entitled: %s", _refusal_exc.detail)
+            raise _refusal_exc
 
     _requested = (request.template_id or "").strip()
     if not _requested:
@@ -5298,7 +5703,8 @@ async def canvas_seed(
         # refusal. It is best-effort by construction: a failure here must never turn the
         # refusal into a 500.
         try:
-            _ask = await _canvas_seed_ask(_template, request, current_user)
+            _ask = await _canvas_seed_ask(
+                _template, request, current_user, bearer=_user_bearer(http_request))
             if _ask is not None:
                 _detail["ask"] = _ask
                 if _ask.get("policy"):
@@ -6137,6 +6543,7 @@ async def _stale_extraction(task_id: str, row: dict) -> "HTTPException":
 async def act_on_human_task(
     task_id: str,
     req: HumanTaskActRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
 ):
     """Approve/reject a task. Application-layer gate: RE-CHECK Topaz `can_act` for
@@ -6585,6 +6992,18 @@ async def act_on_human_task(
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
+        # Who the act's effects were applied as: the caller on a fresh act, the STORED actor on a
+        # replay. Not part of the response.
+        _applied_by = done.pop("_effect_by", None)
+        # A kind's declared start (`on_promotion`) is an effect of the act, sent after the record
+        # stands. A kind without the row gets None here: no key in the response, no call.
+        _review = None
+        if req.decision == promotion.PROMOTED:
+            _review = await _start_declared_review(
+                subject, done=done, applied_by=_applied_by, current_user=current_user,
+                raw_token=(request.headers.get("authorization") or "")
+                .removeprefix("Bearer ").strip(),
+                domain=promotion.domain_of(audience))
         defect = None
         if edits is not None:
             # Filed AFTER the record stands and BEFORE the task resolves: a failure leaves the task
@@ -6651,6 +7070,8 @@ async def act_on_human_task(
         _body = {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
         if _reject_code is not None:
             _body["reject_code"] = _reject_code
+        if _review is not None:
+            _body["review"] = _review
         if defect is not None:
             _body["row_edits"] = {"corrected": len(edits.corrected), "added": len(edits.added),
                                   "deleted": len(edits.deleted), "header": len(edits.header)}
@@ -6830,6 +7251,28 @@ async def act_on_human_task(
                 "rows_resolved": n, "review_dispatched": True,
                 "resolved_count": sub.get("resolved_count")}
 
+    # AN APPROVAL NAMES AN ASSET THAT MUST EXIST (ruled 2026-11-16). Checked BEFORE anything is
+    # resolved or recorded: one ledger row for an asset that is not in the directory would make
+    # the directory apply refuse on every run, and revocations behind it. The task stays pending,
+    # so the approver can reject it instead.
+    if match.get("kind") == "access_request" and req.decision == "approved":
+        _asset = (match.get("payload") or {}).get("asset")
+        if _asset and (match.get("payload") or {}).get("subject"):
+            try:
+                _known = await run_in_threadpool(lambda: human_tasks.asset_exists(_asset))
+            except human_tasks.DirectoryUnavailable as exc:
+                raise HTTPException(status_code=503, detail={
+                    "error": "directory_unavailable", "task_id": task_id,
+                    "message": "the directory could not be asked whether the asset exists; "
+                               "nothing was approved and the task stays pending",
+                }) from exc
+            if not _known:
+                raise HTTPException(status_code=422, detail={
+                    "error": "asset_not_in_directory", "task_id": task_id, "asset": _asset,
+                    "message": "the asset named by this request is not in the directory; it "
+                               "cannot be approved (reject it, or ask for the right asset)",
+                })
+
     # FULFILLMENT (workflow_ack generalized, HAZ-1003): CONFIRM BEFORE RESOLVE, not the other
     # way around. The old order resolved the projection FIRST and treated the Restate resume as
     # best-effort afterwards — so a 403 from the handler, or cortex-bff's own hardcoded
@@ -6970,9 +7413,9 @@ async def act_on_human_task(
     logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
                 task_id, actor, req.decision, n)
 
-    # FULFILLMENT (access_request — Case 1, ASYNC): approving writes a git-asserted
-    # reader grant (asset_grants.yaml assertion, granted_by = THIS approver) and
-    # flows it through the SEALED grant_sync -> Topaz -> the DA-read gate opens ->
+    # FULFILLMENT (access_request — Case 1, ASYNC): approving records the grant in the decision
+    # ledger (requester, approver = THIS caller, time, reason) and applies the ledger to the
+    # directory through the SEALED grant_sync -> Topaz -> the DA-read gate opens ->
     # the requester succeeds on a FRESH request (nothing suspended to resume). This
     # is the automation of the manual alice->reader->customers_gold rehearsal.
     granted = False
@@ -6982,17 +7425,26 @@ async def act_on_human_task(
         subject = payload.get("subject")
         asset = payload.get("asset")
         if subject and asset:
-            grant_detail = await run_in_threadpool(
-                lambda: human_tasks.write_grant_and_sync(
-                    subject=subject, asset=asset,
-                    granted_by=current_user.authz_id,
-                    reason=(req.comment or f"HITL access grant approved by {current_user.email}"),
+            try:
+                grant_detail = await run_in_threadpool(
+                    lambda: human_tasks.write_grant_and_sync(
+                        subject=subject, asset=asset,
+                        granted_by=current_user.authz_id,
+                        reason=(req.comment or f"HITL access grant approved by {current_user.email}"),
+                        requested_by=str(match.get("requested_by") or subject),
+                        task_id=task_id,
+                    )
                 )
-            )
+            except Exception as exc:  # noqa: BLE001 -- no ledger row means no grant; say so
+                logger.error("access grant not recorded: task_id=%s %s", task_id, type(exc).__name__)
+                grant_detail = {"ok": False, "recorded": False, "exit_code": None,
+                                "output": type(exc).__name__}
             granted = bool(grant_detail.get("ok"))
             if not granted:
                 logger.warning("access grant sync failed: task_id=%s exit=%s",
                                task_id, grant_detail.get("exit_code"))
+    # `grant_written` is the directory's state only. (The recorded/applied split is a contract
+    # change to ActGeneric and ingest-v1, not made here: the ledger row and the log say which.)
     return {"task_id": task_id, "decision": req.decision, "rows_resolved": n,
             "workflow_resumed": resumed, "grant_written": granted}
 
@@ -8211,10 +8663,11 @@ async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
         )
 
 
-async def _traced_stream(stream, *, trace_id, session_id, authz_id):
+async def _traced_stream(stream, *, trace_id, session_id, authz_id, parent_span_id=None):
     with observed_trace(MAPPING, build_trace_values(
             trace_id=trace_id, authz_id=authz_id, session_id=session_id or None,
-            engine="cortex-bff", verb="/interview/stream"), name="bff.orchestrate"):
+            engine="cortex-bff", verb="/interview/stream"), name="bff.orchestrate",
+            parent_span_id=parent_span_id):
         async for event in stream:
             yield event
 
@@ -8929,6 +9382,94 @@ async def unarchive_answer(
     return await _set_archive(answer_id, current_user, archive=False, reason=req.reason)
 
 
+def _supervisor_op_config(
+    query: str,
+    thread_id: str,
+    persona: str = "PROCESS_ENGINEER",
+    domain: str = "MAINTENANCE",
+    task_plan_json: str = "",
+    user_id: str = "default_testing_user",
+    # ADR-0017 amendment: which frontend will render the answer. Threaded to Engine F so
+    # the archetype is chosen from THAT client's registered menu. Empty is not an error --
+    # Engine F falls back to its global table, i.e. today's behaviour.
+    frontend_id: str = "",
+    frontend_version: str = "",
+    # ADR-0025 hop 2: caller's entitlement key (email) forwarded as a
+    # runConfig key so the generalist-fallback subtask can hand it to
+    # Engine D's query_metadata for the Topaz can_view ask.
+    user_email: str = "",
+    # Per ADR-0009 Step F'.2: thread user-context fields into the supervisor
+    # so the supervisor's per-subtask predicate lookup (Step F'.3) can scope
+    # by entitled_domains and use user_persona as the answerer fallback when
+    # the matched predicate is persona-agnostic.
+    # Step F'.6: candidate_verb dropped — supervisor now sends user_query
+    # directly to /search_predicates (Weaviate hybrid).
+    user_persona: str | None = None,
+    entitled_domains: list[str] | None = None,
+    entity_refs: list[str] | None = None,
+    # THE SPOKEN SLOTS from /route_intent, argument name -> value. Passed explicitly rather
+    # than read off the caller's `intent_extraction`, which is a local of the streaming
+    # handler and not in scope here - the first draft of this carry did exactly that and
+    # would have raised NameError on every request in the cluster while every test stayed
+    # green, because no test calls this function.
+    slots: dict | None = None,
+    # The user's pick from an ask, kept SEPARATE from `slots` all the way down so the
+    # supervisor can tell a chosen value from an extracted one and validate only the
+    # first against the menu it offered.
+    bound_slots: dict | None = None,
+    spoken_slot: str | None = None,
+    spoken_answer: str | None = None,
+    # The route an earlier ask already established, read back under the caller's ownership
+    # edge. `{}` for an ordinary question, which is every request that answers nothing.
+    pre_resolved: dict | None = None,
+    trace_id: str = "",
+    session_id: str = "",
+) -> dict:
+    """The op_config both answer paths hand the supervisor ops (Dagster run config, or the
+    durable workflow input)."""
+    entitled_domains = entitled_domains or []
+    entity_refs = entity_refs or []
+    # candidate_verb is no longer threaded — supervisor sends user_query to
+    # /search_predicates directly. Keep the op_config field as an empty
+    # string so the existing Dagster schema still validates.
+    candidate_verb = ""
+    # Shared op config — same keys to every op so a Dagster op author can
+    # rely on consistent context regardless of which op they're in.
+    op_config = {
+        "user_query": query,
+        "thread_id": thread_id,
+        "persona": persona,
+        "domain": domain,
+        "task_plan_json": task_plan_json,
+        "user_id": user_id,
+        "user_email": user_email,
+        # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
+        "frontend_id": frontend_id or "",
+        "frontend_version": frontend_version or "",
+        # ADR-0009 Step F'.2 additions:
+        "user_persona": user_persona,
+        "entitled_domains": entitled_domains,
+        "candidate_verb": candidate_verb,
+        "entity_refs": entity_refs,
+        # THE SPOKEN SLOTS, forwarded rather than dropped. `{}` on every request until the
+        # slot-filler is called - see the finding. Threaded here, beside entity_refs,
+        # because the two come from the same response and are constantly confused: refs are
+        # untyped values, slots are argument name -> value.
+        "slots": dict(slots or {}),
+        "bound_slots": dict(bound_slots or {}),
+        "spoken_slot": spoken_slot or "",
+        "spoken_answer": spoken_answer or "",
+        "pre_resolved": dict(pre_resolved or {}),
+        # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
+        # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
+        "trace_id": trace_id,
+        "session_id": session_id,
+        # The bff.orchestrate span's id, ambient in the producer task.
+        "parent_span_id": current_span_id(),
+    }
+    return op_config
+
+
 async def _launch_supervisor_job(
     query: str,
     thread_id: str,
@@ -8981,12 +9522,27 @@ async def _launch_supervisor_job(
     runConfig keys; the legacy ones default to sane values so the existing
     Dagster ops still validate.
     """
-    entitled_domains = entitled_domains or []
-    entity_refs = entity_refs or []
-    # candidate_verb is no longer threaded — supervisor sends user_query to
-    # /search_predicates directly. Keep the op_config field as an empty
-    # string so the existing Dagster schema still validates.
-    candidate_verb = ""
+    op_config = _supervisor_op_config(
+        query=query,
+        thread_id=thread_id,
+        persona=persona,
+        domain=domain,
+        task_plan_json=task_plan_json,
+        user_id=user_id,
+        frontend_id=frontend_id,
+        frontend_version=frontend_version,
+        user_email=user_email,
+        user_persona=user_persona,
+        entitled_domains=entitled_domains,
+        entity_refs=entity_refs,
+        slots=slots,
+        bound_slots=bound_slots,
+        spoken_slot=spoken_slot,
+        spoken_answer=spoken_answer,
+        pre_resolved=pre_resolved,
+        trace_id=trace_id,
+        session_id=session_id,
+    )
     mutation = """
     mutation LaunchSupervisor($repo: String!, $loc: String!, $runConfig: RunConfigData!) {
       launchRun(
@@ -9018,41 +9574,6 @@ async def _launch_supervisor_job(
     }
     """
     
-    # Shared op config — same keys to every op so a Dagster op author can
-    # rely on consistent context regardless of which op they're in.
-    op_config = {
-        "user_query": query,
-        "thread_id": thread_id,
-        "persona": persona,
-        "domain": domain,
-        "task_plan_json": task_plan_json,
-        "user_id": user_id,
-        "user_email": user_email,
-        # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
-        "frontend_id": frontend_id or "",
-        "frontend_version": frontend_version or "",
-        # ADR-0009 Step F'.2 additions:
-        "user_persona": user_persona,
-        "entitled_domains": entitled_domains,
-        "candidate_verb": candidate_verb,
-        "entity_refs": entity_refs,
-        # THE SPOKEN SLOTS, forwarded rather than dropped. `{}` on every request until the
-        # slot-filler is called - see the finding. Threaded here, beside entity_refs,
-        # because the two come from the same response and are constantly confused: refs are
-        # untyped values, slots are argument name -> value.
-        "slots": dict(slots or {}),
-        "bound_slots": dict(bound_slots or {}),
-        "spoken_slot": spoken_slot or "",
-        "spoken_answer": spoken_answer or "",
-        "pre_resolved": dict(pre_resolved or {}),
-        # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
-        # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
-        "trace_id": trace_id,
-        "session_id": session_id,
-        # The bff.orchestrate span's id, ambient in the producer task.
-        "parent_span_id": current_span_id(),
-    }
-
     run_config = {
         "ops": {
             "create_task_plan": {
@@ -9511,6 +10032,50 @@ def _trace_headers(trace_id: str, session_id: str = "") -> dict:
     return h
 
 
+_DURABLE_ANSWERS = None
+
+
+def _answer_path() -> str:
+    # IAGENT_ANSWER_PATH: "dagster" (default) or "durable"; read per request.
+    raw = os.getenv("IAGENT_ANSWER_PATH", "dagster")
+    val = (raw or "").strip().lower() or "dagster"
+    if val not in ("dagster", "durable"):
+        logger.warning("IAGENT_ANSWER_PATH=%r is not 'dagster' or 'durable'; using 'dagster'", raw)
+        return "dagster"
+    return val
+
+
+def _answer_backend():
+    """The launch and the four run reads for ONE stream, chosen at call time.
+
+    Every dagster-side helper is looked up when it is CALLED (the lambdas), never bound here:
+    the seam's tests monkeypatch the module-level names."""
+    global _DURABLE_ANSWERS
+    if _answer_path() == "durable":
+        if _DURABLE_ANSWERS is None:
+            from src.iagent.durable_answers import DurableAnswers
+            _DURABLE_ANSWERS = DurableAnswers(_RESTATE_INGRESS_URL)
+        client = _DURABLE_ANSWERS
+        return SimpleNamespace(
+            launch=lambda *a, **kw: client.launch(_supervisor_op_config(*a, **kw)),
+            status=client.get_run_status,
+            events=client.get_run_events,
+            steps=client.get_step_stats,
+            payload=client.get_ui_payload_output,
+            poll_s=client.poll_interval_s,
+            max_ticks=int(round(900 / client.poll_interval_s)),
+        )
+    return SimpleNamespace(
+        launch=lambda *a, **kw: _launch_supervisor_job(*a, **kw),
+        status=lambda rid: _get_run_status(rid),
+        events=lambda rid: _get_run_events(rid),
+        steps=lambda rid: _get_step_stats(rid),
+        payload=lambda rid: _get_ui_payload_output(rid),
+        poll_s=1.0,
+        max_ticks=900,
+    )
+
+
 async def _generate_dagster_stream_inner(
     request: InterviewRequest,
     trace_id: str = "",   # cortex-ui X-Trace-Id (ADR-0038); seeds the analyst trace via the supervisor
@@ -9829,7 +10394,9 @@ async def _generate_dagster_stream_inner(
                         "user_persona": user_persona,
                         "entitled_domains": entitled_domains,
                     },
-                    headers=_trace_headers(trace_id, session_id),
+                    # The caller's own token, so engine O binds the person (never the body).
+                    headers={**_trace_headers(trace_id, session_id),
+                             **({"Authorization": f"Bearer {caller_token}"} if caller_token else {})},
                 )
                 resp.raise_for_status()
                 intent_extraction = resp.json()
@@ -10282,7 +10849,8 @@ async def _generate_dagster_stream_inner(
             "domain": domain,
             "extracted_concepts": [],
         })
-    run_id = await _launch_supervisor_job(
+    _ab = _answer_backend()
+    run_id = await _ab.launch(
         user_query,
         session_id,
         domain=domain,
@@ -10359,7 +10927,8 @@ async def _generate_dagster_stream_inner(
     # handled by _keepalive_wrap's `: keepalive\n\n` comment lines.
     # The accumulating-rows UI bug is fixed at its source.
 
-    # THE ONE DEADLINE IN THIS GENERATOR: 900 one-second ticks, the 15 minute ceiling for slow
+    # THE ONE DEADLINE IN THIS GENERATOR: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
+    # dagster, the same 15 minutes on the durable path), the ceiling for slow
     # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
     # ended by it, so a paused tick does not count toward it; the pause is bounded by the
     # vault entry's own life, after which the state is None and the ticks count again. The
@@ -10367,8 +10936,8 @@ async def _generate_dagster_stream_inner(
     # fetch.
     _ticks = 0
     _reauth_paused = False
-    while _ticks < 900:
-        await asyncio.sleep(1.0)
+    while _ticks < _ab.max_ticks:
+        await asyncio.sleep(_ab.poll_s)
 
         _vstate = VAULT.state(run_id)
         if _vstate == "awaiting_reauth":
@@ -10387,7 +10956,7 @@ async def _generate_dagster_stream_inner(
                 if _vstate == "live":
                     yield _sse("run_reauth_resumed", json.dumps({"run_id": run_id}))
 
-        status_data = await _get_run_status(run_id)
+        status_data = await _ab.status(run_id)
         if status_data.get("status") == "CANCELED":
             VAULT.close(run_id)
             break
@@ -10432,7 +11001,7 @@ async def _generate_dagster_stream_inner(
         # Decision card focuses on the primary route the user's
         # answer flows through. Multi-subtask UI semantics is a
         # future ADR.
-        mats = await _get_run_events(run_id)
+        mats = await _ab.events(run_id)
         for mat in mats:
             path = mat.get("assetKey", {}).get("path")
             if path == ["active_agent_roster"] and "plan_emitted" not in emitted_steps:
@@ -10701,7 +11270,7 @@ async def _generate_dagster_stream_inner(
                 return ["retrieving"]
             return STEP_TO_COMPLETED_KINDS.get(step_key, [])
 
-        step_stats = await _get_step_stats(run_id)
+        step_stats = await _ab.steps(run_id)
         for stat in step_stats:
             step_key = stat.get("stepKey", "")
             status = stat.get("status", "")
@@ -10752,7 +11321,7 @@ async def _generate_dagster_stream_inner(
 
     # THE ORDINARY PATH'S `review_request` CONSUMER (R-076). Before the payload fetch, and
     # whatever the run's outcome: see `_open_acceptances_from_run` for why both.
-    for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle):
+    for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle, get_events=_ab.events):
         yield _acc_err
 
     if is_success:
@@ -10761,7 +11330,7 @@ async def _generate_dagster_stream_inner(
         # payload happens here. No extra "Retrieving Final UI Payload"
         # status row needed — composing stays loading until either
         # the payload arrives (completed) or fetching fails (error).
-        result = await _get_ui_payload_output(run_id)
+        result = await _ab.payload(run_id)
 
         if "error" in result:
             logger.error("BFF Error: %s", result["error"])
@@ -10974,7 +11543,7 @@ async def _open_safety_acceptance(
         )
 
 
-async def _open_acceptances_from_run(run_id: str, bundle: dict) -> list[str]:
+async def _open_acceptances_from_run(run_id: str, bundle: dict, get_events=None) -> list[str]:
     """The ordinary (Dagster) path's consumer: every `subtask_review_request` the run
     materialized, opened once each. Returns the error SSEs to yield.
 
@@ -10992,7 +11561,8 @@ async def _open_acceptances_from_run(run_id: str, bundle: dict) -> list[str]:
     every run materializes `active_agent_roster`, so zero materializations means the read
     failed. That is recorded on the artifact rather than read as absence.
     """
-    mats = await _get_run_events(run_id)
+    get_events = get_events or _get_run_events
+    mats = await get_events(run_id)
     if not mats:
         logger.warning(
             "acceptance check for run %s read ZERO materializations — the read failed, "
@@ -11888,7 +12458,9 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
     # uses request.session_id (the conversation thread) downstream.
     # The BFF mints one when the caller sends none, so no client can silence tracing
     # (architect ruling 4, 2026-11-10).
-    _trace_id = request_trace_id(http_request.headers.get("X-Trace-Id"))
+    # A valid W3C `traceparent` wins: its trace-id is the trace and its parent-id parents the root span.
+    _trace_ctx = request_trace_context(http_request.headers)
+    _trace_id = _trace_ctx.trace_id
     entitled_cells = [
         {"persona": c.persona, "domain": c.domain} for c in ent.cells
     ]
@@ -12154,6 +12726,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
           trace_id=_trace_id,
           session_id=request.session_id,
           authz_id=current_user.authz_id,
+          parent_span_id=_trace_ctx.parent_span_id,
         ),
         media_type="text/event-stream",
         headers={
@@ -13016,7 +13589,8 @@ def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: s
 
 async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
                      provenance_block: dict, seeded_by: Optional[str] = None,
-                     predecessor: Optional[str] = None) -> bool:
+                     predecessor: Optional[str] = None,
+                     trace_context: Optional[dict] = None) -> bool:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/run/send` -- the same case-runner
     call `_open_safety_acceptance` makes above (~6590), reused here for the ingest/origin seam's
     two case-opening points (an event-branch content kind on arrival, section 3; an origin
@@ -13036,7 +13610,8 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
             resp = await client.post(
                 f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/run/send",
                 json={"trigger": trigger, "facts": facts, "provenance": provenance_block,
-                      "seeded_by": seeded_by, "predecessor": predecessor},
+                      "seeded_by": seeded_by, "predecessor": predecessor,
+                      **({"trace_context": trace_context} if trace_context is not None else {})},
             )
         resp.raise_for_status()
         return True
@@ -13818,9 +14393,21 @@ def _dotted_get(d: dict[str, Any], path: str) -> Any:
     return cur
 
 
+def _door_trace_context(tctx) -> Optional[dict]:
+    """The `trace_context` the door hands the case runner: a W3C traceparent naming the trace and
+    the door span (else the inbound parent-id, else a fresh span id) plus the inbound tracestate.
+    None only when the leaf is absent, so no valid trace id can be named."""
+    trace_id = trace_id_for(tctx.trace_id)
+    if not trace_id:
+        return None
+    span_id = current_span_id() or tctx.parent_span_id or secrets.token_hex(8)
+    return {"traceparent": format_traceparent(trace_id, span_id), "tracestate": tctx.tracestate}
+
+
 @app.post("/ingest/events", responses=DROP_GATE_RESPONSES)
 async def ingest_event(
     req: IngestEventRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
 ):
     """POST /ingest/events (section C, ingest/origin seam) — the JSON door for an event-branch
@@ -13853,6 +14440,39 @@ async def ingest_event(
     revised; the same event_id with different bytes is a revision. A delegate attaches only to a
     case it seeded: otherwise 403 `delegate_not_seeder`, and nothing is recorded.
     """
+    tctx = request_trace_context(http_request.headers)
+    span_ids: dict[str, Any] = {}
+    outcome = "error"
+    with observed_trace(
+        MAPPING,
+        build_trace_values(trace_id=tctx.trace_id, authz_id=current_user.authz_id,
+                           engine="cortex-bff", verb="/ingest/events"),
+        name="bff.ingest_event", parent_span_id=tctx.parent_span_id,
+    ):
+        try:
+            result = await _ingest_event_body(
+                req, current_user, _door_trace_context(tctx), span_ids)
+            wf = result.get("workflow") or {}
+            outcome = ("attached" if wf.get("attached") else "revised" if "rev" in result
+                       else "started" if wf.get("started") else "not_started")
+            return result
+        except HTTPException as exc:
+            detail = exc.detail
+            outcome = (str(detail.get("error") or exc.status_code) if isinstance(detail, dict)
+                       else str(exc.status_code))
+            raise
+        finally:
+            # OPAQUE IDS ONLY: never a fact, label, asset id or any record field.
+            annotate_span(outcome=outcome, **span_ids)
+
+
+async def _ingest_event_body(
+    req: IngestEventRequest,
+    current_user: User,
+    trace_context: Optional[dict],
+    span_ids: dict,
+):
+    """The body of POST /ingest/events; the route above wraps it in the door span."""
     from . import content_kinds, provenance
 
     # R-089: on_behalf_of from a delegate is ASSERTED by configuration this pass (R-089); token
@@ -13864,6 +14484,8 @@ async def ingest_event(
         current_user.authz_id if current_user.authz_id in _delegate_principals() else None
     )
     _registered_kind = content_kinds.by_kind(req.content_kind)
+    if _registered_kind is not None:
+        span_ids["content_kind"] = _registered_kind.kind
     if _registered_kind is None or _registered_kind.branch != "event":
         raise HTTPException(
             status_code=422,
@@ -13946,6 +14568,7 @@ async def ingest_event(
             },
         )
     case_id = str(identity_value)
+    span_ids["ingest_id"], span_ids["case_id"] = ingest_id, case_id
     # The runner's OWN intake check, run here before the case opens: `requires` above is only
     # part of what intake refuses (key, episode, `carries`, outcome clash), and an event the door
     # answered 200 must not be refused 123 ms later where the producer cannot see it. Shared by
@@ -14150,7 +14773,7 @@ async def ingest_event(
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
         ingest_id=ingest_id, provenance_block=provenance_block, seeded_by=seeded_by,
-        predecessor=predecessor,
+        predecessor=predecessor, trace_context=trace_context,
     )
     if started:
         await run_in_threadpool(lambda: ingest_status.update_status(
@@ -14608,6 +15231,10 @@ _EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 # POST-by-range: receipts read from the store per page. A page is a read size, never a cap: the
 # only cap is `_EXPORT_MAX_NOTICES`, and it counts the CALLER's notices only.
 _EXPORT_RANGE_PAGE = 500
+# POST-by-range: pages read from the store per request, a BOUND on work and never a count of anything.
+# The domain scope sits in the query (a receipt carries its domain), so another domain's volume is
+# not read; what remains is the caller's own receipts plus the NULL-domain rows not yet resolved.
+_EXPORT_RANGE_MAX_PAGES = 40
 
 
 def _export_parse_range(from_, to) -> tuple:
@@ -14857,6 +15484,100 @@ async def _export_notice_domain(ingest_id: str, row: dict, rec) -> Optional[str]
         return None
 
 
+async def _receipt_domain(ingest_id: str, row: dict) -> Optional[str]:
+    """The ONE way a notice's domain is found: its decision record, else the audience of the
+    current generation's OPEN task (`_export_notice_domain`). The range and the preflight both call
+    it, so a range never lists a notice the export then refuses. The column on the receipt is not
+    this answer: it only keeps other domains' rows out of the range's query."""
+    from starlette.concurrency import run_in_threadpool
+
+    rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+    return await _export_notice_domain(ingest_id, row, rec)
+
+
+_RECEIPT_DOMAIN_ATTEMPTS = 3
+
+
+async def _mark_receipt_no_domain(ingest_id: str) -> None:
+    """A receipt whose resolution SUCCEEDED and found no domain (no decision record, no open task)
+    is marked `NO_DOMAIN`, only from NULL, so it leaves every caller's scan and cannot spend
+    another caller's page bound. NULL stays "not resolved / the write failed". The marker is never
+    permanent: a task filed for the receipt replaces it (`_note_receipt_domain`, best effort, after filing).
+    Best effort: a failed mark costs a later range one more look at the row, never a notice."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    try:
+        await run_in_threadpool(lambda: ingest_status.set_no_domain(ingest_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("receipt no-domain mark failed for %s: %s", ingest_id, type(exc).__name__)
+
+
+async def _note_receipt_domain(ingest_id: str, domain: Optional[str]) -> None:
+    """Write a receipt's review domain once a source has named it. No domain is no write
+    here (`_mark_receipt_no_domain` is the marker's only writer, and filing replaces it).
+
+    The write is RETRIED, and if it still fails the stored value is cleared (NULL is never
+    excluded by the range's query), so a stale domain cannot hide a notice. BEST EFFORT, always:
+    it runs AFTER the task is filed, so it never raises (a 503 there would fail a call whose
+    filing succeeded). The strict step is `_clear_stale_receipt_domain`, BEFORE filing. If both
+    the write and the clear fail it only logs: the range derives every domain itself."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    if not (domain and str(domain).strip()):
+        return
+    last = None
+    for attempt in range(_RECEIPT_DOMAIN_ATTEMPTS):
+        try:
+            await run_in_threadpool(lambda: ingest_status.set_domain(ingest_id, str(domain)))
+            return
+        except ingest_status.IngestStatusConfigError:
+            return                  # no projection store: nothing to scope, and no range can run either
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            logger.warning("receipt domain write failed for %s (attempt %d): %s",
+                           ingest_id, attempt + 1, type(exc).__name__)
+            await asyncio.sleep(0.05 * (attempt + 1))
+    try:
+        await run_in_threadpool(lambda: ingest_status.clear_domain(ingest_id))
+        return                                       # repaired: NULL, so no stale domain excludes it
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("receipt domain repair failed for %s: %s", ingest_id, type(exc).__name__)
+
+
+async def _clear_stale_receipt_domain(ingest_id: str, stored: Optional[str], domain: str) -> None:
+    """BEFORE a task is filed against `domain`: a stored domain that differs (a re-class A -> B, or
+    the `<none>` marker) is cleared to NULL first. NULL is never excluded by the range's query, so
+    whatever happens after the filing (the write of `domain` failing, a crash) leaves the notice
+    findable, never hidden under the old domain. Nothing is filed when the clear does not land:
+    503 `receipt_domain_unwritten`, and the caller's retry starts clean. Retried like the write."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    if not stored or stored == domain:
+        return
+    last = None
+    for attempt in range(_RECEIPT_DOMAIN_ATTEMPTS):
+        try:
+            await run_in_threadpool(lambda: ingest_status.clear_domain(ingest_id))
+            return
+        except ingest_status.IngestStatusConfigError:
+            return                  # no projection store: nothing stored to clear
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            logger.warning("receipt domain clear failed for %s (attempt %d): %s",
+                           ingest_id, attempt + 1, type(exc).__name__)
+            await asyncio.sleep(0.05 * (attempt + 1))
+    raise HTTPException(status_code=503, detail={
+        "error": "receipt_domain_unwritten",
+        "message": f"the stored review domain could not be cleared before filing: "
+                   f"{type(last).__name__}; nothing was filed; retry"})
+
+
 async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
     """`(ids, echo)`: the notices RECEIVED (`ingest_status.created_at`) in the UTC-day range, both
     ends inclusive, narrowed to the caller's cell domains. The timestamp is receipt, not
@@ -14873,7 +15594,13 @@ async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
     counted against the cap (the scan stops at the first one past it). So another domain's volume
     in the range neither refuses the caller nor shows in any reply. The refusal states the cap
     (configuration) and NEVER a count: nothing the caller receives says how many notices the range
-    holds, in scope or out."""
+    holds, in scope or out.
+
+    The domain of every receipt is derived by `_receipt_domain`, the ONE function the preflight
+    also uses; the stored column is NEVER the answer, it only keeps other domains' rows out of the
+    query. So a stale or missing stored value cannot make the export differ from the preflight, and
+    a notice whose task was superseded or expired with no decision is dropped alone, never failing
+    the range."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
@@ -14882,20 +15609,34 @@ async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
     domains = {c.domain for c in current_user.entitlements.cells}
     ids: list = []
     after = None
+    pages = 0
     while domains:
+        if pages >= _EXPORT_RANGE_MAX_PAGES:
+            raise HTTPException(status_code=422, detail={
+                "error": "export_range_scan_bound",
+                "message": f"a range read at most {_EXPORT_RANGE_MAX_PAGES} pages of receipts; "
+                           "narrow the range"})
         try:
             page = await run_in_threadpool(
                 lambda a=after: ingest_status.list_by_created(
-                    start_ms, end_ms, _EXPORT_RANGE_PAGE, after=a))
+                    start_ms, end_ms, _EXPORT_RANGE_PAGE, after=a, domains=domains))
         except Exception as exc:  # noqa: BLE001
             logger.warning("ingest range read failed: %s", exc)
             raise HTTPException(status_code=503, detail={
                 "error": "ingest_store_unreachable",
                 "message": f"the ingest store did not answer: {type(exc).__name__}"})
+        pages += 1
         for row in page:
             ingest_id = row["id"]
-            rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
-            if await _export_notice_domain(ingest_id, row, rec) in domains:
+            # The stored domain only kept other domains' rows out of the query. What a row's domain
+            # IS comes from the one function the preflight also calls, so a stale stored value (a
+            # task superseded or expired without a decision) cannot list a notice the export refuses.
+            domain = await _receipt_domain(ingest_id, row)
+            if domain and domain != row.get("domain"):
+                await _note_receipt_domain(ingest_id, domain)      # repair the stored value, best effort
+            elif not domain:
+                await _mark_receipt_no_domain(ingest_id)           # resolved, and none: out of the scan
+            if domain in domains:
                 ids.append(ingest_id)
                 if len(ids) > _EXPORT_MAX_NOTICES:
                     raise HTTPException(status_code=422, detail={
@@ -14931,8 +15672,7 @@ async def _export_preflight(prof, notice_ids: list, current_user) -> tuple:
         if row is None or row.get("kind") == ingest_status.EVENT:
             bad.append({"notice_id": ingest_id, "reason": "not_available"})
             continue
-        rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
-        if await _export_notice_domain(ingest_id, row, rec) not in domains:
+        if await _receipt_domain(ingest_id, row) not in domains:
             bad.append({"notice_id": ingest_id, "reason": "not_available"})
             continue
         if prof.accepts is not None and row.get("content_kind") not in prof.accepts:
@@ -15982,9 +16722,11 @@ async def _file_or_find_document_promotion_task(
         # always. The audience must not move.
         existing = await run_in_threadpool(lambda: human_tasks.get_open_task_payload(task_id))
         if existing is None:
+            await _note_receipt_domain(ingest_id, domain)
             return task_id, "ALREADY_FILED"
         if (str(existing.get("content_kind") or "").strip().lower()
                 == str(row.get("content_kind") or "").strip().lower()):
+            await _note_receipt_domain(ingest_id, domain)
             return task_id, "ALREADY_FILED"
         state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(task_id))
         if (state or {}).get("audience") != audience:
@@ -16059,7 +16801,13 @@ async def _file_or_find_document_promotion_task(
     if _refresh:
         await run_in_threadpool(lambda: human_tasks.refresh_open_task(
             task_id, payload=payload, title=_title, summary=_summary))
+        await _note_receipt_domain(ingest_id, domain)
         return task_id, "ALREADY_FILED"
+    # THE CLEAR SITS HERE, immediately before a task would be filed, and nowhere earlier: a call
+    # that finds the task already open files nothing, so a clear that cannot land must not turn it
+    # into a 503 "nothing was filed" (it is repaired by `_note_receipt_domain` on that path). The
+    # clear still precedes the filing, so a failed write after it leaves NULL, never the old domain.
+    await _clear_stale_receipt_domain(ingest_id, row.get("domain"), domain)
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,
@@ -16073,6 +16821,7 @@ async def _file_or_find_document_promotion_task(
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
     except human_tasks.NoRequester as exc:
         raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
+    await _note_receipt_domain(ingest_id, domain)
     return task_id, "FILED"
 
 
@@ -17669,8 +18418,35 @@ def _action_chain(record: dict, transitions: list) -> list[dict]:
     return chain
 
 
+def _continue_case_trace(response: Response, case: Optional[dict], case_id: str,
+                         current_user: User) -> None:
+    """The return leg of a case's W3C trace, on a 200 ONLY (the caller reaches here past every
+    refusal, so a 403/404/503 carries no trace header and leaks nothing about which cases exist).
+    The case's STORED `trace_context` is the only source: a `traceparent` this GET arrives with
+    is neither read nor adopted. Opens `bff.case_action` on the stored trace under the stored
+    parent and answers `traceparent` (this span's id, else the stored parent) and the stored
+    `tracestate`, echoed and never interpreted. The body is untouched."""
+    tc = case.get("trace_context") if isinstance(case, dict) else None
+    parsed = parse_traceparent(tc.get("traceparent")) if isinstance(tc, dict) else None
+    if parsed is None:
+        return
+    trace_id, parent_id, _flags = parsed
+    with observed_trace(
+        MAPPING,
+        build_trace_values(trace_id=trace_id, authz_id=current_user.authz_id,
+                           engine="cortex-bff", verb="/cases/action"),
+        name="bff.case_action", parent_span_id=parent_id,
+    ):
+        annotate_span(case_id=case_id)
+        response.headers["traceparent"] = format_traceparent(
+            trace_id, current_span_id() or parent_id)
+    if tc.get("tracestate"):
+        response.headers["tracestate"] = tc["tracestate"]
+
+
 @app.get("/cases/{case_id}/action")
-async def get_case_action(case_id: str, current_user: User = Depends(get_current_user)):
+async def get_case_action(case_id: str, response: Response,
+                          current_user: User = Depends(get_current_user)):
     """GET /cases/{case_id}/action -- who chose, who approved, who released a maintenance case,
     with the work order and the manual data modules it cites.
 
@@ -17764,6 +18540,7 @@ async def get_case_action(case_id: str, current_user: User = Depends(get_current
     body = dict(record)
     for k, v in additive.items():
         body.setdefault(k, v)  # a key the record carries is never overwritten
+    _continue_case_trace(response, case, case_id, current_user)
     return body
 
 
@@ -18025,43 +18802,54 @@ async def electric_shape_proxy(
     table = upstream_params.get("table") or "answer_artifact_projection"
     upstream_params["table"] = table
 
+    # 2b. ADR-0068 s8: the allow-list. A table is streamed only if a row of
+    #     policy/electric_shapes.yaml names it exactly. Tasks are NOT on it: a shape's WHERE cannot
+    #     evaluate a label, so a task is read through /me/queue and /me/needs_you. Unknown is not
+    #     "allowed": an unreadable list is 503, never a served shape.
+    from . import electric_shapes as _electric_shapes
+    from .authz.refusal import policy_refusal
+    try:
+        _shape_row = _electric_shapes.allowed_row(table)
+    except _electric_shapes.ElectricShapesUnreadable as exc:
+        logger.error("electric shape allow-list unreadable: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the shape allow-list could not be read"}) from exc
+    if _shape_row is None:
+        raise policy_refusal(
+            "shape_refused", policy_id=_electric_shapes.POLICY_FAMILY,
+            missing_binding=f"electric_shape({table})",
+            message="this table is not streamed; read tasks through GET /me/queue")
+
     # 3. Build the server-verified WHERE clause, per table. Electric's WHERE
     #    parser supports a subset of PostgreSQL and does NOT accept the `->>`
     #    JSONB operator, so each filter references a plain column populated at
     #    write time.
-    #      - human_task_projection: recipient_id = <verified caller AUTHZ_ID>.
-    #        The HITL queue is keyed on the authz identity (Topaz's key) end-to-end,
-    #        so the replication filter and the Topaz can_act gate derive from ONE
-    #        truth and there is no sub<->email bridge to mis-route. authz_id == email
-    #        in sandbox; at work-deploy it becomes the employee-ID claim, and this
-    #        filter re-keys with the knob (no code change here).
+    #      - human_task_projection: NOT STREAMED (ADR-0068 s8). It is refused at 2b above and no
+    #        branch here filters it: a shape cannot evaluate a label.
     #      - answer_artifact_projection (default): produced_for_user_id = <sub>
     #        (interim per-user ownership isolation, NOT Topaz authz — unchanged).
-    # NOTE the `else` catches EVERY non-task table -> every table gets a
-    # server-side WHERE; there is no branch that serves a table UNFILTERED.
-    if table == "human_task_projection":
-        escaped_id = _escape_identity_literal(current_user.authz_id)
-        # Scope the inbox stream to PENDING rows only, so it agrees with the REST snapshot
-        # (/me/human_tasks): resolving a task moves it OUT of the shape -> Electric emits a delete.
-        # The predicate's definition now lives in human_tasks (inbox_where_literal), shared with
-        # list_tasks_for; this site only supplies the validated, escaped identity.
-        from . import human_tasks as _human_tasks
-        server_where = _human_tasks.inbox_where_literal(escaped_id)
-    elif table == "ingest_status_projection":
+    # NOTE the `else` REFUSES: there is no branch that serves a table UNFILTERED.
+    if table == "ingest_status_projection":
         # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
-        # as human_task_projection above (submitted_by/on_behalf_of are authz identities,
+        # as the answers stream (submitted_by/on_behalf_of are authz identities,
         # not sub/email) — a caller sees rows where they are EITHER the submitter or the
         # on_behalf_of principal, mirroring ingest_status.get_status_for's REST scoping so
         # the streamed shape and the REST snapshot agree on who can see what.
         escaped_id = _escape_identity_literal(current_user.authz_id)
         server_where = f"(submitted_by = '{escaped_id}' OR on_behalf_of = '{escaped_id}')"
-    else:
+    elif table == "answer_artifact_projection":
         escaped = _escape_sql_string_literal(verified_user_id)
-        server_where = f"produced_for_user_id = '{escaped}'"
-        if table == "answer_artifact_projection":
-            # Rev 187: the default view hides archived answers (archive hides, never deletes;
-            # `GET /answers?include_archived=true` lists them). Other tables keep their filter.
-            server_where += " AND archived_at IS NULL"
+        # Rev 187: the default view hides archived answers (archive hides, never deletes;
+        # `GET /answers?include_archived=true` lists them).
+        server_where = f"produced_for_user_id = '{escaped}' AND archived_at IS NULL"
+    else:
+        # A listed table this proxy has no per-caller filter for is never served: a row of the
+        # allow-list is permission, not a filter, so it cannot open an unfiltered shape.
+        raise policy_refusal(
+            "shape_refused", policy_id=_electric_shapes.POLICY_FAMILY,
+            missing_binding=f"electric_shape_filter({table})",
+            message="this table has no per-caller filter on the shape proxy")
     upstream_params["where"] = server_where
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
