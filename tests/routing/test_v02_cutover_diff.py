@@ -34,6 +34,8 @@ from typing import Any
 import pytest
 
 
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 # Column names returned by the Cypher RETURN below. Pre-v0.2 edges
 # materialized by the doc-tools sensor lack ``tool_urn`` AND
 # ``provider`` (the allowlist drift + a44b9fb match-key bug both

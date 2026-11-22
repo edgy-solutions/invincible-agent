@@ -145,6 +145,9 @@ def ask(eo, monkeypatch):
     from fastapi.testclient import TestClient
 
     def _go(answers, *, user_email="", domains=(), driver=None):
+        # The caller is the VERIFIED token (lane 74): who the case names, holding `domains`.
+        from tests._helpers.verified_caller import install
+        install(monkeypatch, eo, user_email, list(domains))
         if driver is not None:
             monkeypatch.setattr(eo, "_NEO4J_DRIVER", driver)
 
@@ -281,3 +284,4 @@ def test_SHARED_FILTER_enumerate_calls_the_one_function_and_nothing_else_tests_t
     users = {name for name, fn in fns.items()
              if prefixes & {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}}
     assert users == {"_filter_sustainment_candidates"}, users
+

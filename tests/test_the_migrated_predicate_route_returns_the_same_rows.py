@@ -249,8 +249,10 @@ def _scripted():
     `plain` (no anti-synonyms, penalty inapplicable), `penalised` (overlap 0.5 on a 0.80 score →
     0.55), `json_anti` (BOTH lists arriving as JSON STRINGS, doc-tools' other serialization, and it
     must score exactly like `penalised`), `scoreless` (no retrieval score at all — sorts last and
-    must not raise), `bare` (every optional key ABSENT, which is a different read from present-and
-    -null), `floored` (overlap large enough that the penalty would go negative), and `broken_json`
+    must not raise), `bare` (every optional key ABSENT EXCEPT the endpoint, because an endpoint-less row is a
+    renderer and never reaches the pool — see
+    `tests/routing/test_a_renderer_is_never_a_routing_candidate.py` — which is a different read from
+    present-and-null), `floored` (overlap large enough that the penalty would go negative), and `broken_json`
     (an unparseable string, which must degrade to an empty list rather than propagate a ValueError).
     """
     return [
@@ -274,6 +276,7 @@ def _scripted():
         _Obj(
             {
                 "verb_iri": "mesh:penalised",
+                "endpoint_url": "http://e",
                 "verb_local": "penalised",
                 "domains": [],
                 "verb_anti_synonyms": ["forecast budget"],
@@ -285,6 +288,7 @@ def _scripted():
         _Obj(
             {
                 "verb_iri": "mesh:json_anti",
+                "endpoint_url": "http://e",
                 "verb_local": "json_anti",
                 "domains": ["MAINTENANCE"],
                 "verb_anti_synonyms": '["forecast budget"]',
@@ -296,6 +300,7 @@ def _scripted():
         _Obj(
             {
                 "verb_iri": "mesh:scoreless",
+                "endpoint_url": "http://e",
                 "verb_local": "scoreless",
                 "domains": ["MAINTENANCE"],
                 "verb_anti_synonyms": [],
@@ -303,10 +308,11 @@ def _scripted():
             },
             None,
         ),
-        _Obj({"verb_iri": "mesh:bare"}, 0.10),
+        _Obj({"verb_iri": "mesh:bare", "endpoint_url": "http://e"}, 0.10),
         _Obj(
             {
                 "verb_iri": "mesh:floored",
+                "endpoint_url": "http://e",
                 "verb_local": "floored",
                 "domains": ["MAINTENANCE"],
                 "verb_anti_synonyms": ["forecast the maintenance budget for next quarter"],
@@ -318,6 +324,7 @@ def _scripted():
         _Obj(
             {
                 "verb_iri": "mesh:broken_json",
+                "endpoint_url": "http://e",
                 "verb_local": "broken_json",
                 "domains": ["MAINTENANCE"],
                 "verb_anti_synonyms": "{not json",
@@ -523,7 +530,7 @@ def test_the_ROUTES_upper_case_the_scope_which_is_what_makes_that_DIFF_unreachab
 
         callers[fn.name] = (expr, ok)
 
-    assert set(callers) == {"search_predicates", "classify_predicate"}, (
+    assert set(callers) == {"search_predicates", "classify_predicate", "_input_declared_pool"}, (
         f"the set of callers of predicate_hybrid_search changed: {sorted(callers)}. A new caller is "
         "a new place the case-fold difference could become reachable; normalise its scope the way "
         "the two existing routes do, then name it here."
@@ -630,6 +637,8 @@ def test_the_REQUEST_MODELS_BOTH_carry_the_person_and_BOTH_hand_it_on(main):
     assert passed == {
         "search_predicates": "request.user_email",
         "classify_predicate": "request.user_email",
+        # resolve's input-declared grounding (the bound subject, #452)
+        "_input_declared_pool": "request.user_email",
     }, (
         f"a caller of the migrated predicate search stopped handing the identity on: {passed}. "
         "Every parameter on this chain defaults to the empty string, so a dropped keyword is not a "
@@ -736,13 +745,18 @@ def test_a_ROW_MISSING_EVERY_OPTIONAL_KEY_still_meets_the_row_CONTRACT(main, mon
     a KeyError several frames away from the store that produced it."""
     rows, _, _ = _pool(main, monkeypatch, on=on)
     bare = {r["verb_iri"]: r for r in rows}["mesh:bare"]
-    assert bare["endpoint"] == "" and bare["verb_type"] == "", bare
+    assert bare["endpoint"] == "http://e" and bare["verb_type"] == "", bare
     assert bare["domains"] == [] and bare["verb_synonyms"] == [], bare
     assert bare["owner_persona"] is None and bare["cost_class"] is None, bare
     assert bare["requires_human_approval"] is False, bare
     assert bare["description"] == "", bare
     full = {r["verb_iri"]: r for r in rows}["mesh:plain"]
     assert set(bare) == set(full), (set(full) - set(bare), set(bare) - set(full))
+    # THE PROJECTION ITSELF still meets the contract for ANY row, endpoint included: the pool no
+    # longer carries an endpoint-less row, but `_predicate_row` is unchanged and must not raise.
+    direct = main._predicate_row(_QUERY, {"verb_iri": "mesh:bare"}, 0.10)
+    assert direct["endpoint"] == "", direct
+    assert set(direct) == set(full), (set(full) - set(direct), set(direct) - set(full))
 
 
 def test_the_PROJECTION_HAS_NO_SECOND_IMPLEMENTATION(main):
@@ -786,7 +800,7 @@ def test_THE_KNOWN_DIFF_a_row_owning_a_score_PROPERTY_is_read_differently(main, 
     collision rather than raising; the incumbent ignores any stored `score` and always reports the
     retrieval one. Whichever way it is settled, this arm reds and names the decision.
     """
-    objs = [_Obj({"verb_iri": "mesh:collides", "score": 0.11, "domains": []}, 0.99)]
+    objs = [_Obj({"verb_iri": "mesh:collides", "endpoint_url": "http://e", "score": 0.11, "domains": []}, 0.99)]
 
     off_rows, _, _ = _pool(main, monkeypatch, on=False, objs=objs)
     on_rows, _, _ = _pool(main, monkeypatch, on=True, objs=objs)

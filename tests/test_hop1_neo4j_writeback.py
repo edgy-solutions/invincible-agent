@@ -38,6 +38,8 @@ from src.iagent.answer_artifact_writer import (  # noqa: E402
     DurabilityStatus,
 )
 
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
+
 
 _NEO4J_URI = os.getenv("PROBE_NEO4J_URI", "bolt://localhost:17687")
 _NEO4J_USERNAME = os.getenv("PROBE_NEO4J_USERNAME", "neo4j")

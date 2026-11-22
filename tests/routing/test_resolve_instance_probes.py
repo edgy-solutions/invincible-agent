@@ -46,6 +46,8 @@ import pytest
 
 from tests._responder_identity import routing_base_url
 
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
+
 
 _BASE = routing_base_url()
 _TIMEOUT_SEC = float(os.getenv("ROUTING_TEST_TIMEOUT_SEC", "30"))

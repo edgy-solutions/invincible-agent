@@ -148,6 +148,7 @@ def test_the_number_check_boundary_cases_behave_as_the_rule_says(monkeypatch):
 # ── THE ENDPOINT RUN ───────────────────────────────────────────────────────
 
 @pytest.mark.skipif(not _ENDPOINT_ENABLED, reason="set PLANNING_EVAL_ENDPOINT=1")
+@pytest.mark.live
 def test_routing_against_the_real_endpoint_with_per_arm_attribution():
     """THE GATE ITSELF. Reports the number against the pre-registration whatever
     it is — a 70% with per-arm attribution is a better deliverable than a number

@@ -32,6 +32,9 @@ MATCHED = "matched"
 UNCLASSIFIABLE = "unclassifiable"   # no rule matched
 CONFLICT = "conflict"               # matching rules disagree -> abstain rather than pick
 
+# The review card's words for an abstention: short, fixed, bounded; never the exception text.
+ABSTENTION_REASON = {UNCLASSIFIABLE: "no rule matched", CONFLICT: "rules disagree"}
+
 
 @dataclass
 class DispositionProposal:
@@ -43,6 +46,9 @@ class DispositionProposal:
     disposition: Optional[str]
     outcome: str
     ruleset_ref: Optional[str] = None
+    # the DISTINCT dispositions of every matched rule, sorted: one when MATCHED, two or more on
+    # CONFLICT, empty when UNCLASSIFIABLE; so a reviewer sees what the rules disagree about.
+    candidates: tuple[str, ...] = ()
 
 
 def _rule_matches(rule: dict, *, doc_type: str, has_replacement: bool, change_classes: set) -> bool:
@@ -82,11 +88,12 @@ def evaluate_rules(
         if _rule_matches(r, doc_type=doc_type, has_replacement=has_replacement, change_classes=change_classes)
     ]
     dispositions = {r.get("proposesDisposition") for r in matched}
+    candidates = tuple(sorted(d for d in dispositions if d is not None))
     if not dispositions:
-        return DispositionProposal(None, UNCLASSIFIABLE, ruleset_ref)
+        return DispositionProposal(None, UNCLASSIFIABLE, ruleset_ref, candidates)
     if len(dispositions) > 1:
-        return DispositionProposal(None, CONFLICT, ruleset_ref)   # abstain rather than silently pick one
-    return DispositionProposal(next(iter(dispositions)), MATCHED, ruleset_ref)
+        return DispositionProposal(None, CONFLICT, ruleset_ref, candidates)   # abstain rather than silently pick one
+    return DispositionProposal(next(iter(dispositions)), MATCHED, ruleset_ref, candidates)
 
 
 _COND_KEYS = ("whenNoticeType", "whenHasReplacement", "whenAnyChangeClass", "whenAllChangeClass")
@@ -187,5 +194,7 @@ def build_part_items(
             proposed_disposition=proposal.disposition,
             needs_review=bool(p.get("needs_review", False)),
             proposed_by_ruleset=proposal.ruleset_ref,
+            proposal_outcome=proposal.outcome,
+            candidate_dispositions=proposal.candidates,
         ))
     return items

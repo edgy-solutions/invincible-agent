@@ -1,0 +1,12 @@
+# Where-used's menu placement, served by GET /menu_blocks (src/iagent/menu_blocks.py).
+#   subject    engine-o's where-used output class: OUTPUT_URI in
+#              agent_fleet/ontology_service/where_used.py, compacted.
+#   archetype  presentation's row for that subject: agent_fleet/presentation_agent/capabilities.py
+#              (subject_uri mesh:WhereUsedSet, object_uri mesh:InstancesByProperty).
+#   persona_fit / domain_fit  copy cortex's hand-written row; they only RANK, never gate.
+declared_by: mesh:whereIsThisPartUsed
+menu:
+  subject: mesh:WhereUsedSet
+  archetype: mesh:InstancesByProperty
+  persona_fit: [SAFETY_ENGINEER, SUSTAINMENT_ENGINEER]
+  domain_fit: [SUSTAINMENT]

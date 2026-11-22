@@ -34,6 +34,9 @@ import os
 import sys
 
 import requests
+import pytest
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 
 
 ENGINE_D_URL = os.getenv("ENGINE_D_URL", "http://localhost:8085")

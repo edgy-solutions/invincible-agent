@@ -157,6 +157,7 @@ def test_the_comparison_can_actually_fail():
 # Set CANVAS_SEED_LIVE=1 and CORTEX_BFF_URL to record the run. Run it on a QUIET substrate.
 @pytest.mark.skipif(os.environ.get("CANVAS_SEED_LIVE") != "1",
                     reason="live seed arm: set CANVAS_SEED_LIVE=1 on a quiet substrate (~50 min)")
+@pytest.mark.live
 def test_two_live_seeds_of_todays_canvas_produce_the_same_panel_set():
     """The recorded run. EXPECTED TO FAIL — that failure is the deliverable.
 
@@ -371,6 +372,7 @@ _PRE_PRIME_VERBS = [
                     reason="run B of the across-a-prime arm: set CANVAS_SEED_PRIME_B=1 AFTER a "
                            "prime AND after the reregister hook has finished (two different "
                            "completions; only the second means the substrate has settled)")
+@pytest.mark.live
 def test_the_panel_set_survives_a_prime():
     """SEAL 3, the version that can bite. One seed, compared to the pinned pre-prime record.
 

@@ -101,11 +101,16 @@ def _route_intent_posts(source: str) -> list:
 
 
 def _has_trace_headers(call: ast.Call) -> bool:
+    # `headers=_trace_headers(...)`, or that call merged with the caller's bearer
+    # (`{**_trace_headers(...), **{"Authorization": ...}}`): the trace headers are still sent.
     for kw in call.keywords:
-        if kw.arg == "headers" and isinstance(kw.value, ast.Call):
-            f = kw.value.func
-            if (f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)) == "_trace_headers":
-                return True
+        if kw.arg != "headers":
+            continue
+        for node in ast.walk(kw.value):
+            if isinstance(node, ast.Call):
+                f = node.func
+                if (f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)) == "_trace_headers":
+                    return True
     return False
 
 

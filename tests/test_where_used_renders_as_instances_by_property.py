@@ -49,7 +49,7 @@ def test_EVERY_ENVELOPE_TABLE_PART_SURVIVES_THE_PROJECTOR_PASSTHROUGH():
     key, carried = _projector_passthrough()["INSTANCES_BY_PROPERTY"]
     assert key == "rows"
     got = _ok()
-    for part in ("title", "target", "columns", "row_identity", "group_by"):
+    for part in ("title", "target", "columns", "row_identity", "group_by", "absent_reason"):
         assert part in got and part in carried, part
 
 

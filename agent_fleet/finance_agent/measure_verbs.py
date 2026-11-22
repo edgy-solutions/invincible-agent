@@ -475,6 +475,10 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
     undeclared = _contracts.undeclared(contract, (*strings, *numbers))
     if undeclared:
         raise ValueError(f"inputs.dataset names {undeclared}, which contract {cid!r} does not declare")
+    personal = sorted(set((*strings, *numbers)) & contract.personal)
+    if personal:
+        raise ValueError(f"inputs.dataset names personal_data column(s) {personal} of contract {cid!r}; "
+                         f"engine-fin releases no personal data")
     wrong = sorted({*_contracts.not_of(contract, strings, {"string"}),
                     *_contracts.not_of(contract, numbers, _contracts.NUMBER_TYPES)})
     if wrong:

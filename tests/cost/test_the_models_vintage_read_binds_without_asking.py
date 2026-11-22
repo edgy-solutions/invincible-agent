@@ -146,3 +146,12 @@ def test_a_scoped_bind_carries_its_scope(eo, monkeypatch):
     which is the only thing that distinguishes the two binds above."""
     r = _fill(eo, monkeypatch, {"rate_vintage": "2021-02-01", "lot": "lot 3"})
     assert r.resolution["rate_vintage"]["scoped_by"] == ["lot"], r.resolution["rate_vintage"]
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name tester@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "tester@example.com", ["PRODUCTION_COST"])
