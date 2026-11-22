@@ -27,6 +27,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import docx
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
@@ -48,7 +49,7 @@ ROW = SAMPLE / f"{NAME}.yaml"
 TEMPLATE = SAMPLE / "cdrl_a002_cost_performance.docx"
 AS_OF = "2026-10-28"
 DATA_AS_OF = "2026-09-30"  # the source's own as-of, distinct from the generation date
-NO_SOURCE_AS_OF = "as-of unavailable: the notional seed carries no as-of"  # via the route: a seed export
+NO_SOURCE_AS_OF = "sample data (notional seed): no as-of"  # via the route: a seed export
 MEDIA = dict(EXPECT.values())["docx"]
 IDX = "fin_performance_indices"
 FILE = f"fin-cdrl-{NAME}-{PROGRAM}.docx"
@@ -64,9 +65,15 @@ def _run_gen(script: str, out: Path) -> str:
     return r.stdout.strip()
 
 
+@pytest.fixture(autouse=True)
+def _server_clock(monkeypatch):
+    """The generation date is the server's clock (ruling 2026-11-21): pin it, never send it."""
+    monkeypatch.setattr(engine, "_request_date", lambda: AS_OF)
+
+
 def _post(c, user=ALICE):
     return c.post("/cdrl_export", json={
-        "profile": NAME, "program_id": PROGRAM, "user_email": user, "as_of": AS_OF})
+        "profile": NAME, "program_id": PROGRAM, "user_email": user})
 
 
 def _render(value, fmt):

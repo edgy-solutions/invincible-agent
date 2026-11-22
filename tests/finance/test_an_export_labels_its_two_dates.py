@@ -13,6 +13,7 @@ stubbed (no `.pyodide-cache` in a plain checkout).
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +37,9 @@ try:
 except ImportError:  # unfixed code: the unit tests fail by name, the rest by behaviour
     export_dates = None
 
+# Spelled out here, not read from the module: the seal says what the field must read.
+SAMPLE_DATA_AS_OF = "sample data (notional seed): no as-of"
+
 SAMPLE = REPO / "policy" / "overlays" / "sample" / "fin_export_profiles"
 JSON_NAME = "cdrl_a001_ev_summary_json"
 XLSX_NAME = "cdrl_a001_ev_summary"
@@ -45,12 +49,18 @@ ALICE = "alice@example.com"
 URN = "urn:li:dataset:(urn:li:dataPlatform:file,fin_test_asset,TEST)"
 DATA = "2026-10-31"
 GENERATED = "2026-11-21"
-NO_SOURCE = "as-of unavailable: the notional seed carries no as-of"
+DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def receipt(**over):
     return {"urn": URN, "ticket_id": "tkt-0001", "issued_at": "2026-11-21T00:00:00Z",
             "as_of": DATA, "as_of_source": "read_at_authorize", **over}
+
+
+@pytest.fixture(autouse=True)
+def server_clock(monkeypatch):
+    """`generated_on` is the server's clock (ruling 2026-11-21): pinned here, never sent."""
+    monkeypatch.setattr(engine, "_request_date", lambda: GENERATED)
 
 
 @pytest.fixture
@@ -83,9 +93,9 @@ def asset_backed(monkeypatch, rcpt):
     monkeypatch.setattr(engine, "_export_program_state", fake)
 
 
-def cdrl(c, profile=JSON_NAME, generated=GENERATED):
+def cdrl(c, profile=JSON_NAME, **extra):
     return c.post("/cdrl_export", json={"profile": profile, "program_id": PROGRAM,
-                                        "user_email": ALICE, "as_of": generated})
+                                        "user_email": ALICE, **extra})
 
 
 def cdrl_json_file(r):
@@ -124,9 +134,9 @@ def _canvas():
             "panels": [{"panel": i, "verb": v, "params": dict(p)} for i, (v, _s, p) in enumerate(panels)]}
 
 
-def _package(c, generated=GENERATED):
+def _package(c, **extra):
     return c.post("/package_export", json={"user_email": ALICE, "recipient_scope": SCOPE,
-                                           "canvas": _canvas(), "as_of": generated})
+                                           "canvas": _canvas(), **extra})
 
 
 def _page(dist):
@@ -218,20 +228,76 @@ def test_control_a_read_at_authorize_as_of_is_the_bare_date(served, monkeypatch)
 
 # 5 -- a seed-sourced export -------------------------------------------------------------------
 
-def test_a_seed_sourced_cdrl_says_the_seed_carries_no_as_of_never_the_generation_date(served):
+def _says_sample_data(field):
+    assert field == SAMPLE_DATA_AS_OF and "sample data" in field
+    assert not DATE_PATTERN.search(field)
+
+
+def test_a_seed_sourced_cdrl_says_sample_data_never_a_date(served):
     c, _root = served
     r = cdrl(c)
     assert r.status_code == 200, r.text[:400]
-    assert r.json()["data_as_of"] == NO_SOURCE and r.json()["data_as_of"] != GENERATED
-    assert cdrl_json_file(r)["header"]["as_of"] == NO_SOURCE
+    _says_sample_data(r.json()["data_as_of"])
+    _says_sample_data(cdrl_json_file(r)["header"]["as_of"])
+    assert r.json()["data_as_of"] != GENERATED
 
 
-def test_a_seed_sourced_package_says_the_seed_carries_no_as_of(package):
+def test_a_seed_sourced_package_says_sample_data_never_a_date(package):
     c, dist, manifests = package
     assert _package(c).status_code == 200
-    assert manifests[0]["data_as_of"] == NO_SOURCE
+    _says_sample_data(manifests[0]["data_as_of"])
     assert manifests[0]["generated_on"] == GENERATED
-    assert f"data as of {NO_SOURCE} &middot; generated {GENERATED}" in _page(dist)
+    assert f"data as of {SAMPLE_DATA_AS_OF} &middot; generated {GENERATED}" in _page(dist)
+
+
+def test_control_the_date_pattern_fires_on_an_asset_backed_field(served, monkeypatch):
+    c, _root = served
+    asset_backed(monkeypatch, receipt())
+    r = cdrl(c)
+    assert DATE_PATTERN.search(r.json()["data_as_of"])
+    assert not DATE_PATTERN.search(SAMPLE_DATA_AS_OF)
+
+
+# 5b -- a caller's date is refused; "generated" is the server's clock -----------------------------
+
+OTHER_DATE = "2031-07-08"
+REFUSED_VALUES = [GENERATED, OTHER_DATE, ""]  # today's pinned server date, another date, empty
+
+
+@pytest.mark.parametrize("value", REFUSED_VALUES)
+def test_a_cdrl_export_refuses_a_caller_supplied_as_of_and_builds_nothing(served, value):
+    c, _root = served
+    r = cdrl(c, as_of=value)
+    assert r.status_code == 422
+    assert any("as_of" in e["loc"] and "not accepted" in e["msg"] for e in r.json()["detail"])
+    assert not list(engine._cdrl_out_dir().glob("*"))
+
+
+@pytest.mark.parametrize("value", REFUSED_VALUES)
+def test_a_package_export_refuses_a_caller_supplied_as_of_and_builds_nothing(
+        package, monkeypatch, value):
+    import build_fin_package as real
+    c, dist, manifests = package
+    built = []
+    real_build = real.build
+    monkeypatch.setattr(real, "build", lambda *a, **k: built.append(1) or real_build(*a, **k))
+    r = _package(c, as_of=value)
+    assert r.status_code == 422
+    assert any("as_of" in e["loc"] and "not accepted" in e["msg"] for e in r.json()["detail"])
+    assert built == [] and manifests == [] and not dist.exists()
+
+
+def test_control_a_cdrl_export_without_as_of_is_stamped_by_the_server_clock(served):
+    c, _root = served
+    r = cdrl(c)
+    assert r.status_code == 200, r.text[:400]
+    assert r.json()["generated_on"] == engine._request_date() == GENERATED
+
+
+def test_control_a_package_export_without_as_of_is_stamped_by_the_server_clock(package):
+    c, _dist, manifests = package
+    assert _package(c).status_code == 200
+    assert manifests[0]["generated_on"] == engine._request_date() == GENERATED
 
 
 # 6 -- the profile vocabulary ------------------------------------------------------------------
@@ -260,8 +326,9 @@ def test_a_profile_naming_an_unknown_fact_is_still_refused(declared, tmp_path):
 
 # 7 -- export_dates.data_as_of -----------------------------------------------------------------
 
-def test_unit_no_receipt_is_the_seed_string():
-    assert export_dates.data_as_of(None) == NO_SOURCE
+def test_unit_no_receipt_is_the_sample_data_string():
+    assert export_dates.data_as_of(None) == SAMPLE_DATA_AS_OF == "sample data (notional seed): no as-of"
+    assert not DATE_PATTERN.search(export_dates.data_as_of(None))
 
 
 @pytest.mark.parametrize("as_of", [None, ""])

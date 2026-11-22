@@ -13,13 +13,17 @@ from __future__ import annotations
 
 AS_OF_UNAVAILABLE = "as-of unavailable"
 ADVERTISED_AT_LOAD = "advertised_at_load"
-NO_SOURCE_AS_OF = "the notional seed carries no as-of"
+SAMPLE_DATA_AS_OF = "sample data (notional seed): no as-of"
 
 
 def data_as_of(receipt: dict | None) -> str:
-    """The data's as-of, as the export shows it. Never blank, never the generation date."""
+    """The data's as-of, as the export shows it. Never blank, never the generation date.
+
+    A seed-sourced export (no receipt) says the data is sample data (ruling, architect,
+    2026-11-21 night): the field never shows a date that reads as real.
+    """
     if receipt is None:  # a seed-sourced export reads no asset
-        return f"{AS_OF_UNAVAILABLE}: {NO_SOURCE_AS_OF}"
+        return SAMPLE_DATA_AS_OF
     as_of = receipt.get("as_of")
     if not as_of:
         reason = receipt.get("as_of_unavailable")

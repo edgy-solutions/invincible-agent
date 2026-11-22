@@ -55,7 +55,8 @@ Docx sample: `policy/overlays/sample/fin_export_profiles/cdrl_a002_cost_performa
 
 **Two dates.** An export carries two labelled dates (architect ruling, 2026-11-21). `as_of` is the
 DATA's as-of, the source's own as-of from its read receipt; when the source has none the field
-reads `as-of unavailable` (with the reason, or `the notional seed carries no as-of` for a seed
-export), never blank and never the generation date. `generated_on` is when the export was
-generated. A cell naming either fact is a row here, not code. The envelope and the `/cdrl_export`
+reads `as-of unavailable` (with the reason), never blank and never the generation date. A
+seed-sourced export reads no asset, so the field reads `sample data (notional seed): no as-of`: it
+says the data is sample data and never shows a date that reads as real. `generated_on` is the
+server's clock; a request carrying `as_of` is refused with a 422 (ruling 2026-11-21 night). A cell naming either fact is a row here, not code. The envelope and the `/cdrl_export`
 response carry both as `data_as_of` and `generated_on`.

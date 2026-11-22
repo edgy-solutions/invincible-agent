@@ -32,9 +32,8 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
-import re
 import threading
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import httpx
@@ -1304,14 +1303,8 @@ def _request_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _valid_as_of(v: Optional[str]) -> Optional[str]:
-    """`as_of` is a calendar date or absent. Shared by every export request."""
-    if v is None:
-        return v
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-        raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
-    date.fromisoformat(v)  # a ValueError here is a 422 too
-    return v
+_AS_OF_REFUSED = ("as_of is not accepted: an export's generated date is stamped by the server "
+                  "clock (ruling 2026-11-21); omit the field")
 
 
 class PackageExportRequest(BaseModel):
@@ -1324,8 +1317,11 @@ class PackageExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 @app.post("/package_export")
@@ -1354,9 +1350,9 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
     """
-    # The request's `as_of` feeds `generated_on` ONLY (the BFF fills it with its own request
-    # date); it never feeds the data's as-of, which comes from the source's receipt.
-    generated_on = body.as_of or _request_date()  # RESOLVED ONCE; the manifest and page share it
+    # `generated_on` is the server's clock (a caller's date is refused at the model); the data's
+    # as-of comes from the source's receipt.
+    generated_on = _request_date()  # RESOLVED ONCE; the manifest and page share it
     try:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
@@ -1517,8 +1513,11 @@ class CdrlExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1608,8 +1607,8 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     program_receipts: list[dict[str, Any]] = []
     program_state, program_source = _export_program_state(
         reads, body.program_id, profile.sources, program_receipts)
-    # The request's `as_of` feeds `generated_on` ONLY; it never feeds the data's as-of.
-    generated_on = body.as_of or _request_date()
+    # `generated_on` is the server's clock; a caller's `as_of` is refused at the model.
+    generated_on = _request_date()
     data_as_of = export_dates.data_as_of(
         _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 

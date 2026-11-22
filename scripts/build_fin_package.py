@@ -446,7 +446,8 @@ def build(*, recipient_scope: str, program_id: str, state: FinanceState,
     """Produce one recipient's package. Three named refusals, each before anything after it
     is built — see the module docstring. `generated_on` is resolved ONCE (UTC today when
     absent) and reaches both the manifest and the page. `data_as_of` is the source's own as-of;
-    a caller that has none gets the labelled "unavailable", never the generation date."""
+    a caller that passes none is a seed-sourced export and gets the labelled sample-data value
+    (`export_dates.SAMPLE_DATA_AS_OF`), never a date and never the generation date."""
     if generated_on is None:
         generated_on = datetime.now(timezone.utc).date().isoformat()
     if data_as_of is None:
