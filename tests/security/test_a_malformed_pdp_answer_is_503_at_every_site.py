@@ -546,6 +546,9 @@ CONDITIONAL = {
         "not (isinstance(exc.__cause__, httpx.HTTPStatusError) and exc.__cause__.response.status_code == 404)",
     # `except HTTPException` re-raises everything but a 403, so a 503 passes.
     "src/iagent/gateway.py::ingest_export_route": "exc.status_code != 403",
+    # Engine O answering its own resolve provider in-process: a 5xx (its store or PDP) escapes the
+    # fan-out as the outage it is; a 4xx is that provider's miss and the others still answer.
+    "agent_fleet/ontology_service/main.py::_call_resolver": "exc.status_code >= 500",
 }
 # A name passed as a value, read by hand: (file, name) -> (file that calls it, the name it calls it
 # by[, the one function it does so in]), or None where the value is the terminal step itself. A value
