@@ -144,6 +144,10 @@ dev = [
     # tests/perf/test_langfuse_client_below_5.py parses version specifiers with it. pytest
     # installs it anyway, but the import census counts declarations, not installs.
     "packaging",
+    # tests/test_a_personal_data_column_is_withheld.py builds polars schemas for the shared contract
+    # reader (agent_fleet/utils/dataset_contracts.py, which imports it lazily). The floor matches
+    # engine-fin's declaration in agent_fleet/finance_agent/pyproject.toml.
+    "polars>=1.20",
     "weaviate-client>=4.4,<5.0",
     "lxml>=6.1.1",
     # Mesh membership package — owns transport auth (the app-factory dependency) and the
