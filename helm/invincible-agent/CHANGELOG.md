@@ -2,6 +2,8 @@
 
 ## 0.4.92 — not yet cut
 
+**Opened at the 0.4.91 cut** (the architect, 2026-11-22: "Open `## 0.4.92 — not yet cut` now as a small PR, and after every cut from now on"). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.91 one. `Chart.yaml` stays at 0.4.91 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
+
 - **Answers record `intent_ms`, and the projector no longer skips an answer on schema lag** (74). `intent_ms` is the intent call's own time, recorded beside `duration_ms`, which is unchanged. It is absent when the turn made no intent call. **Chart change:** the projection table's SQL adds an `answer_artifact_projection.intent_ms` column, which the post-upgrade schema job applies. **Code:** the projector retries a batch when Postgres reports an undefined column or table, instead of skipping the answer. This closes the window between a projector roll and the schema job.
 
 ## 0.4.91 — 2026-11-21
