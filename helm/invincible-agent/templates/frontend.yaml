@@ -39,7 +39,8 @@ spec:
           env:
             {{- range $k, $v := .Values.cortexUi.env }}
             - name: {{ $k }}
-              value: {{ $v | quote }}
+              {{- /* The cortex-ui client id the browser sees is the realm's, prefixed. */}}
+              value: {{ ternary (include "invincible-agent.clientId" (dict "root" $ "role" (toString $v))) $v (eq $k "VITE_KEYCLOAK_CLIENT_ID") | quote }}
             {{- end }}
           {{- end }}
           resources:
@@ -63,10 +64,6 @@ spec:
 ---
 {{- if .Values.cortexBff.enabled }}
 {{- $ov := include "invincible-agent.policyOverlayActive" (dict "root" . "component" "cortex-bff") }}
-{{- $bffAuthGuard := (.Values.cortexBff.auth | default dict) }}
-{{- if and $bffAuthGuard.realmAudience (not (has $bffAuthGuard.realmAudience ($bffAuthGuard.acceptedAudiences | default list))) }}
-{{- fail (printf "cortexBff.auth.realmAudience (%q) must be one of cortexBff.auth.acceptedAudiences, or the realm stamps an audience the BFF refuses" $bffAuthGuard.realmAudience) }}
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

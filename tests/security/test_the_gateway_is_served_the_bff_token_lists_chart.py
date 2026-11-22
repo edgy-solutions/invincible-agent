@@ -79,8 +79,19 @@ def test_control_without_the_lists_enforce_would_not_be_ready(sandbox, monkeypat
 
 
 def test_the_gateway_follows_the_bffs_audiences(monkeypatch):
-    rendered = _render(*_SANDBOX, *_BROKER_OFF, *_set("cortexBff.auth.acceptedAudiences", ["cortex-bff", "other-aud"]))
-    assert _as_gateway(_gateway_env(rendered), monkeypatch, identity.accepted_audiences) == ["cortex-bff", "other-aud"]
+    # RULED 2026-11-20 (2 retirement): the list is exactly [AUD]; the gateway gets the BFF's list, whatever the prefix.
+    for prefix_args, aud in (([], "cortex-bff"),
+                             ([*_set("identity.prefix", "t-"), *_set("keycloak.realmObjects", "external"),
+                               *_set("cortexBff.auth.realmAudience", "t-cortex-bff"),
+                               *_set("cortexBff.auth.acceptedAudiences", ["t-cortex-bff"])], "t-cortex-bff")):
+        rendered = _render(*_SANDBOX, *_BROKER_OFF, *prefix_args)
+        assert _as_gateway(_gateway_env(rendered), monkeypatch, identity.accepted_audiences) == [aud]
+
+
+def test_a_non_derived_accepted_audience_is_refused():
+    # RULED 2026-11-20 (2 retirement): a list that names anything beside the derived audience no longer renders
+    err = _render_fails(*_SANDBOX, *_BROKER_OFF, *_set("cortexBff.auth.acceptedAudiences", ["cortex-bff", "other-aud"]))
+    assert "acceptedAudiences is retired" in err, err
 
 
 @pytest.mark.parametrize("src", ["centralGateway.env", "agentFleet.env"])
@@ -98,6 +109,7 @@ def test_a_singular_issuer_the_bff_refuses_is_refused():
 
 def test_base_values_serve_empty_lists_and_stay_in_observe(monkeypatch):
     gw = _gateway_env(_render(*_BROKER_OFF, *_BASE_OWNER))
-    assert gw["GATEWAY_JWT_ISSUERS"] == "" and gw["GATEWAY_JWT_AUDIENCES"] == ""
+    # RULED 2026-11-20 (2 retirement): the audience list is the derived [AUD]; the EMPTY issuer list keeps it in observe.
+    assert gw["GATEWAY_JWT_ISSUERS"] == "" and gw["GATEWAY_JWT_AUDIENCES"] == "cortex-bff"
     line = _as_gateway(gw, monkeypatch, identity.announce)
     assert "posture=observe " in line and "enforce_ready=no" in line, line

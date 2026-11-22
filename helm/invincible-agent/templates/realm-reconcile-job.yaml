@@ -138,8 +138,13 @@ data:
               {{- include "invincible-agent.validateServiceClients" $ }}
               {{- include "invincible-agent.validatePublicClients" $ }}
               {{- include "invincible-agent.validateRetiredUsers" $ }}
-              {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
-              {{- $bffAud := ((.Values.cortexBff.auth | default dict).realmAudience | default "") }}
+              {{- $allServiceClients := (include "invincible-agent.serviceClients" . | fromJsonArray) }}
+              {{- $bffAud := include "invincible-agent.audience" . }}
+              {{- $cuiId := include "invincible-agent.clientId" (dict "root" . "role" "cortex-ui") }}
+              {{- $managed := eq (.Values.keycloak.realmObjects | default "managed") "managed" }}
+              {{- if not $managed }}
+              echo "realm objects: external -- this job writes only this instance's clients and their mappers"
+              {{- end }}
               {{- range $c := $allServiceClients }}
               {{- $kind := $c.kind | default "service" }}
               {{- $secret := "" }}
@@ -271,6 +276,7 @@ data:
               # keycloak.localHumanUsers after the first install would otherwise never exist.
               # Same convention as the import (keycloak-configmap.yaml): password = username,
               # non-temporary. The attribute (ensure_attr) stays in the claim branch above.
+              {{- if $managed }}
               {{- range $u := .Values.keycloak.localHumanUsers }}
               HU={{ $u.username | quote }}
               echo "-- local human $HU: exists?"
@@ -284,9 +290,11 @@ data:
                 echo "   created"
               fi
               {{- end }}
+              {{- end }}
 
               # ── NON-INTERACTIVE USERS (A1) — additive, created WITHOUT credentials ──
               {{- if ne $claim "email" }}
+              {{- if $managed }}
               # ── AUTHZ ATTRIBUTE — every species carries the SAME claim ({{ $claim }}) ──
               # A local human has no hardcoded-claim mapper, so its authz identity is a USER
               # ATTRIBUTE named after the claim (= its email), emitted by the cortex-ui client
@@ -328,9 +336,10 @@ data:
                 curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/users/$_uid" -d "$_new"
                 echo "   attribute set on $1"
               }
+              {{- end }}
 
               echo "-- cortex-ui authz attribute mapper"
-              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId={{ $cuiId }}" \
                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
               if [ -z "$CUI" ]; then
                 echo "   FAIL: client cortex-ui absent"; rc=1
@@ -359,7 +368,7 @@ data:
               # ── cortex-ui REDIRECT SET — the one converged field set (see SCOPE above) ──
               # A wildcard redirect on this client lets anyone who gets a user to click a link collect
               # their token. Empty declared/derived set = the live client is left alone, with a WARN.
-              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId={{ $cuiId }}" \
                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
               {{- if not $cui.redirectUris }}
               echo "-- cortex-ui redirect set: undeclared, live client unchanged"
@@ -418,7 +427,7 @@ data:
               # ── end cortex-ui redirect set
               {{- if $bffAud }}
               echo "-- cortex-ui audience mapper"
-              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId={{ $cuiId }}" \
                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
               if [ -z "$CUI" ]; then
                 echo "   FAIL cortex-ui: client absent, audience-bff not repaired"; rc=1
@@ -440,7 +449,7 @@ data:
                 echo "   present"
               fi
               {{- end }}
-              {{- range $pc := (.Values.keycloak.publicClients | default list) }}
+              {{- range $pc := (include "invincible-agent.publicClients" . | fromJsonArray) }}
               PCID={{ $pc.clientId | quote }}
               echo "-- public client $PCID"
               PCU=$(curl -sf -H "$AUTH" "$API/clients?clientId=$PCID" \
@@ -527,6 +536,7 @@ data:
                 {{- end }}
               fi
               {{- end }}
+              {{- if $managed }}
               {{- if ne $claim "email" }}
 
               {{- range $u := .Values.keycloak.localHumanUsers }}
@@ -685,6 +695,19 @@ data:
               esac
               {{- end }}
               {{- end }}
+              {{- else }}
+              {{- /* external: the readback below reads the brokers' flows, so it needs the guard predicate; nothing is written */}}
+              {{- $anyBroker := false }}
+              {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}{{- if include "invincible-agent.brokerActive" $b }}{{- $anyBroker = true }}{{- end }}{{- end }}
+              {{- if $anyBroker }}
+              is_guarded() {
+                case "$1" in
+                  *'"providerId":"idp-review-profile"'*|*'"providerId":"idp-auto-link"'*|*'"providerId":"idp-confirm-link"'*|*'"providerId":"idp-email-verification"'*|*'"providerId":"idp-username-password-form"'*|*'"providerId":"idp-detect-existing-broker-user"'*|*'"displayName":"Handle Existing Account"'*|*'"displayName":"Account verification options"'*|*'"displayName":"Verify Existing Account by Re-authentication"'*) return 0 ;;
+                esac
+                return 1
+              }
+              {{- end }}
+              {{- end }}
 
               # ── READBACK GATE — the claim is not "we applied it", it is "it is there" ──
               echo "== readback =="
@@ -710,7 +733,7 @@ data:
               if [ "$(curl -sf -H "$AUTH" "$API/users/profile" | grep -c '"unmanagedAttributePolicy":"ADMIN_EDIT"' || true)" = "0" ]; then
                 echo "   FAIL user profile: unmanagedAttributePolicy is not ADMIN_EDIT"; rc=1
               fi
-              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId={{ $cuiId }}" \
                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
               if [ -z "$CUI" ] || ! curl -sf -H "$AUTH" "$API/clients/$CUI/protocol-mappers/models" \
                    | grep -q '"claim.name":"{{ $claim }}"'; then
@@ -732,7 +755,7 @@ data:
               {{- end }}
               {{- end }}
               {{- if $cui.redirectUris }}
-              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId={{ $cuiId }}" \
                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
               WANT_RA={{ printf "\"redirectUris\":%s" ($cui.redirectUris | toJson) | squote }}
               WANT_OA={{ printf "\"webOrigins\":%s" ($cui.webOrigins | toJson) | squote }}
@@ -769,7 +792,7 @@ data:
               {{- if $bffAud }}
               # One config object per line, so the audience and its access-token flag are judged on the
               # SAME mapper in any key order.
-              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId={{ $cuiId }}" \
                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
               CUAUD=""
               if [ -n "$CUI" ]; then
@@ -828,6 +851,7 @@ data:
                 echo "   ok   user $UN (no credentials)"
               fi
               {{- end }}
+              {{- if $managed }}
               {{- range $r := (.Values.keycloak.retiredUsers | default list) }}
               RU={{ $r | quote }}
               RID=$(curl -sf -H "$AUTH" "$API/users?username=$RU&exact=true" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
@@ -838,6 +862,7 @@ data:
               else
                 echo "   FAIL retired user $RU: still exists without a federated link"; rc=1
               fi
+              {{- end }}
               {{- end }}
               {{- range $c := $allServiceClients }}
               {{- $kind := $c.kind | default "service" }}
@@ -872,7 +897,7 @@ data:
               # ── end BFF audience readback
               {{- end }}
               {{- end }}
-              {{- range $pc := (.Values.keycloak.publicClients | default list) }}
+              {{- range $pc := (include "invincible-agent.publicClients" . | fromJsonArray) }}
               PCID={{ $pc.clientId | quote }}
               PCU=$(curl -sf -H "$AUTH" "$API/clients?clientId=$PCID" \
                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -928,14 +953,17 @@ stringData:
   bodies it replaced. A broker's upstream secret lives HERE (not in -secrets): pre-upgrade -secrets is
   still the old object and would lack a newly added key. */}}
   {{- $claim := .Values.keycloak.authzClaim | default "email" }}
-  {{- $bffAud := ((.Values.cortexBff.auth | default dict).realmAudience | default "") }}
-  {{- range $c := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+  {{- $bffAud := include "invincible-agent.audience" . }}
+  {{- range $c := (include "invincible-agent.serviceClients" . | fromJsonArray) }}
   {{- if $c.secretRef }}
   {{ printf "svc-%s.json" $c.clientId }}: {{ include "invincible-agent.realmReconcileSvcBody" (dict "c" $c "root" $ "claim" $claim "bffAud" $bffAud) | quote }}
   {{- end }}
   {{- end }}
+  {{- $managed := eq (.Values.keycloak.realmObjects | default "managed") "managed" }}
+  {{- if $managed }}
   {{- range $u := .Values.keycloak.localHumanUsers }}
   {{ printf "user-%s.json" $u.username }}: {{ dict "username" $u.username "email" $u.email "emailVerified" true "enabled" true "credentials" (list (dict "type" "password" "value" $u.username "temporary" false)) | toJson | quote }}
+  {{- end }}
   {{- end }}
   {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
   {{- if and (include "invincible-agent.brokerActive" $b) (not $b.existingSecret) }}

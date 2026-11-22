@@ -257,7 +257,7 @@ Emits nothing on success.
 {{- fail (printf "keycloak.publicClients: clientId %q is declared more than once" $c.clientId) }}
 {{- end }}
 {{- $_ := set $seen $c.clientId true }}
-{{- if or (eq $c.clientId "cortex-ui") (hasKey $svc $c.clientId) }}
+{{- if or (eq (include "invincible-agent.clientId" (dict "root" $ "role" $c.clientId)) (include "invincible-agent.clientId" (dict "root" $ "role" "cortex-ui"))) (hasKey $svc $c.clientId) }}
 {{- fail (printf "keycloak.publicClients: clientId %q collides with cortex-ui or a serviceClients/extraServiceClients client" $c.clientId) }}
 {{- end }}
 {{- if not $c.redirectUris }}
@@ -821,17 +821,22 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
 {{- end -}}
 
 {{/*
-  The BFF's accepted issuers / audiences as ONE comma-joined string: `cortexBff.auth.<key>`, each
-  entry through tpl, trimmed. Empty list -> "" (an empty value refuses every token). Called with
+  The BFF's accepted issuers / audiences as ONE comma-joined string. Issuers: `cortexBff.auth.acceptedIssuers`,
+  each entry through tpl, trimmed; an empty list -> "" (an empty value refuses every token). Audiences: exactly
+  [AUD], derived (invincible-agent.audience), never read from values (acceptedAudiences is a retired guard). Called with
   (dict "root" $ "key" "acceptedIssuers"). The BFF (frontend.yaml) and the engines
   (engineTokenEnv) both read it, so there is no second copy of the list.
 */}}
 {{- define "invincible-agent.acceptedList" -}}
 {{- $root := .root -}}
+{{- if eq .key "acceptedAudiences" -}}
+{{- include "invincible-agent.audience" $root -}}
+{{- else -}}
 {{- $auth := ($root.Values.cortexBff.auth | default dict) -}}
 {{- $out := list -}}
 {{- range (index $auth .key | default list) }}{{- $out = append $out (tpl (toString .) $root | trim) }}{{- end -}}
 {{- join "," $out -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -983,3 +988,100 @@ Keycloak already, and the reconcile must land BEFORE any workload changes (pre-u
 {{- define "invincible-agent.realmReconcileHookPhase" -}}
 {{- if .Release.IsInstall }}post-install{{- else }}pre-upgrade{{- end }}
 {{- end }}
+
+{{/*
+IDENTITY PREFIX (docs/proposals/one-realm-many-instances-the-identity-prefix.md, RULED 2026-11-20).
+
+invincible-agent.clientId: a role literal to the client id this instance's realm holds, prefix + role.
+Call: include "invincible-agent.clientId" (dict "root" $ "role" "cortex-ui"). The role literal stays in the
+template or the values; only identity.prefix comes from configuration. A broker's clientId is the id
+registered at the UPSTREAM provider, not a client in this realm: it never goes through here.
+*/}}
+{{- define "invincible-agent.clientId" -}}
+{{- printf "%s%s" (toString ((.root.Values.identity | default dict).prefix | default "")) .role -}}
+{{- end -}}
+
+{{/*
+invincible-agent.audience: AUD = identity.prefix + "cortex-bff". THE ONLY PLACE the literal `cortex-bff`
+is used as an audience. The BFF, the engines, the registrar and the central gateway accept exactly [AUD]
+(acceptedList) and every `audience-bff` mapper stamps exactly AUD. Called with the root context.
+*/}}
+{{- define "invincible-agent.audience" -}}
+{{- printf "%s%s" (toString ((.Values.identity | default dict).prefix | default "")) "cortex-bff" -}}
+{{- end -}}
+
+{{/*
+The service clients (keycloak.serviceClients + extraServiceClients) and the public clients, each with its
+clientId as the realm holds it (prefixed), as a JSON list. Every other field is the declared one. Consumers:
+`include ... . | fromJsonArray`. Called with the root context.
+*/}}
+{{- define "invincible-agent.serviceClients" -}}
+{{- $out := list -}}
+{{- range $c := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) -}}
+{{- $out = append $out (merge (dict "clientId" (include "invincible-agent.clientId" (dict "root" $ "role" $c.clientId))) $c) -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{- define "invincible-agent.publicClients" -}}
+{{- $out := list -}}
+{{- range $c := (.Values.keycloak.publicClients | default list) -}}
+{{- $out = append $out (merge (dict "clientId" (include "invincible-agent.clientId" (dict "root" $ "role" $c.clientId))) $c) -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{/*
+Every refusal of the identity prefix, in one place. Emits nothing on success; `fail`s the render on:
+  - a prefix that is not empty and does not match ^[a-z][a-z0-9]{0,11}-$;
+  - a prefix that is the start of any role literal (the client ids in keycloak.serviceClients,
+    extraServiceClients and publicClients, `cortex-ui`, and the `cortex-bff` audience literal), read FROM
+    those literals, not from a typed list of stems;
+  - a prefixed client id that ends in `cortex-bff` (it would collide with an AUD shape);
+  - keycloak.realmObjects other than managed|external;
+  - a non-empty prefix with realmObjects managed, unless keycloak.realmOwner is true;
+  - realmObjects external with an empty prefix, unless identity.soleInstanceInRealm is true;
+  - cortexBff.auth.acceptedAudiences / realmAudience set NON-EMPTY to anything but [AUD] / AUD (retired
+    keys, kept one release as guards; empty or unset passes).
+Called with the root context from the shared ConfigMap, which always renders.
+*/}}
+{{- define "invincible-agent.validateIdentity" -}}
+{{- $id := (.Values.identity | default dict) -}}
+{{- $prefix := toString ($id.prefix | default "") -}}
+{{- if and $prefix (not (regexMatch "^[a-z][a-z0-9]{0,11}-$" $prefix)) -}}
+{{- fail (printf "identity.prefix %q must be empty or match ^[a-z][a-z0-9]{0,11}-$ (lower-case, at most 12 characters before one trailing hyphen, no hyphen inside)" $prefix) -}}
+{{- end -}}
+{{- $aud := include "invincible-agent.audience" . -}}
+{{- $bffRole := trimPrefix $prefix $aud -}}
+{{- $roles := list "cortex-ui" $bffRole -}}
+{{- range $c := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) (.Values.keycloak.publicClients | default list) -}}
+{{- $roles = append $roles $c.clientId -}}
+{{- end -}}
+{{- range $r := $roles -}}
+{{- if and $prefix (hasPrefix $prefix $r) -}}
+{{- fail (printf "identity.prefix %q is the start of the role literal %q: a prefix may not begin a role name (it would collide with the unprefixed names)" $prefix $r) -}}
+{{- end -}}
+{{- if and (ne $r $bffRole) (hasSuffix $bffRole (include "invincible-agent.clientId" (dict "root" $ "role" $r))) -}}
+{{- fail (printf "client id %q ends in cortex-bff: a client may not be named like the audience (identity.prefix + cortex-bff)" $r) -}}
+{{- end -}}
+{{- end -}}
+{{- $mode := (.Values.keycloak.realmObjects | default "managed") -}}
+{{- if not (or (eq $mode "managed") (eq $mode "external")) -}}
+{{- fail (printf "keycloak.realmObjects %q must be \"managed\" or \"external\"" $mode) -}}
+{{- end -}}
+{{- if and $prefix (eq $mode "managed") (not .Values.keycloak.realmOwner) -}}
+{{- fail (printf "identity.prefix %q with keycloak.realmObjects managed: this release would write the realm's people, brokers and flows for every instance. Set keycloak.realmObjects: external, or keycloak.realmOwner: true to declare this the realm-owner release" $prefix) -}}
+{{- end -}}
+{{- if and (not $prefix) (eq $mode "external") (not $id.soleInstanceInRealm) -}}
+{{- fail "keycloak.realmObjects external with an empty identity.prefix: a shared realm needs every instance prefixed. Set identity.prefix, or identity.soleInstanceInRealm: true to declare this instance the only one in its realm" -}}
+{{- end -}}
+{{- $auth := (.Values.cortexBff.auth | default dict) -}}
+{{- $got := list -}}
+{{- range ($auth.acceptedAudiences | default list) }}{{- $got = append $got (tpl (toString .) $ | trim) }}{{- end -}}
+{{- if and $got (not (and (eq (len $got) 1) (eq (first $got) $aud))) -}}
+{{- fail (printf "cortexBff.auth.acceptedAudiences is retired and must be empty or exactly [%s] (the derived audience, identity.prefix + cortex-bff); got %s" $aud (join "," $got)) -}}
+{{- end -}}
+{{- if and $auth.realmAudience (ne (toString $auth.realmAudience) $aud) -}}
+{{- fail (printf "cortexBff.auth.realmAudience is retired and must be empty or exactly %q (the derived audience, identity.prefix + cortex-bff); got %q" $aud (toString $auth.realmAudience)) -}}
+{{- end -}}
+{{- end -}}

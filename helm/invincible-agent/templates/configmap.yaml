@@ -1,3 +1,4 @@
+{{- include "invincible-agent.validateIdentity" . -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,6 +11,8 @@ data:
   BPMN_POSTGRES_PORT: {{ include "invincible-agent.pgPort" . | quote }}
   BPMN_POSTGRES_DB: {{ include "invincible-agent.pgDatabase" . | quote }}
   BPMN_POSTGRES_USER: {{ include "invincible-agent.pgUser" . | quote }}
+  {{- /* The identity prefix every pod composes onto a role name (one realm, many instances). Renders when empty. */}}
+  IAGENT_IDENTITY_PREFIX: {{ ((.Values.identity | default dict).prefix | default "") | toString | quote }}
 
   # ── WHAT THE ORCHESTRATOR ASKED FOR ──────────────────────────────────────
   # Reported by every service's `/version` BESIDE the sha baked into its image, because a
@@ -343,6 +346,8 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "REVIEW_WATCH_PREFIX") }}
   REVIEW_WATCH_PREFIX: "sustainment/"
   {{- end }}
+  {{- /* The *_CLIENT_ID defaults below are ROLE NAMES, never prefixed here (RULED 2026-11-20, section 0: the prefix is
+  applied in exactly three places, and the mint helpers in code are one of them; prefixing here too would double it). */}}
   {{- /* Auto-starter identity: the sensor mints a token per run via client-credentials against
   KEYCLOAK_REALM_URL (above) + /protocol/openid-connect/token, as this client; the secret is in
   the Secret (REVIEW_STARTER_CLIENT_SECRET). authz_id resolves to svc:review-starter via the client's

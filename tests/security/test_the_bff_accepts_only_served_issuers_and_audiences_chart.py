@@ -85,13 +85,14 @@ def test_the_sandbox_serves_both_lists_from_the_values_file(sandbox):
     assert issuers[0] != issuers[1]
 
 
-def test_base_values_serve_both_lists_present_and_empty():
+def test_base_values_serve_the_issuer_list_empty_and_the_audience_list_as_the_derived_audience():
+    # RULED 2026-11-20 (2 retirement): the audience list is exactly [AUD] (here cortex-bff, empty prefix), derived, never read
+    # from values; deny-by-default is kept by the EMPTY issuer list.
     env = _bff_env(_render(*_BROKER_OFF))
-    for suffix in _AUD_NAMES:
-        name = f"BFF_JWT_ACCEPTED_{suffix}"
-        assert [e["value"] for e in env if e["name"] == name] == [""], f"{name} must be present and empty"
-    # control: the sandbox render, same template, is NOT empty
-    assert _last(_bff_env(_render(*_SANDBOX, *_BROKER_OFF)), "BFF_JWT_ACCEPTED_AUDIENCES") != ""
+    assert [e["value"] for e in env if e["name"] == "BFF_JWT_ACCEPTED_ISSUERS"] == [""], "issuers must be present and empty"
+    assert [e["value"] for e in env if e["name"] == "BFF_JWT_ACCEPTED_AUDIENCES"] == ["cortex-bff"]
+    # control: the sandbox render, same template, serves a NON-empty issuer list
+    assert _last(_bff_env(_render(*_SANDBOX, *_BROKER_OFF)), "BFF_JWT_ACCEPTED_ISSUERS") != ""
 
 
 def test_a_hand_set_env_cannot_widen_the_served_value(sandbox):
@@ -120,11 +121,13 @@ def test_the_realm_import_stamps_the_audience_on_every_calling_client(sandbox):
     assert _aud_mappers(clients[_PUBLIC_CONTROL]) == []
 
 
-def test_realm_audience_must_be_an_accepted_audience():
-    err = _render_fails(*_SANDBOX, *_BROKER_OFF, *_set("cortexBff.auth.realmAudience", "not-accepted"))
-    assert "realmAudience" in err and "acceptedAudiences" in err
-    # control: the same render with an accepted value succeeds
+def test_realm_audience_is_a_retired_guard_that_refuses_any_value_but_the_derived_audience():
+    # RULED 2026-11-20 (2 retirement): replaces "realmAudience must be one of acceptedAudiences".
+    err = _render_fails(*_SANDBOX, *_BROKER_OFF, *_set("cortexBff.auth.realmAudience", "not-the-audience"))
+    assert "realmAudience is retired" in err
+    # control: the derived audience, and an empty value, render
     _render(*_SANDBOX, *_BROKER_OFF, *_set("cortexBff.auth.realmAudience", _AUDIENCE))
+    _render(*_SANDBOX, *_BROKER_OFF, *_set("cortexBff.auth.realmAudience", ""))
 
 
 def test_the_reconcile_repairs_the_audience_keyed_on_what_a_mapper_emits(sandbox):
@@ -136,7 +139,7 @@ def test_the_reconcile_repairs_the_audience_keyed_on_what_a_mapper_emits(sandbox
     # the service-client repair sits in the loop, which every delegate passes through
     for cid in _DELEGATES:
         assert f'CID="{cid}"' in script, cid
-    # control: with no realmAudience, the job carries no audience-bff at all
+    # RULED 2026-11-20 (2 retirement): realmAudience no longer switches the mapper; emptied, the job and the import are unchanged
     off = _render(*_SANDBOX, *_BROKER_OFF, *_set("cortexBff.auth.realmAudience", ""))
-    assert "audience-bff" not in _script(off)
-    assert "audience-bff" not in json.dumps(_realm(off))
+    assert _script(off) == script
+    assert "audience-bff" in json.dumps(_realm(off))

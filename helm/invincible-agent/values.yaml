@@ -1984,8 +1984,13 @@ cortexBff:
   # acceptedAudiences. EITHER LIST EMPTY REFUSES EVERY TOKEN: a deployment that sets neither admits nobody.
   # Entries go through `tpl`, so an entry may quote another value instead of retyping it.
   #   realmAudience: the audience this chart's realm stamps into the access token of cortex-ui and of every
-  #   keycloak.serviceClients / extraServiceClients entry (an `audience-bff` oidc-audience-mapper). Empty:
-  #   no mapper is rendered. When set it must be one of acceptedAudiences (the render fails otherwise).
+  #   keycloak.serviceClients / extraServiceClients entry (an `audience-bff` oidc-audience-mapper).
+  # RETIRED (one release, as guards only): the audience is derived, AUD = identity.prefix + "cortex-bff",
+  # and every accepted list is exactly [AUD]. The render FAILS if acceptedAudiences or realmAudience is
+  # set NON-EMPTY to anything other than [AUD] / AUD. EMPTY OR UNSET PASSES: a deployment with an
+  # external realm sets realmAudience: "" on purpose and is not refused. A deployment whose overlay set
+  # another audience must render with --dry-run against its own overlay before it upgrades.
+  # Deny-by-default is kept by acceptedIssuers: [] (an empty issuer list refuses every token).
   auth:
     acceptedIssuers: []
     acceptedAudiences: []
@@ -2185,12 +2190,37 @@ externalDagster:
 #   * `realmUrl` — full override, for an issuer whose path isn't /realms/<realm>.
 # `keycloak.realm` still applies with an external IdP: the realm NAME is
 # independent of where Keycloak runs.
+# -- Identity prefix (one realm, many instances) ----------------------------
+# docs/proposals/one-realm-many-instances-the-identity-prefix.md (RULED 2026-11-20).
+identity:
+  # Empty: one instance owns the realm's names (today's behaviour). When non-empty, it is
+  # prepended to every client id and to the audience, and it must match ^[a-z][a-z0-9]{0,11}-$:
+  # lower-case, at most 12 characters before a single trailing hyphen, and no hyphen inside.
+  # The render also refuses a prefix that is the start of any role literal (a keycloak client id,
+  # `cortex-ui`, `cortex-bff`), so `iagent-` and `cortex-` are refused.
+  # The audience is derived from it: AUD = prefix + "cortex-bff". Every accepted-audience list
+  # is exactly [AUD] and every `audience-bff` mapper stamps exactly AUD.
+  prefix: ""
+  # Ruled 2026-11-20 (Q2): "The render also refuses `external` with an empty prefix, unless a value
+  # declares this instance the only one in its realm." This is that value. With
+  # keycloak.realmObjects: external and an empty prefix the render refuses unless this is true.
+  soleInstanceInRealm: false
+
 externalKeycloak:
   url: ""       # e.g. "http://my-keycloak.infra.svc.cluster.local:8080"
   realmUrl: ""  # e.g. "https://sso.example.com/auth/realms/corp" (overrides url)
 
 keycloak:
   enabled: true
+  # Who writes the realm-scoped objects (people, the user-profile policy, identity-provider brokers,
+  # the first-login flow). `managed` (default, today): this release's reconcile job writes them as
+  # well as its own clients. `external`: the job writes only THIS instance's prefixed clients and
+  # their mappers, and reads and verifies the realm objects it depends on (failing naming any that
+  # are missing). In a shared realm every instance runs `external` except at most one realm owner.
+  realmObjects: managed
+  # A non-empty identity.prefix with `managed` refuses to render unless this is true: becoming the
+  # release that edits everyone's people is a decision someone wrote down (ruled 2026-11-20, Q5).
+  realmOwner: false
   image:
     registry: "quay.io"
     repository: "keycloak/keycloak"

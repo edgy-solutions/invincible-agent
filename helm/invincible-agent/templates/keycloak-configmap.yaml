@@ -1,7 +1,8 @@
 {{- if .Values.keycloak.enabled }}
 {{- $claim := .Values.keycloak.authzClaim | default "email" }}
 {{- $cui := include "invincible-agent.cortexUiRedirects" . | fromJson }}
-{{- $bffAud := ((.Values.cortexBff.auth | default dict).realmAudience | default "") }}
+{{- $bffAud := include "invincible-agent.audience" . }}
+{{- $cuiId := include "invincible-agent.clientId" (dict "root" . "role" "cortex-ui") }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -39,7 +40,7 @@ data:
                   "user"
               ],
               "clientRoles": {
-                  "cortex-ui": [
+                  {{ $cuiId | quote }}: [
                       "user"
                   ]
               }
@@ -57,7 +58,7 @@ data:
                   { "type": "password", "value": "alice", "temporary": false }
               ],
               "realmRoles": [ "user" ],
-              "clientRoles": { "cortex-ui": [ "user" ] }
+              "clientRoles": { {{ $cuiId | quote }}: [ "user" ] }
           },
           {
               "username": "bob",
@@ -72,7 +73,7 @@ data:
                   { "type": "password", "value": "bob", "temporary": false }
               ],
               "realmRoles": [ "user" ],
-              "clientRoles": { "cortex-ui": [ "user" ] }
+              "clientRoles": { {{ $cuiId | quote }}: [ "user" ] }
           },
           {
               "username": "carol",
@@ -87,7 +88,7 @@ data:
                   { "type": "password", "value": "carol", "temporary": false }
               ],
               "realmRoles": [ "user" ],
-              "clientRoles": { "cortex-ui": [ "user" ] }
+              "clientRoles": { {{ $cuiId | quote }}: [ "user" ] }
           },
           {
               "username": "erin",
@@ -102,7 +103,7 @@ data:
                   { "type": "password", "value": "erin", "temporary": false }
               ],
               "realmRoles": [ "user" ],
-              "clientRoles": { "cortex-ui": [ "user" ] }
+              "clientRoles": { {{ $cuiId | quote }}: [ "user" ] }
           },
           {
               "username": "chris",
@@ -117,12 +118,12 @@ data:
                   { "type": "password", "value": "chris", "temporary": false }
               ],
               "realmRoles": [ "user" ],
-              "clientRoles": { "cortex-ui": [ "user" ] }
+              "clientRoles": { {{ $cuiId | quote }}: [ "user" ] }
           }
       ],
       "clients": [
           {
-              "clientId": "cortex-ui",
+              "clientId": {{ $cuiId | quote }},
               "enabled": true,
               "publicClient": true,
               "directAccessGrantsEnabled": true,
@@ -166,7 +167,7 @@ data:
               {{- end }}
           },
           {{- include "invincible-agent.validatePublicClients" $ }}
-          {{- range $pc := (.Values.keycloak.publicClients | default list) }}
+          {{- range $pc := (include "invincible-agent.publicClients" . | fromJsonArray) }}
           {
               "clientId": {{ $pc.clientId | quote }},
               "enabled": true,
@@ -220,7 +221,7 @@ data:
           },
           {{- end }}
           {{- include "invincible-agent.validateServiceClients" $ }}
-          {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+          {{- $allServiceClients := (include "invincible-agent.serviceClients" . | fromJsonArray) }}
           {{- range $i, $c := $allServiceClients }}
           {{- $kind := $c.kind | default "service" }}
           {

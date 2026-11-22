@@ -250,17 +250,31 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     assert "attributes" not in _cui(new_realm) and "attributes" not in _cui(old_realm)
     old_realm = copy.deepcopy(old_realm)
     _cui(old_realm).update(redirectUris=[], webOrigins=[])
+    # RULED 2026-11-20 (2 retirement): the base now stamps the audience, so the realm gains the audience-bff mapper.
+    # That mapper is the pinned base difference (tests/test_identity_prefix_chart.py); with it removed the realms are equal.
+    from tests.test_identity_prefix_chart import PINNED_BASE_MAPPER, without_base_audience_mapper
+    assert PINNED_BASE_MAPPER in json.dumps(new_realm) and PINNED_BASE_MAPPER not in json.dumps(old_realm),         "positive control: only the new base renders the audience mapper"
+    new_realm = without_base_audience_mapper(new_realm)
     assert {**old_realm, "users": []} == {**new_realm, "users": []}
     # #427 (GET /menu_blocks): the shared -config ConfigMap names the sample menu-block overlay by default,
     # because an unset MENU_BLOCK_OVERLAY_DIRS serves `composed: false`. It is a line in a template the OIDC change
     # touched, not an OIDC line, and is the one other allowed addition.
-    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == [
+    # RULED 2026-11-20 (2 retirement): plus exactly the pinned base ConfigMap addition (IAGENT_IDENTITY_PREFIX).
+    from tests.test_identity_prefix_chart import PINNED_BASE_CONFIGMAP_ADDITIONS
+    assert sorted(_diff(_blank_realm(old_rest), _blank_realm(new_rest))) == sorted([
         '+  MENU_BLOCK_OVERLAY_DIRS: "/app/policy/overlays/sample/menu_blocks"',
-        '+  USER_ENTITLEMENT_CLAIM: "email"']
+        '+  USER_ENTITLEMENT_CLAIM: "email"', *PINNED_BASE_CONFIGMAP_ADDITIONS])
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
     # lose from the Job are the old create-only check and its comment; nothing else is removed.
-    removed = {l[1:].strip() for l in _diff(old_job, new_job) if l.startswith("-")}
+    # RULED 2026-11-20 (2 retirement): the base now renders the audience-mapper repair, a block inserted mid-script, so
+    # a line diff pairs unchanged lines (fi, else, comments) as removed+added. A removal is therefore a line whose
+    # COUNT fell between the two renders, not a line a diff hunk happens to show.
+    from collections import Counter
+    _old_n = Counter(l.strip() for l in old_job.splitlines())
+    _new_n = Counter(l.strip() for l in new_job.splitlines())
+    removed = {l[1:].strip() for l in _diff(old_job, new_job) if l.startswith("-")
+               and _old_n[l[1:].strip()] > _new_n[l[1:].strip()]}
     # 0.4.86: the script moved into a ConfigMap and every credential-bearing request body into the bodies
     # Secret. A removed line is therefore only (a) one of the Job's own lines that changed on purpose, or
     # (b) a line that now lives, verbatim, in a body of that Secret. Anything else is a real removal.
