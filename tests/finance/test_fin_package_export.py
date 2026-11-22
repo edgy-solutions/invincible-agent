@@ -588,20 +588,26 @@ def test_the_html_half_alone_parses_without_duckdb():
 
 
 # ── AS_OF IS AN INPUT ────────────────────────────────────────────────────────
-def test_as_of_absent_is_resolved_once_and_reaches_the_engine_fin_body(posts, monkeypatch):
+def test_the_finance_package_call_sends_no_caller_date(posts, monkeypatch):
+    """RULED 2026-11-22: engine-fin stamps its own dates; the BFF forwards none."""
     import iagent.gateway as gw
 
-    calls = []
-    monkeypatch.setattr(gw, "_export_request_date", lambda: calls.append(1) or "2031-03-04")
+    monkeypatch.setattr(gw, "_export_request_date", lambda: "2031-07-04")
     status, _ = _export({**GOOD, "recipient_scope": SCOPE})
-    assert status == 200 and len(calls) == 1
-    assert [p["json"]["as_of"] for p in posts] == ["2031-03-04"]
-
-
-def test_as_of_explicit_is_forwarded_verbatim_to_engine_fin(posts):
-    status, _ = _export({**GOOD, "recipient_scope": SCOPE, "as_of": "2026-01-02"})
     assert status == 200
-    assert [p["json"]["as_of"] for p in posts] == ["2026-01-02"]
+    fin = [p for p in posts if p["url"].endswith("/package_export")]
+    assert len(fin) == 1
+    body = fin[0]["json"]
+    assert "as_of" not in body
+    assert set(body) == {"recipient_scope", "canvas", "user_email"}
+    assert "2031-07-04" not in json.dumps(body, default=str)
+
+
+def test_a_template_export_refuses_a_caller_as_of(posts):
+    status, detail = _export({**GOOD, "recipient_scope": SCOPE, "as_of": "2026-01-02"})
+    assert status == 422
+    assert detail["error"] == "as_of_not_accepted" and detail["field"] == "as_of"
+    assert not [p for p in posts if p["url"].endswith("/package_export")] and posts == []
 
 
 @pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
