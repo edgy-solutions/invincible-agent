@@ -55,6 +55,10 @@ from typing import Mapping, Optional, Sequence
 #: case was one candidate, specific, real, and of the wrong class. Reusing either would make
 #: this vocabulary lie to keep its size.
 #:
+#: A SECOND VALUE IS ALSO PRODUCED OUTSIDE THIS MODULE: `session_expired` (ruled 2026-11-19, Q2),
+#: by the fan-out when the person's own token has expired or a provider refused it. It is never
+#: `empty` and never resolvable: `/resolve` answers UNKNOWN, `/fill_slots` refuses with 401.
+#:
 #: Recorded HERE so an exhaustive match written against this list does not silently fall
 #: through on a value it has never seen. This module does not produce `wrong_class` and does
 #: not need to handle it; a consumer of `/fill_slots` does.
