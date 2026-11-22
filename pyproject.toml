@@ -65,7 +65,7 @@ dependencies = [
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut. Pinned past v0.9.5 to lane/ca's
     # c5fec43 (branch only, no tag yet) for write_node on MeshGraphWriter — the ingest node's
     # move off raw Cypher MERGE needs it now.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.25",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.26",
     # The cortex-bff and dagster user-code images install --no-dev with no extras, so the
     # telemetry leaf must be a main dependency or trace_spans degrades to no-ops
     # (bff.orchestrate and supervisor.* never emit).
@@ -144,6 +144,10 @@ dev = [
     # tests/perf/test_langfuse_client_below_5.py parses version specifiers with it. pytest
     # installs it anyway, but the import census counts declarations, not installs.
     "packaging",
+    # tests/test_a_personal_data_column_is_withheld.py builds polars schemas for the shared contract
+    # reader (agent_fleet/utils/dataset_contracts.py, which imports it lazily). The floor matches
+    # engine-fin's declaration in agent_fleet/finance_agent/pyproject.toml.
+    "polars>=1.20",
     "weaviate-client>=4.4,<5.0",
     "lxml>=6.1.1",
     # Mesh membership package — owns transport auth (the app-factory dependency) and the
@@ -152,7 +156,7 @@ dev = [
     # every engine's security behaviour at rebuild — the library-bump outage class with
     # credentials attached (cf. the doc-tools floating-@rev finding).
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut — see the matching pin above.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.25",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.26",
 ]
 
 [build-system]
