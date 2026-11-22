@@ -1250,7 +1250,8 @@ def _package_provenance(program_source: Optional[dict[str, Any]],
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
-    return name == "program_id"
+    """Whether the ROW declares the param required (`inputs.params.<name>.required: true`)."""
+    return name in row.required_params
 
 
 @app.post("/measure/{fn}")

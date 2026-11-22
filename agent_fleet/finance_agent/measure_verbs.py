@@ -258,6 +258,9 @@ class MeasureVerbRow:
     source: str = SOURCE_ASSET
     source_reason: str = ""
     ratified_by: str = ""
+    # The params whose declaration in `inputs.params` says `required: true`. `params` keeps only
+    # the names; what the row SAYS about each is here, so no engine decides it by a name.
+    required_params: tuple[str, ...] = ()
 
     @property
     def series_key(self) -> str:
@@ -599,6 +602,8 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
             f"inputs carries {extra}; a row names quantities from the vocabulary and holds no "
             f"formula, expression or query (ADR-0053 section 3)")
     params = tuple(inputs["params"])
+    required_params = tuple(
+        n for n, decl in inputs["params"].items() if isinstance(decl, dict) and decl.get("required") is True)
     allowed_params = _DATASET_PARAMS if kind == KIND_DATASET else _PARAMS
     unknown_params = sorted(set(params) - allowed_params)
     if unknown_params:
@@ -745,6 +750,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         per_program=dataset.get("per_program", {}), contract=dataset.get("contract"),
         menu=menu,
         source=source, source_reason=source_reason, ratified_by=ratified_by,
+        required_params=required_params,
     )
 
 
