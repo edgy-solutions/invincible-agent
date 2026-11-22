@@ -2,6 +2,8 @@
 
 ## 0.4.92 — not yet cut
 
+**Opened at the 0.4.91 cut** (the architect, 2026-11-22: "Open `## 0.4.92 — not yet cut` now as a small PR, and after every cut from now on"). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.91 one. `Chart.yaml` stays at 0.4.91 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
+
 - **A follow-on task cannot complete without what it exists to settle** (74). A task kind may declare completion fields: a qualification names the replacement part, and a last-time-buy records quantity and date. Fields are required on the verbs that complete the task and optional at review, where a blank is written as the declared text. A missing or invalid field is refused with a structured `fields` list. The declarations are checked at start, and a running BFF keeps the copy it read. **Chart change:** the BFF's readiness probe reads `/ready` instead of `/health`, so a BFF whose declarations do not compose is not ready. Liveness stays on `/health`, so a configuration fault never restarts the pod.
 
 ## 0.4.91 — 2026-11-21
