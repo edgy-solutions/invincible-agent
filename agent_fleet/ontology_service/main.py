@@ -1377,6 +1377,10 @@ class SemanticResolutionResponse(BaseModel):
     # `ONTOLOGY_CLASS_POOL_VIA_MESH` measurable rather than merely switchable. A field only the
     # on-by-default arm populated would make the flag the only way to learn the mode.
     mode: str | None = None
+    # The classifier's RESULT constraint (the kind the person wants back when it differs from the
+    # subject, plus verbatim qualifier words). Recorded only, nothing routes on it; None when the
+    # classifier gave none or never ran. Shape: {kind, qualifiers}.
+    result: dict | None = None
 
 class LegacyTableDossier(BaseModel):
     table_name: str
@@ -3773,6 +3777,20 @@ def _docs_pool_provenance(match: dict) -> dict:
     }
 
 
+def _result_constraint(classified) -> dict | None:
+    """The classifier's RESULT constraint as a plain dict, or None when it gave none.
+
+    getattr throughout: a classifier output without the field (older stubs, older clients) is None.
+    Records what came back faithfully; an empty object is not dropped."""
+    rc = getattr(classified, "result", None)
+    if rc is None:
+        return None
+    return {
+        "kind": (str(rc.kind) if getattr(rc, "kind", None) is not None else None),
+        "qualifiers": [str(q) for q in (getattr(rc, "qualifiers", None) or [])],
+    }
+
+
 async def _resolve_docs_subject(request: ResolveRequest) -> SemanticResolutionResponse | None:
     """Bind a DOCS question to `mesh:DocPage` with the winning page as its instance, or None."""
     domains = request.domains or ([request.domain] if request.domain else [])
@@ -4184,6 +4202,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             detail=f"BAML classification failed: {exc}",
         ) from exc
 
+    _result_constraint_rec = _result_constraint(result)
+
     # Step 4: Instance-resolution pre-step (Recipe v2).
     # If the LLM extracted a named-individual identifier, fan it out to
     # registered mesh:resolveInstance providers. A unanimous-class
@@ -4228,6 +4248,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                     candidates=candidates,
                     excluded=_gate_excluded,
                     mode=retrieval_mode,
+                    result=_result_constraint_rec,
                 )
             return SemanticResolutionResponse(
                 resolved_uri=instance_subject,
@@ -4246,6 +4267,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 candidates=candidates,
                 excluded=_gate_excluded,
                 mode=retrieval_mode,
+                result=_result_constraint_rec,
             )
 
         # STRUCTURAL ABSTENTION GATE (ADR-0026 abstention-gate arc).
@@ -4281,6 +4303,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 candidates=candidates,
                 excluded=_gate_excluded,
                 mode=retrieval_mode,
+                result=_result_constraint_rec,
             )
 
         # Gate did NOT fire: either a generic term the extractor
@@ -4302,6 +4325,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             candidates=candidates,
             excluded=_gate_excluded,
             mode=retrieval_mode,
+            result=_result_constraint_rec,
         )
 
     # Step 5: Return structured response (no identifier extracted).
@@ -4329,6 +4353,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         candidates=candidates,
         excluded=_gate_excluded,
         mode=retrieval_mode,
+        result=_result_constraint_rec,
     )
 
 
