@@ -1,5 +1,9 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.92 — not yet cut
+
+- **Only the BFF can reach Electric** (saf; step 2 of the sync-service exposure plan). A NetworkPolicy `<release>-electric-ingress` admits ingress to the Electric pods from the cortex-bff pods only, on `electric.port`. It has its own switch, `electric.networkPolicy.enabled` (default false: enabling a perimeter is the operator's decision, and the CNI is unmeasured), so it does not wait on the fleet gate `networkPolicy.enabled`. The selectors come from two helpers (`electricComponent`, `cortexBffComponent`) that the Electric and BFF templates also label themselves with; a seal renders both and compares, and a census fails when any other pod names Electric. **Whether this cluster's CNI enforces NetworkPolicy is unmeasured**: the roll has two checks (a call to Electric from a non-BFF pod must fail; the BFF's shape read must answer), each needing approval. Not in the ruled 0.4.91 list; rides the release after unless ruled.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
@@ -78,8 +82,6 @@
 - The `access-revokers` group (revocation, `policy/groups.yaml`) is live in the sandbox directory: Chris synced it before the roll, as a new group requires.
 - **Roll order: the BFF before the Topaz seed job.**
 - #481: the roll re-issues nothing. A grouped review is re-issued only by a later call that names `reissue_of`.
-
-- **Only the BFF can reach Electric** (saf; step 2 of the sync-service exposure plan). A NetworkPolicy `<release>-electric-ingress` admits ingress to the Electric pods from the cortex-bff pods only, on `electric.port`. It has its own switch, `electric.networkPolicy.enabled` (default false: enabling a perimeter is the operator's decision, and the CNI is unmeasured), so it does not wait on the fleet gate `networkPolicy.enabled`. The selectors come from two helpers (`electricComponent`, `cortexBffComponent`) that the Electric and BFF templates also label themselves with; a seal renders both and compares, and a census fails when any other pod names Electric. **Whether this cluster's CNI enforces NetworkPolicy is unmeasured**: the roll has two checks (a call to Electric from a non-BFF pod must fail; the BFF's shape read must answer), each needing approval. Not in the ruled 0.4.91 list; rides the release after unless ruled.
 
 - **The person-guard census declares its one identity comparison** (saf; master was red since #414). `grant_flow.backfill_ledger` compares the repository identity's `Auth-Via` header with `"service"`; it is not an Initiator kind and is already allowlist-shaped. The matcher stays broad (a copy written as `initiator.role == "service"` is still caught); the row is declared by (path, function) with a count and a reason, checked both ways. Test only.
 
