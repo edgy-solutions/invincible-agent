@@ -24,6 +24,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -224,6 +225,11 @@ IOF_CONSTRUCT = rdflib.Namespace(
 # ---------------------------------------------------------------------------
 import os
 import httpx
+
+#: The `provider` this engine registers its own `mesh:resolveInstance` verb under. ONE constant,
+#: read by the registration and by `_call_resolver`, which answers a row carrying it IN-PROCESS
+#: (ruled 2026-11-19, Q2: "Engine O answers its own provider in-process").
+_SELF_RESOLVE_PROVIDER = "engine_o_sustainment"
 
 # ─── ADR-0025 ontology-IRI visibility gate ──────────────────────────────────
 # Filters the OntologyClass candidate pool through Topaz can_view BEFORE BAML
@@ -925,7 +931,7 @@ async def lifespan(app: FastAPI):
                 domains=["SUSTAINMENT"],
                 cost_class="fast",
                 requires_human_approval=False,
-                provider="engine_o_sustainment",
+                provider=_SELF_RESOLVE_PROVIDER,
                 timeout_s=5.0,
             )
             print(f"[ontology-service] registered SUSTAINMENT mesh:resolveInstance provider -> {_pcn_endpoint}")
@@ -1107,7 +1113,58 @@ try:
     from agent_fleet.ontology_service import caller_binding as _caller_binding
 except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
     import caller_binding as _caller_binding  # type: ignore[no-redef]
+from iagent_mesh.transport_auth import _bearer_from as _sdk_bearer_from
 from iagent_mesh.transport_auth import current_caller as _current_caller
+
+#: The inbound bearer of THIS request, request-scoped: set by `_capture_inbound_bearer` (an async
+#: app-level dependency, so the value reaches the handler), read ONLY by `_relay_authorization`.
+#: Never logged, never stored anywhere else (ruled 2026-11-19, Q2).
+_INBOUND_BEARER: ContextVar[str] = ContextVar("engine_o_inbound_bearer", default="")
+
+
+async def _capture_inbound_bearer(request: Request) -> None:
+    _INBOUND_BEARER.set(_sdk_bearer_from(request.headers.get("Authorization")) or "")
+
+
+def _caller_session_expired() -> bool:
+    """True when the verified caller's token is expired: the SDK names an expired signature, or
+    the verified claims carry an `exp` at or before now (no leeway)."""
+    caller = _current_caller()
+    if caller is None:
+        return False
+    if "ExpiredSignatureError" in str(getattr(caller, "reason", "") or ""):
+        return True
+    raw = getattr(caller, "raw", None) if isinstance(getattr(caller, "raw", None), dict) else {}
+    if getattr(caller, "verified", False) and raw.get("exp") is not None:
+        try:
+            return float(raw["exp"]) <= time.time()
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def _relay_authorization() -> tuple[str, dict]:
+    """How a provider call carries the person (ruled 2026-11-19, Q2).
+
+    ``("relay", {"Authorization": "Bearer <t>"})`` only for a VERIFIED PERSON whose own bearer
+    this request carried; ``("expired", {})`` when that token has expired (the caller must make no
+    call and report an expired session); otherwise ``("none", {})``. A service caller relays
+    nothing: declared delegation stays for calls with no live person token (ruling 1b)."""
+    if _caller_session_expired():
+        return "expired", {}
+    caller = _current_caller()
+    token = _INBOUND_BEARER.get()
+    if (caller is not None and getattr(caller, "verified", False) and token
+            and _caller_binding._is_person(str(getattr(caller, "authz_id", "") or ""))):
+        return "relay", {"Authorization": f"Bearer {token}"}
+    return "none", {}
+
+
+def _session_expired_response() -> JSONResponse:
+    return JSONResponse(status_code=401, content={
+        "reason": "session_expired",
+        "message": "the person's session has expired; sign in again"})
+
 
 _bind_log = logging.getLogger("engine-o.caller_binding")
 
@@ -1171,7 +1228,7 @@ from iagent_mesh import ResolveInstanceRequest as _SdkResolveInstanceRequest
 _announce_transport_auth(component="engine-o")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
-    dependencies=[Depends(_transport_auth("engine-o"))],
+    dependencies=[Depends(_transport_auth("engine-o")), Depends(_capture_inbound_bearer)],
     title="Engine O — Ontology Reasoner",
     description=(
         "Translates natural language into IOF/MIMOSA sustainment terms. "
@@ -2486,7 +2543,7 @@ class _ResolverOutcome:
     __slots__ = ("status", "candidates", "provider", "endpoint_url", "elapsed_s")
     def __init__(self, *, status: str, candidates: list, provider: str,
                  endpoint_url: str, elapsed_s: float) -> None:
-        self.status = status              # "ok" | "timeout" | "error"
+        self.status = status              # "ok" | "timeout" | "error" | "session_expired"
         self.candidates = candidates
         self.provider = provider
         self.endpoint_url = endpoint_url
@@ -2663,6 +2720,46 @@ async def _call_resolver(
     # provider hasn't told us its SLO.
     budget_s = resolver.get("timeout_s") or _INSTANCE_RESOLVER_FANOUT_TIMEOUT_S
     started = time.monotonic()
+
+    def _outcome(status: str, candidates: list | None = None) -> _ResolverOutcome:
+        return _ResolverOutcome(
+            status=status, candidates=candidates or [], provider=provider,
+            endpoint_url=endpoint_url, elapsed_s=time.monotonic() - started,
+        )
+
+    # THE PERSON TRAVELS AS THEMSELVES (ruled 2026-11-19, Q2). An expired token makes NO call:
+    # the session is reported expired, never answered as an anonymous caller would be.
+    relay_mode, _ = _relay_authorization()
+    if relay_mode == "expired":
+        return _outcome("session_expired")
+
+    if provider == _SELF_RESOLVE_PROVIDER:
+        # ENGINE O ANSWERS ITS OWN PROVIDER IN-PROCESS: the handler binds from the SAME request's
+        # verified caller, so no bearer is needed and none leaves the process.
+        try:
+            result = await resolve_instance(ResolveInstanceRequest(
+                identifier=identifier, query=query, user_email=user_email,
+                entitled_domains=tuple(entitled_domains or ()),
+            ))
+        except HTTPException as exc:
+            # AN OUTAGE IS NOT A PROVIDER'S MISS. A 5xx here is engine O's own store or PDP
+            # failing; folding it into "error" would resolve from the other providers and serve
+            # an answer missing this one's rows as though it were whole. It escapes the fan-out
+            # (gather does not return exceptions) and the route answers it as the outage it is.
+            if exc.status_code >= 500:
+                raise
+            print(f"mesh:resolveInstance provider {provider!r} (in-process) REFUSED on "
+                  f"identifier={identifier!r}: HTTP {exc.status_code}")
+            return _outcome("session_expired" if exc.status_code == 401 else "error")
+        except Exception as exc:  # noqa: BLE001 -- no exception escapes the fan-out
+            print(f"mesh:resolveInstance provider {provider!r} (in-process) ERRORED on "
+                  f"identifier={identifier!r}: {type(exc).__name__}")
+            return _outcome("error")
+        if isinstance(result, JSONResponse):  # the handler's own refusal (expired session)
+            return _outcome("session_expired" if result.status_code == 401 else "error")
+        return _outcome("ok", _parse_resolver_candidates(
+            (result or {}).get("candidates"), provider))
+
     try:
         async with httpx.AsyncClient(timeout=budget_s) as client:
             resp = await client.post(
@@ -2670,7 +2767,14 @@ async def _call_resolver(
                 json={"identifier": identifier, "query": query,
                       "user_email": user_email or "",
                       "entitled_domains": list(entitled_domains or [])},
+                headers=_relay_authorization()[1],
             )
+            if relay_mode == "relay" and resp.status_code in (401, 403):
+                # The provider refused the person's own token, never an error to be folded and
+                # never an answer from the other providers. Expired when it says so (401, or a
+                # 403 naming ExpiredSignatureError); any other refusal is `caller_refused`.
+                # Nothing of resp.text is printed or kept.
+                return _outcome(_relayed_refusal_reason(resp.status_code, resp.text))
             resp.raise_for_status()
             data = resp.json() or {}
     except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
@@ -2680,24 +2784,23 @@ async def _call_resolver(
             f"EXCEEDED its budget of {budget_s}s on identifier="
             f"{identifier!r}: {type(exc).__name__} after {elapsed:.2f}s"
         )
-        return _ResolverOutcome(
-            status="timeout", candidates=[], provider=provider,
-            endpoint_url=endpoint_url, elapsed_s=elapsed,
-        )
+        return _outcome("timeout")
     except Exception as exc:  # noqa: BLE001 — non-timeout failures stay distinct from kept-empty
-        elapsed = time.monotonic() - started
+        # A call carrying a bearer prints the exception TYPE only: the token appears in no text.
+        detail = type(exc).__name__ if relay_mode == "relay" else f"{type(exc).__name__}: {exc}"
         print(
             f"mesh:resolveInstance provider {provider!r} ({endpoint_url}) "
-            f"ERRORED on identifier={identifier!r}: "
-            f"{type(exc).__name__}: {exc}"
+            f"ERRORED on identifier={identifier!r}: {detail}"
         )
-        return _ResolverOutcome(
-            status="error", candidates=[], provider=provider,
-            endpoint_url=endpoint_url, elapsed_s=elapsed,
-        )
-    elapsed = time.monotonic() - started
+        return _outcome("error")
+    return _outcome("ok", _parse_resolver_candidates(data.get("candidates"), provider))
+
+
+def _parse_resolver_candidates(raw, provider: str) -> list:
+    """A provider's `candidates` list as `_IRCandidate`s, skipping malformed rows. ONE parser for
+    the HTTP answer and the in-process answer."""
     out: list[_IRCandidate] = []
-    for c in data.get("candidates") or []:
+    for c in raw or []:
         try:
             out.append(
                 _IRCandidate(
@@ -2711,10 +2814,54 @@ async def _call_resolver(
             )
         except Exception:  # noqa: BLE001 — skip malformed candidate
             continue
-    return _ResolverOutcome(
-        status="ok", candidates=out, provider=provider,
-        endpoint_url=endpoint_url, elapsed_s=elapsed,
+    return out
+
+
+_PERSON_TOKEN_REFUSALS = ("session_expired", "caller_refused")
+
+
+def _relayed_refusal_reason(status: int, text: str) -> str:
+    """Why a provider refused the person's relayed token (status is 401 or 403).
+
+    The SDK has no structured code: REQUIRE answers 403 with the TEXT
+    ``transport auth failed: invalid: <ExceptionName>``, so expiry is read from the exception
+    name. The structured code belongs to a later SDK release; a seal (G11) turns red if the SDK's
+    wording moves. Leeway agrees with `_caller_session_expired`: the SDK's jwt.decode has none.
+    """
+    if status == 401 or "ExpiredSignatureError" in (text or ""):
+        return "session_expired"
+    return "caller_refused"
+# A provider refusing the person's own relayed token. Both halt the fan-out and both are terminal
+# in engine A (which holds the same tuple; a seal keeps them equal).
+_PERSON_TOKEN_REFUSAL_DETAIL = {
+    "session_expired": "the person's session has expired; sign in again",
+    "caller_refused": "a provider refused the person's token; sign in again",
+}
+
+
+def _session_expired_resolution(provenance: dict, mode):
+    """The /resolve answer for a refused person token: UNKNOWN with the reason, never the LLM's
+    class guess (which would be an answer given to nobody in particular)."""
+    reason = provenance.get("instance_match")
+    return SemanticResolutionResponse(
+        resolved_uri="UNKNOWN", confidence_score=0.0,
+        reasoning=_PERSON_TOKEN_REFUSAL_DETAIL.get(
+            reason, _PERSON_TOKEN_REFUSAL_DETAIL["session_expired"]),
+        provenance=provenance, mode=mode,
     )
+
+
+def _person_token_refusal_provenance(reason: str = "session_expired") -> dict:
+    return {
+        "instance_resolved": False,
+        "instance_match": reason,
+        "instance_n": 0,
+        "instance_detail": _PERSON_TOKEN_REFUSAL_DETAIL[reason],
+    }
+
+
+def _session_expired_provenance() -> dict:
+    return _person_token_refusal_provenance("session_expired")
 
 
 async def _resolve_instance(
@@ -2734,6 +2881,10 @@ async def _resolve_instance(
     (one or more providers ran out of budget — the failure mode that
     used to hide as ``empty`` until the 2s strangle bug was caught).
     """
+    if _relay_authorization()[0] == "expired":
+        # RULED 2026-11-19 (Q2): an expired token is reported as an expired session. NO provider
+        # is called (engine O's own included) and nothing is answered as an anonymous caller.
+        return None, _session_expired_provenance()
     discovery = _discover_instance_resolvers()
     if discovery.outcome in ("failed", "unreachable"):
         # THE REGISTRY COULD NOT BE READ. This function's docstring is proud of separating `empty`
@@ -2798,6 +2949,12 @@ async def _resolve_instance(
     outcomes: list[_ResolverOutcome] = await asyncio.gather(
         *tasks, return_exceptions=False
     )
+    if any(o.status in _PERSON_TOKEN_REFUSALS for o in outcomes):
+        # A provider refused the person's own token. Do NOT resolve from the others' answers.
+        # session_expired wins when both reasons are present.
+        _reason = ("session_expired" if any(o.status == "session_expired" for o in outcomes)
+                   else "caller_refused")
+        return None, _person_token_refusal_provenance(_reason)
 
     # AN OUT-OF-DOMAIN HIT IS A CANDIDATE, NOT AN AUTHORITY. RULED 2026-09-11.
     #
@@ -4103,6 +4260,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
+            if instance_provenance.get("instance_match") in _PERSON_TOKEN_REFUSALS:
+                return _session_expired_resolution(instance_provenance, retrieval_mode)
             # THE LABEL NAMES WHICH CONDITION FIRED. It was hard-coded
             # `class_recall_empty_fallback`, which was true while the only condition was an
             # EMPTY recall. This branch now also fires on a non-empty recall whose top class
@@ -4220,6 +4379,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
+        if instance_provenance.get("instance_match") in _PERSON_TOKEN_REFUSALS:
+            return _session_expired_resolution(instance_provenance, retrieval_mode)
         if _input_declared_trace is not None:
             instance_provenance["input_declared"] = _input_declared_trace
         if instance_subject is not None:
@@ -5404,6 +5565,12 @@ async def fill_slots(request: FillSlotsRequest):
             user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
         )
         outcome = str(prov.get("instance_match") or "empty")
+        if outcome in _PERSON_TOKEN_REFUSALS:
+            # NOT a slot outcome: `slot_disposition` knows neither ASK nor ABSTAIN for it and
+            # would fall through to a menu built for nobody. The whole call is refused.
+            raise HTTPException(status_code=401, detail={
+                "reason": outcome,
+                "message": _PERSON_TOKEN_REFUSAL_DETAIL[outcome]})
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
         # by the slot's referent class — which would have emptied the list for exactly the
         # case that most needs a menu: "the ERP Modernization project" resolves to an
@@ -6002,6 +6169,9 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     sustainment_instance_provider.py). Contract matches _call_resolver's expectation: returns
     ``{candidates: [{instance_id, class_uri, label, score}]}``; an empty list is a first-class
     ABSTAIN. The async Jena fetch lives here; the matching is the pure, unit-tested core."""
+    if _caller_session_expired():
+        # REFUSED BEFORE ANY READ (ruled 2026-11-19, Q2): an expired token is never bound anonymous.
+        return _session_expired_response()
     request, _ = await _bound(request, route="resolve_instance", delegate_field="on_behalf_of")
     try:
         rows = await execute_sparql(_SUSTAINMENT_INSTANCES_QUERY, domain="SUSTAINMENT")
