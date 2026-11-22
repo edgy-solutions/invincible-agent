@@ -92,10 +92,14 @@ def test_the_sandbox_serves_every_engine_the_bffs_lists_and_the_realm_jwks(sandb
         assert env["MESH_JWT_JWKS_URL"] == env["KEYCLOAK_REALM_URL"].rstrip("/") + _CERTS, name
 
 
-def test_base_values_serve_both_lists_present_and_empty(base):
+def test_base_values_serve_both_lists_issuers_empty_audience_derived(base):
+    # The identity prefix (ruled 11-22) derives the audience: `cortex-bff` under an empty prefix. Deny-by-default
+    # rests on the empty issuer list; every engine is served the BFF's own derived audience list.
+    bff = _bff_env(base)
+    assert bff["BFF_JWT_ACCEPTED_ISSUERS"] == "" and bff["BFF_JWT_ACCEPTED_AUDIENCES"] == "cortex-bff"
     for name, e in _served(base).items():
         assert e["env"]["MESH_JWT_ACCEPTED_ISSUERS"] == "", name
-        assert e["env"]["MESH_JWT_ACCEPTED_AUDIENCES"] == "", name
+        assert e["env"]["MESH_JWT_ACCEPTED_AUDIENCES"] == bff["BFF_JWT_ACCEPTED_AUDIENCES"], name
 
 
 def test_a_hand_set_env_cannot_widen_the_lists(sandbox):
