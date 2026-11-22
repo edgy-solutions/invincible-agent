@@ -2,8 +2,9 @@
 
 **Status:** Proposed (fin, 2026-11-15). This is a draft for Lane 1's review, and the architect
 rules on it. It records decisions already ruled between 2026-11-10 and 2026-11-16 and the code
-that carries them; it adds no new rule. Sections 3, 4 and 6 describe PRs that are still open
-(#409, #426 and #393), and each section says so. It fills the number ADR-0065 reserved at its lines 18,
+that carries them; it adds no new rule. Sections 3 and 4 describe PRs that are still open
+(#426 and #409), and each section says so; section 6 (#393) and the template repin (#488, section 9)
+are merged. It fills the number ADR-0065 reserved at its lines 18,
 178 and 183, which `contracts/ev_fixture.yaml`'s header and `agent_fleet/utils/dataset_contracts.py`'s
 docstring cite as "provisional".
 **Date:** 2026-11-15
@@ -30,14 +31,16 @@ docstring cite as "provisional".
   `contracts/`, and read by name. The deployment chooses the file. One module,
   `agent_fleet/utils/dataset_contracts.py`, parses every contract and raises every generic
   refusal. Engines add their roles, never a second copy of the rules.
-- **Already true on master:** sections 1, 2, 3, 5, 7 and the `inputs.dataset.contract` half of 8.
-- **True once the open PRs merge:** section 4 for the `FIN_DATASET_URN` read (#409) and section 6
-  (#393).
+- **Already true on master:** sections 1, 2, 3 (five of its seven rules), 5, 6, 7 and the
+  `inputs.dataset.contract` half of 8. Section 6 landed with #393.
+- **True once the open PRs merge:** section 4 for the `FIN_DATASET_URN` read (#409), and section 3's
+  two remaining rules (#426, which carries #409).
 - **Not built:** the superset check against dag-tools' template at a pinned tag (section 9).
 - **Ruled 2026-11-16, in flight:** the shared reader raises `null_value` (a column declared
   `nullable: false`) and `non_finite` (a `numeric` or `float` column) for every contract, and
-  engine-fin's two retire into them (sections 3 and 4; #426). The repin is to dag-tools v0.16.1 (#428),
-  stacked on #426, and Lane 1 registers the `mfg_trace` contract stacked on #426 too (section 9).
+  engine-fin's two retire into them (sections 3 and 4; #426). The template copy is repinned to
+  dag-tools v0.17.0 (#488, merged; #428, the v0.16.1 repin, closed unmerged). Lane 1 registers the
+  `mfg_trace` contract after #426 (section 9).
 - **The questions for the architect** are in section 11. Questions 2 and 4 are ruled.
 
 ## 1. A contract is a file of data
@@ -104,12 +107,13 @@ carried key enforces nothing: a review that relies on one must say that nothing 
 
 - **The contract declares, the reader enforces** (ruled 2026-11-10). The reader holds the generic
   rules and names no column of any contract.
-- **The six generic refusals** (`RULES`), each raised as `ContractViolation(rule, message)`:
+- **The seven generic refusals** (`RULES`), each raised as `ContractViolation(rule, message)`:
 
   | id | refuses |
   | --- | --- |
   | `missing_column` | a required column, or a column the reading row names, is absent |
   | `wrong_type` | a column is not of its declared type |
+  | `personal_data` | a reading row names a `personal_data` column the reading engine did not release (section 6; #393) |
   | `null_value` | a column declared `nullable: false` carries a null (#426) |
   | `non_finite` | a column declared `numeric` or `float` carries a NaN or an infinity (#426) |
   | `duplicate_key` | more than one row for one grain tuple |
@@ -118,7 +122,7 @@ carried key enforces nothing: a review that relies on one must say that nothing 
   A message names columns, never values. `null_value` and `non_finite` were engine-fin's, raised
   only over the columns a read used; ruled 2026-11-16, the reader raises them over every declared
   column, and engine-fin's two retire into them (#426). On master until #426 merges, the reader
-  raises the other four.
+  raises the other five (`agent_fleet/utils/dataset_contracts.py`, `RULES`).
 - **They apply to every contract** (ruled #378, 2026-11-14). A contract's `rules` block carries
   messages for them, and for an engine's own rules. Leaving a rule out of the block disables
   nothing.
@@ -166,7 +170,7 @@ carried key enforces nothing: a review that relies on one must say that nothing 
 
 ## 6. A personal column is withheld by default
 
-True once #393 merges (ruled 2026-11-14, ADR-0070 §10 ruling 4).
+On master since #393 merged on 2026-11-20 (ruled 2026-11-14, ADR-0070 §10 ruling 4).
 
 - **A contract records a fact, not a level.** `personal_data: true` says a column identifies a
   person. The classification level, and who may see the column, are the deployment's. They are
@@ -176,7 +180,8 @@ True once #393 merges (ruled 2026-11-14, ADR-0070 §10 ruling 4).
   column every read needs cannot be withheld.
 - **Withheld from the selection** unless the reading engine releases it
   (`check_contract_schema(..., released=)`). A row that names a withheld column is refused
-  `personal_data`, a fifth id in `RULES`. A withheld column is still type-checked, because a dtype
+  `personal_data`, one of the five ids in `RULES` on master (seven once #426 adds `null_value` and
+  `non_finite`; section 3). A withheld column is still type-checked, because a dtype
   is schema metadata, not a value.
 - **Phase 1 releases nothing.** No call under `agent_fleet/` passes a release, and a census seals
   that. Deciding a release from the caller's holds on the column's dimension is phase 2.
@@ -225,28 +230,29 @@ From ADR-0070 §1, restated here as the rule for every contract a producer publi
   that the multi-document seal reads. No check pins a dag-tools tag, and no check compares a
   registered contract to its template. The check arrives with the first registered
   `mfg_trace` contract.
-- **The superset covers the rules block too** (ruled 2026-11-16, with Lane 1). When the reader
-  repins to dag-tools v0.16.0, the registered `mfg_trace` contract declares `null_value`,
-  `wrong_type` and `non_finite` in the same PR, so it stays a superset of the template.
-- **The order** (ruled 2026-11-16, second ruling). dag-tools v0.16.0 and v0.16.1 are tagged, and
-  the repin is to v0.16.1. First the shared reader raises `null_value` and `non_finite` (#426).
-  Then fin repins the template copy to v0.16.1 (#428), and Lane 1 registers the `mfg_trace` contract:
-  every table in the template, declaring the refusals the template declares. Both stack on #426.
-  v0.16.1's template is the same file as `f07b7f0`'s, measured below.
-- **What the repin meets.** The copy on master is dag-tools at `398d82d`, and every document in it
-  names `key_not_unique`. A tripwire in `tests/test_the_contract_reader_reads_the_multi_document_form.py`
-  pins that set. dag-tools at `f07b7f0` (byte-identical to the template at v0.16.1), loaded
-  through the shared reader as it stands before #426, gives:
-  - 12 documents, with two new ones: `conf_test_repo_result` and `conf_test_repo_step_parameter`;
-  - `key_not_unique` gone, replaced by `duplicate_key` in every document;
+- **The superset covers the rules block too** (ruled 2026-11-16, with Lane 1). The registered
+  `mfg_trace` contract declares `null_value`, `wrong_type` and `non_finite` in the PR that
+  registers it, so it stays a superset of the template.
+- **The order** (ruled 2026-11-16, second ruling; the pin moved on since). First the shared reader
+  raises `null_value` and `non_finite` (#426). Then Lane 1 registers the `mfg_trace` contract:
+  every table in the template, declaring the refusals the template declares, stacked on #426. The
+  template copy's repin is done: #488 (merged 2026-11-20) pins it to dag-tools v0.17.0
+  (`pyproject.toml`'s `edgy-dag-tools==0.17.0`). #428, the v0.16.1 repin, closed unmerged.
+- **What the copy on master holds.** `tests/fixtures/dag_tools_mfg_trace/mfg_trace.yaml` is
+  dag-tools v0.17.0 at `a85c5f99`, which the seal's docstring records as unchanged since v0.16.1.
+  Loaded through master's shared reader (before #426), it gives:
+  - 12 documents, including `conf_test_repo_result` and `conf_test_repo_step_parameter`;
+  - `duplicate_key` in every document, and `key_not_unique` in none;
   - `unknown_rules` listing `non_finite` and `null_value` on `conf_test_repo_result`, and
     `null_value` on `conf_test_repo_step_parameter`.
 
-  `wrong_type` is already one of the reader's four. dag-tools' plan emits the other two as
+  The tripwire in `tests/test_the_contract_reader_reads_the_multi_document_form.py` pins that
+  union, `{null_value, non_finite}`, and that `duplicate_key` is named and `key_not_unique` is
+  not. `wrong_type` is already one of the reader's five. dag-tools' plan emits the other two as
   producer-side tests (`not_null` → `null_value`, `non_finite` → `non_finite`), with the same ids
   engine-fin raises. Question 4 in section 11 asked which reader raises them for a registered
-  contract; it is ruled (a), the shared reader (#426), and with it `unknown_rules` over v0.16.1's
-  template is empty.
+  contract; it is ruled (a), the shared reader (#426). When #426 merges, `unknown_rules` over the
+  template is empty and the tripwire goes red by design: #426 flips it to the empty set.
 
 ## 10. Three readers of one format
 
