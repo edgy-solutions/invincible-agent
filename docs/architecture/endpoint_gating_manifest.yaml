@@ -2440,7 +2440,10 @@ services:
           "WHAT WOULD CHANGE THIS ROW"), so an entry is listed only when the caller holds a domain
           in the row's cells, the comparison the measure's own engine refuses on (the cell gate,
           upper-cased both sides). `shape` and `unit` are served from the row's render block
-          (`unit` is null when the row declares none). The list never names a measure the caller
+          (`unit` is null when the row declares none). Built-in measures are listed from their
+          listing rows, through the measure's engine's own loader, and declare no shape.
+          `example_ask` and `group_label` are served as declared (null when undeclared). The list
+          never names a measure the caller
           would be refused. The engine still refuses on its own gate; the BFF filter is for
           discovery, not authority.
       - method: POST

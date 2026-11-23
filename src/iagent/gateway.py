@@ -2071,8 +2071,10 @@ class AskableMeasure(_BaseModel):
     description: str
     phrasings: list[str]
     cells: list[str]
-    shape: str
+    shape: str | None = None
     unit: str | None = None
+    example_ask: str | None = None
+    group_label: str | None = None
 
 
 class AskableMeasuresResponse(_BaseModel):
@@ -2090,9 +2092,10 @@ async def get_askable_measures(current_user: User = Depends(get_current_user)):
     measure refuses on, so the list never names a measure the caller would be refused. The
     engine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's
     `declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the
-    row declares none).
+    row declares none). `example_ask` and `group_label` are served as declared, null otherwise.
 
-    Built-in measures (code, not declared rows) are not listed.
+    Built-in measures are listed from their listing rows, through the measure's engine's own
+    loader. They declare no shape (`shape` is null).
 
     `composed: false` means the rows were NOT READ (no overlay dir configured, or the load
     failed, named in `invalid` and logged at ERROR); it never means "none".

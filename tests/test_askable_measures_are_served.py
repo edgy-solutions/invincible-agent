@@ -64,6 +64,16 @@ def _cells_of(r):
     return {c.upper() for c in r.cells}
 
 
+def _builtins():
+    return measure_verbs.load_askable_builtins()
+
+
+def _declared_only(measures):
+    """The served entries that are declared rows, not built-ins."""
+    b = {e["verb"] for e in _builtins()}
+    return [m for m in measures if m["verb"] not in b]
+
+
 # 1
 def test_one_entry_per_declared_row_with_or_without_a_menu(monkeypatch):
     rows = _rows()
@@ -72,14 +82,16 @@ def test_one_entry_per_declared_row_with_or_without_a_menu(monkeypatch):
     _use_sample(monkeypatch)
     got = menu_blocks.askable()
     assert got.composed is True and got.invalid == []
-    assert len(got.measures) == len(rows)
-    by_verb = {m["verb"]: m for m in got.measures}
+    declared = _declared_only(got.measures)
+    assert len(declared) == len(rows)
+    by_verb = {m["verb"]: m for m in declared}
     assert len(by_verb) == len(rows)
     for r in rows:
         assert by_verb["mesh:" + r.verb] == {
             "verb": "mesh:" + r.verb, "name": r.name, "description": r.description,
             "phrasings": list(r.synonyms), "cells": sorted(r.cells),
-            "shape": r.archetype, "unit": _unit_of(r)}
+            "shape": r.archetype, "unit": _unit_of(r),
+            "example_ask": r.example_ask or None, "group_label": r.group_label or None}
     verbs = [m["verb"] for m in got.measures]
     assert verbs == sorted(verbs)
 
@@ -91,8 +103,13 @@ def test_the_verb_joins_to_the_engine_and_to_the_menu_blocks(monkeypatch):
     monkeypatch.setattr(fin, "DECLARED", {r.measure_id: r for r in rows})
     reported = {v["fn"]: v["verb"] for v in fin.list_verbs()["verbs"]}
     _use_sample(monkeypatch)
-    got = {m["verb"] for m in menu_blocks.askable().measures}
+    served = menu_blocks.askable().measures
+    got = {m["verb"] for m in _declared_only(served)}
     assert got == {reported[r.measure_id] for r in rows}
+    # every built-in verb served is a verb the engine registers
+    builtin_served = {m["verb"] for m in served} - got
+    assert builtin_served, "control: built-ins are served"
+    assert builtin_served <= {v["verb"] for v in fin.VERBS}
     placed = {b["declared_by"] for b in menu_blocks.compose().blocks}
     assert placed and placed <= got
     assert placed == {reported[r.measure_id] for r in rows if r.menu}
@@ -102,7 +119,7 @@ def test_the_verb_joins_to_the_engine_and_to_the_menu_blocks(monkeypatch):
 def test_visible_to_keeps_rows_whose_cells_the_caller_holds(monkeypatch):
     rows = _rows()
     _use_sample(monkeypatch)
-    measures = menu_blocks.askable().measures
+    measures = _declared_only(menu_blocks.askable().measures)
     cell = sorted(rows[0].cells)[0]
     expected = {"mesh:" + r.verb for r in rows if cell.upper() in _cells_of(r)}
     assert expected
@@ -124,12 +141,12 @@ def test_the_route_lists_for_the_holder_and_not_for_the_stranger(monkeypatch):
     assert x_rows
     a = _get([cell.lower()])
     assert a["composed"] is True
-    assert {m["verb"] for m in a["measures"]} == x_rows
+    assert {m["verb"] for m in _declared_only(a["measures"])} == x_rows
     held_other = set().union(*(_cells_of(r) for r in rows)) - {cell.upper()}
     b = _get(sorted(held_other))  # identical but for holding none of X
     assert not ({m["verb"] for m in b["measures"]} & {
         "mesh:" + r.verb for r in rows if _cells_of(r) == {cell.upper()}})
-    c = _get([])
+    c = _get(["NOT_A_DECLARED_CELL"])
     assert c["composed"] is True and c["measures"] == []
 
 
@@ -151,18 +168,26 @@ def test_unset_env_is_not_read_and_a_bad_row_never_raises(monkeypatch, tmp_path)
 
 # 6
 def test_compose_and_askable_share_one_load(monkeypatch):
-    calls = []
+    calls, bcalls = [], []
     real = measure_verbs.load_measure_verbs
+    breal = measure_verbs.load_askable_builtins
 
     def counting(*a, **k):
         calls.append(1)
         return real(*a, **k)
 
+    def bcounting(*a, **k):
+        bcalls.append(1)
+        return breal(*a, **k)
+
     monkeypatch.setattr(measure_verbs, "load_measure_verbs", counting)
+    monkeypatch.setattr(measure_verbs, "load_askable_builtins", bcounting)
     _use_sample(monkeypatch)
     assert menu_blocks.compose().composed is True
     assert menu_blocks.askable().composed is True
+    assert menu_blocks.askable().composed is True
     assert len(calls) == 1
+    assert len(bcalls) == 1
 
 
 # 7  shape and unit come from the row
@@ -184,6 +209,103 @@ def test_shape_and_unit_are_served_from_the_row(monkeypatch):
         if "mesh:" + r.verb in served:
             assert served["mesh:" + r.verb]["shape"] == r.archetype
             assert served["mesh:" + r.verb]["unit"] == _unit_of(r)
+
+
+# 8a  built-ins are listed, read from the engine's own loader
+def test_builtins_are_listed_as_their_engine_declares(monkeypatch):
+    entries = _builtins()
+    assert entries, "positive control"
+    assert any(e.get("unit") for e in entries), "control: a built-in with a unit"
+    assert any(not e.get("unit") for e in entries), "control: a built-in without a unit"
+    _use_sample(monkeypatch)
+    got = menu_blocks.askable()
+    by_verb = {m["verb"]: m for m in got.measures}
+    for e in entries:
+        m = by_verb[e["verb"]]
+        assert m["name"] == e["name"] and m["description"] == e["description"]
+        assert m["phrasings"] == e["phrasings"] and m["cells"] == e["cells"]
+        assert m["unit"] == e.get("unit")
+        assert m["shape"] is None
+        assert m["example_ask"] == e.get("example_ask")
+        assert m["group_label"] == e.get("group_label")
+    verbs = [m["verb"] for m in got.measures]
+    assert verbs == sorted(verbs)
+
+
+# 8b  declared example_ask / group_label
+def test_declared_example_ask_and_group_label_are_served(monkeypatch, tmp_path):
+    import shutil
+    ov = tmp_path / "ov"
+    shutil.copytree(_SAMPLE, ov)
+    target = _rows()[0]
+    f = ov / (target.measure_id + ".yaml")
+    f.write_text(f.read_text(encoding="utf-8").rstrip("\n")
+                 + "\nexample_ask: an example question\ngroup_label: a group label\n",
+                 encoding="utf-8")
+    rows = measure_verbs.load_measure_verbs(overlay_dirs=[ov])
+    by_id = {r.measure_id: r for r in rows}
+    assert by_id[target.measure_id].example_ask and by_id[target.measure_id].group_label
+    assert any(not r.example_ask and not r.group_label for r in rows), "control"
+    monkeypatch.setenv(_MEASURE_ENV, str(ov))
+    menu_blocks.clear_cache()
+    served = {m["verb"]: m for m in menu_blocks.askable().measures}
+    for r in rows:
+        m = served["mesh:" + r.verb]
+        assert m["example_ask"] == (r.example_ask or None)
+        assert m["group_label"] == (r.group_label or None)
+    t = served["mesh:" + by_id[target.measure_id].verb]
+    assert t["example_ask"] == "an example question" and t["group_label"] == "a group label"
+
+
+# 8c  a built-in load failure
+def test_a_builtin_load_failure_keeps_the_declared_entries(monkeypatch):
+    rows = _rows()
+
+    def boom(*a, **k):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(measure_verbs, "load_askable_builtins", boom)
+    _use_sample(monkeypatch)
+    got = menu_blocks.askable()
+    assert got.composed is True
+    assert {m["verb"] for m in got.measures} == {"mesh:" + r.verb for r in rows}
+    assert got.invalid == [{"source": "measure_builtins", "reason": "unreadable: RuntimeError"}]
+
+
+# 8d  the same verb on both sides
+def test_a_verb_both_declared_and_builtin_is_left_out_and_named_twice(monkeypatch):
+    rows = _rows()
+    real = measure_verbs.load_askable_builtins
+    real_entries = real()
+    assert real_entries, "control: a real built-in beside the clash"
+    clash = "mesh:" + rows[0].verb
+
+    def with_clash(*a, **k):
+        return list(real(*a, **k)) + [{**real_entries[0], "verb": clash}]
+
+    monkeypatch.setattr(measure_verbs, "load_askable_builtins", with_clash)
+    _use_sample(monkeypatch)
+    got = menu_blocks.askable()
+    verbs = {m["verb"] for m in got.measures}
+    assert clash not in verbs
+    assert {"mesh:" + r.verb for r in rows[1:]} <= verbs
+    assert {e["verb"] for e in real_entries} <= verbs
+    assert sorted(i["source"] for i in got.invalid) == ["measure_builtins", "measure_verbs"]
+    assert all(clash in i["reason"] and i["reason"].startswith("ambiguous: ") for i in got.invalid)
+
+
+# 8e  through the route
+def test_the_route_lists_a_builtin_for_its_cell_holder_not_the_stranger(monkeypatch):
+    entries = _builtins()
+    e = next(x for x in entries if x["cells"])
+    _use_sample(monkeypatch)
+    holder = _get([e["cells"][0].lower()])
+    served = {m["verb"]: m for m in holder["measures"]}
+    assert e["verb"] in served
+    assert served[e["verb"]]["shape"] is None and served[e["verb"]]["unit"] == e.get("unit")
+    stranger = "NOT_A_DECLARED_CELL"
+    assert all(stranger not in x["cells"] for x in entries)
+    assert e["verb"] not in {m["verb"] for m in _get([stranger])["measures"]}
 
 
 # 8  nothing finance-specific in the served contract
