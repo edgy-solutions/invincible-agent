@@ -189,7 +189,8 @@ def test_4_the_title_block(profiles, tmp_path):
     assert ws["B2"].value == program.name
     assert ws["B3"].value == PROGRAM
     assert ws["B4"].value == "2026-09-30"
-    assert ws["B5"].value == "A001"
+    assert ws["B5"].value == "2026-10-28"   # generated_on
+    assert ws["B6"].value == "A001"
 
 
 def test_4_one_row_per_period_in_order_each_cell_the_envelopes_value(profiles, tmp_path):
@@ -262,7 +263,7 @@ def test_5_the_hash_is_over_the_cells_written_and_the_manifest_is_not_one_of_the
             for c in row:
                 if c.value is None:
                     continue
-                if ws.title == "EV Summary" and (c.row == 7 or c.column == 1 and c.row <= 5
+                if ws.title == "EV Summary" and (c.row == 7 or c.column == 1 and c.row <= 6
                                                  or c.coordinate == "A1"):
                     continue  # the template's own text, not written by the producer
                 written.append([ws.title, c.coordinate, c.value])
