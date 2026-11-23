@@ -122,7 +122,7 @@ def fmt_profiles(declared, monkeypatch, tmp_path):
 
 def _build(profile, out, *, state=None, source=None):
     return cdrl.build_cdrl(
-        state or engine.STATE, profile, program_id=PROGRAM, as_of="2026-10-28", out_dir=out,
+        state or engine.STATE, profile, program_id=PROGRAM, data_as_of="2026-09-30", generated_on="2026-10-28", out_dir=out,
         run_source=source or (lambda fn, params: engine._cdrl_source(fn, params, caller="alice@example.com")))
 
 
@@ -301,7 +301,8 @@ def test_2_title_facts_sit_at_their_pointers(fmt_profiles, tmp_path):
     _, _, obj = _json_build(fmt_profiles, tmp_path)
     program = next(p for p in engine.STATE.programs if p.program_id == PROGRAM)
     assert obj["header"] == {"program_name": program.name, "program_id": PROGRAM,
-                             "as_of": "2026-10-28", "cdrl_item": "A001"}
+                             "as_of": "2026-09-30", "generated_on": "2026-10-28",
+                             "cdrl_item": "A001"}
 
 
 def test_2_one_row_object_per_period_in_order_each_number_the_envelopes(fmt_profiles, tmp_path):
@@ -335,7 +336,7 @@ def test_2_an_absent_value_is_an_absent_key(fmt_profiles, tmp_path):
 
 def test_2_key_order_is_the_declaration_order(fmt_profiles, tmp_path):
     path, _, obj = _json_build(fmt_profiles, tmp_path)
-    assert list(obj["header"]) == ["program_name", "program_id", "as_of", "cdrl_item"]
+    assert list(obj["header"]) == ["program_name", "program_id", "as_of", "generated_on", "cdrl_item"]
     assert list(obj["summary"]["periods"][0]) == [
         "period", "cum_bcws", "cum_bcwp", "cum_acwp", "cum_cpi", "cum_spi", "tcpi"]
     text = path.read_text(encoding="utf-8")
@@ -389,7 +390,7 @@ def test_4_title_cells_hold_their_facts_and_the_rest_is_untouched(fmt_profiles, 
     _, _, doc = _docx_build(fmt_profiles, tmp_path)
     program = next(p for p in engine.STATE.programs if p.program_id == PROGRAM)
     t1 = doc.tables[0]
-    assert [t1.cell(i, 1).text for i in range(3)] == [program.name, PROGRAM, "2026-10-28"]
+    assert [t1.cell(i, 1).text for i in range(3)] == [program.name, PROGRAM, "2026-09-30"]
     assert [t1.cell(i, 0).text for i in range(3)] == ["Program", "Program id", "As of"]
 
 
