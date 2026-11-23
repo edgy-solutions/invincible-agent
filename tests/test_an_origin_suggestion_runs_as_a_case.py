@@ -156,7 +156,8 @@ def test_THE_CONFIRM_STEP_EXCLUDES_THE_DROPPER_BY_AUTHZ_ID_AND_INTAKE_REQUIRES_I
     [step] = [s for s in wd.get_workflow_definition("origin_confirm").steps
               if s.kind == "human_await"]
     assert step.resolved_promise_name() == CONFIRM, step
-    assert step.excludes == ["{trigger.dropped_by.authz_id}"], step.excludes
+    # The SDK declares `excludes` a tuple (e71e101e moved the DSL there): compare the members.
+    assert list(step.excludes) == ["{trigger.dropped_by.authz_id}"], step.excludes
     [trig] = [t for t in R.load_triggers().values() if t.trigger == TRIGGER]
     assert "dropped_by.authz_id" in trig.requires, trig.requires
     assert not any(r.startswith("dropped_by.sub") for r in trig.requires), trig.requires

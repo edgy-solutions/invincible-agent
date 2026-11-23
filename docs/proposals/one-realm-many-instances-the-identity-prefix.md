@@ -1,7 +1,9 @@
 # One realm, many instances: the identity prefix
 
-**Status: PROPOSED, 2026-11-20; §6 Q1 RULED 2026-11-20. Nothing is built.** The rest is for the
-architect to rule on. It is a
+**Status: RULED, 2026-11-20 (all six questions in §6). Building as draft PRs from 2026-11-22.**
+The architect ruled Q1 first and Q2–Q6 later that evening; §6 records each ruling. On 2026-11-22 the
+architect ordered the build: "Identity prefix: start building it as draft PRs, as ruled on questions
+1 to 6. Work shares one realm across instances, so this matters there." It is a
 requirement for a later release, not for 0.4.91. The census in §4 was read from master `91305a37`.
 Revised after gov's review of #482, which found the census complete. Gov's four notes for the
 ruling are folded in where they apply: §1 (role stems), §2 (cutover and the central gateway's
@@ -55,8 +57,8 @@ identity:
 
   **RULED (architect, 2026-11-20, §6 Q1):** the render refuses any prefix that is the start of a
   role literal. The rule is checked against the role literals themselves, not against a typed list
-  of stems, so a new stem is covered when it is added. *As proposed, not yet ruled:* the composing
-  function refuses the same.
+  of stems, so a new stem is covered when it is added. **RULED (architect, 2026-11-20): the
+  composing function refuses the same at runtime,** as proposed.
 - **The chart refuses to render** a prefix that does not match the pattern or that fails the
   role-stem rule.
 - **The shared ConfigMap exports the prefix to every pod** as `IAGENT_IDENTITY_PREFIX`. One key
@@ -138,7 +140,7 @@ could name another instance's client. Instead:
 | audience `cortex-bff` | `cortex-bff` | `d-cortex-bff` | `p-cortex-bff` |
 | `svc:engine-o` (authz id) | unchanged | unchanged | unchanged |
 
-**Recommendation, for the ruling:** in a realm that is shared, every instance sets a **non-empty**
+**Recommendation (RULED yes, architect 2026-11-20, §6 Q2):** in a realm that is shared, every instance sets a **non-empty**
 prefix. The empty prefix stays the default for a deployment that owns its realm. Otherwise the
 instance with the empty prefix owns the bare names, and any instance that loses its prefix value
 falls back onto that instance's names. The mint would still fail, because the secret is not there,
@@ -182,7 +184,7 @@ but the failure would read as the wrong instance's 401.
     - A deployment whose audience today is not `<prefix>cortex-bff` cannot keep that audience.
       Its tokens change audience in that release, and that is a consequence of the ruling, not a
       side effect.
-  - **For the ruling:** if a transition window is wanted, it should be a dated, single-release
+  - **RULED (architect, 2026-11-20, §6 Q3): no transition audience.** Had one been wanted, it would have been a dated, single-release
     key that the render refuses after its date, not an open list.
 
 ### What deny-by-default rests on afterwards
@@ -197,7 +199,7 @@ but the failure would read as the wrong instance's 401.
   Separation rests on three things, in order:
   1. **The audience.** One instance's mapper never stamps another instance's `AUD`.
   2. **The client secret.** It lives in each instance's own namespace.
-  3. **The `azp` (optional, for the ruling).** Each verifier could also require that `azp` starts
+  3. **The `azp` (RULED, architect 2026-11-20, §6 Q4: in the BFF in the same release, in the SDK later).** Each verifier could also require that `azp` starts
      with its own prefix.
      - This defends against a realm administrator adding a mapper that stamps the wrong audience
        onto a client.
@@ -279,7 +281,7 @@ is, today).
 **For the ruling:** should a non-empty prefix with `managed` refuse to render, or only warn?
 Lane 1 recommends **refuse**, with an explicit `realmOwner: true` to allow it. Then becoming the
 release that edits everyone's people is a decision someone wrote down, not a default someone
-inherited.
+inherited. **RULED (architect, 2026-11-20, §6 Q5): as proposed, including `realmOwner: true`.**
 
 ## 4. Census: every literal client id and audience today (master `91305a37`)
 
@@ -444,16 +446,25 @@ The mesh-mcp chart and doc-tools follow with the same value.
    refused at render, and so is one that does not end in the separator. An empty prefix stays the
    default." So the separator is part of the value and the bare-token alternative is not taken,
    and the render refuses a prefix that begins a role literal (§1). The rest of the pattern
-   (`[a-z][a-z0-9]{0,11}`, which also means no hyphen inside) is as proposed and still open. The
-   architect rules the rest after reading the proposal; nothing is built before that.
+   (`[a-z][a-z0-9]{0,11}`, which also means no hyphen inside) and the runtime refusal in the
+   composing function were **RULED later the same day (architect, 2026-11-20): both yes, as
+   proposed.**
    - *As proposed:* the prefix shape `^[a-z][a-z0-9]{0,11}-$`, with the hyphen included in the
      value, or a bare token with the chart adding the hyphen; either way, also refuse a prefix
      that is the start of any role literal (`iagent-`, `cortex-`).
 2. **In a shared realm, must every instance set a non-empty prefix?** Lane 1 recommends yes; §1
    gives the reason.
+   - **RULED (architect, 2026-11-20): yes.** "The render also refuses `external` with an empty
+     prefix, unless a value declares this instance the only one in its realm." The build names
+     that value; it defaults to false, so an `external` instance with an empty prefix refuses to
+     render unless the value is set.
 3. **A transition audience:** none, or one dated, single-release key (§2)?
+   - **RULED (architect, 2026-11-20): no transition audience.**
 4. **The `azp`-prefix check:** in the BFF in the same release, and in the SDK later (§2)?
+   - **RULED (architect, 2026-11-20): the BFF in the same release; the SDK later.**
 5. **`realmObjects`:** add the value, and refuse a non-empty prefix with `managed` unless
    `realmOwner: true` (§3)?
+   - **RULED (architect, 2026-11-20): as proposed, including `realmOwner: true`.**
 6. **One policy seed reference per instance:** a recommendation, or a rule the render enforces
    (§3)?
+   - **RULED (architect, 2026-11-20): a recommendation, not a render rule.**
