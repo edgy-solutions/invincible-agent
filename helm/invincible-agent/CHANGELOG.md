@@ -8,6 +8,8 @@
 
 - **Only the BFF can reach Electric** (saf; step 2 of the sync-service exposure plan). A NetworkPolicy `<release>-electric-ingress` admits ingress to the Electric pods from the cortex-bff pods only, on `electric.port`. It has its own switch, `electric.networkPolicy.enabled` (default false: enabling a perimeter is the operator's decision, and the CNI is unmeasured), so it does not wait on the fleet gate `networkPolicy.enabled`. The selectors come from two helpers (`electricComponent`, `cortexBffComponent`) that the Electric and BFF templates also label themselves with; a seal renders both and compares, and a census fails when any other pod names Electric. **Whether this cluster's CNI enforces NetworkPolicy is unmeasured**: the roll has two checks (a call to Electric from a non-BFF pod must fail; the BFF's shape read must answer), each needing approval. Not in the ruled 0.4.91 list; rides the release after unless ruled.
 
+- **The as-of setting (chart half, draft).** New key `userDeployments.dag-tools.broker.asOf.readers`, default `[]`: the source types the broker reads a data as-of for. The chart refuses a type the pinned broker does not register, and at this pin it registers none. A non-empty list renders `DAG_TOOLS_AS_OF_READERS`, which dag-tools' broker is to read. **The roll:** nothing renders differently; the default is today's 'as-of unavailable'.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**

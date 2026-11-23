@@ -1375,6 +1375,13 @@ userDeployments:
         AWS_DEFAULT_REGION: "us-east-1"
         DAG_TOOLS_DEMO_S3_BUCKET: "dag-lake"
         MESH_DEMO_PREFIX: "mesh_demo"
+      # THE AS-OF SETTING (the architect, 11-23: Lane 1's proposal with fin, accepted). The source
+      # types this broker reads a data as-of for, at authorize time. Default none: every read says
+      # "as-of unavailable", as today. A type is allowed only if the pinned broker image registers
+      # an as-of reader for it. The chart refuses any other type at render (user-deployments.yaml).
+      # No measure row chooses its own as-of source: the type comes from the asset.
+      asOf:
+        readers: []
 
 # ==========================================================================
 # mesh-registrar — Contract D registration gateway.

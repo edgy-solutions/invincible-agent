@@ -200,6 +200,11 @@ spec:
     {{- include "invincible-agent.selectorLabels" (dict "component" $name "root" $) | nindent 4 }}
 {{- end }}{{/* end $codeLocationEnabled */}}
 {{- if $brokerEnabled }}
+{{- /* The source types the PINNED broker image registers an as-of reader for. Empty at the
+     current pin, because `dag_tools.domain_broker.ticket_identity.AS_OF_READERS` ships empty.
+     It moves only in the commit that moves the broker image pin, copied from the set dag-tools
+     exports. Deliberately not a values key, so a deployment cannot widen it. */}}
+{{- $asOfRegistered := list }}
 ---
 # ---------------------------------------------------------------------------
 # {{ $name }} — Broker (same image, runs dag_tools.domain_broker)
@@ -251,6 +256,22 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            {{- end }}
+            {{- $asOfReaders := dig "asOf" "readers" (list) $deploy.broker }}
+            {{- if $asOfReaders }}
+            {{- if not (kindIs "slice" $asOfReaders) }}
+            {{- fail (printf "userDeployments.%s.broker.asOf.readers: must be a list" $name) }}
+            {{- end }}
+            {{- range $asOfReaders }}
+            {{- if not (has . $asOfRegistered) }}
+            {{- fail (printf "userDeployments.%s.broker.asOf.readers: the pinned broker registers no as-of reader for %q (registered: %v)" $name . $asOfRegistered) }}
+            {{- end }}
+            {{- end }}
+            {{- if hasKey (default dict $deploy.broker.env) "DAG_TOOLS_AS_OF_READERS" }}
+            {{- fail (printf "userDeployments.%s.broker.env.DAG_TOOLS_AS_OF_READERS: set broker.asOf.readers instead; the setting has one home" $name) }}
+            {{- end }}
+            - name: DAG_TOOLS_AS_OF_READERS
+              value: {{ join "," $asOfReaders | quote }}
             {{- end }}
           ports:
             - name: http
