@@ -1311,6 +1311,7 @@ def package_export(
         "duckdb_sha256": package["dataset"]["duckdb_sha256"] if dataset_path else None,
         "rows_sha256": package["dataset"]["rows_sha256"] if dataset_path else None,
         "as_of": package["as_of"],
+        "data_as_of": package["data_as_of"],
         "audit": audit,
         "verified_lots": len(package["manifest"]["checks"]),
         "sections": package["sections"],

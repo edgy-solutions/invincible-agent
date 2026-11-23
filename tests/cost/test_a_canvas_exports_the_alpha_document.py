@@ -349,7 +349,7 @@ def test_AS_OF_explicit_reaches_the_page_the_package_data_and_the_response(state
     _needs_the_runtime()
     out = M.package_export(state, recipient_scope=ALPHA, canvas=_ONE_ANSWER, as_of="2026-01-02")
     html = (isolated_dist / out["artifact_filename"]).read_text(encoding="utf-8")
-    assert "as of 2026-01-02" in html
+    assert "generated 2026-01-02" in html
     assert I.package_from_html(html)["as_of"] == "2026-01-02"
     assert out["as_of"] == "2026-01-02"
 
@@ -367,7 +367,7 @@ def test_AS_OF_absent_is_the_request_date_resolved_ONCE(state, isolated_dist, mo
     out = M.package_export(state, recipient_scope=ALPHA, canvas=_ONE_ANSWER)
     html = (isolated_dist / out["artifact_filename"]).read_text(encoding="utf-8")
     assert len(calls) == 1, f"the request date was resolved {len(calls)} times"
-    assert "as of 2031-03-04" in html
+    assert "generated 2031-03-04" in html
     assert I.package_from_html(html)["as_of"] == "2031-03-04"
     assert out["as_of"] == "2031-03-04"
 
