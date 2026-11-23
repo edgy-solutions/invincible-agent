@@ -1167,6 +1167,13 @@ def _session_expired_response() -> JSONResponse:
 
 
 _bind_log = logging.getLogger("engine-o.caller_binding")
+# The post-roll gate reads every route's binding line, whatever the root logger is set to.
+if not _bind_log.handlers:
+    _bh = logging.StreamHandler()
+    _bh.setFormatter(logging.Formatter("%(message)s"))
+    _bind_log.addHandler(_bh)
+    _bind_log.setLevel(logging.INFO)
+    _bind_log.propagate = False
 
 # A declared delegation names BOTH identities on one line (architect 11-19). Its own handler, as
 # _routing_audit_logger above, so the line arrives whatever the root logger is set to.
