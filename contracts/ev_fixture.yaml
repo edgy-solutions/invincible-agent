@@ -62,11 +62,12 @@ dependencies:  # [optional]
   - {by: program_id, determines: [program_name, program_bac, status_period]}  # [ev_fixture]
   - {by: work_package, determines: [control_account]}  # [ev_fixture]
 
-period:  # [unread]
+period:  # [optional]
   column: period  # [unread] [ev_fixture]
-  # The periods are the deployment's declared fiscal calendar (the `fin_calendar` overlay kind,
+  # The periods come from the declared calendar this names (the `fin_calendar` overlay kind,
   # docs/contracts/finance-overlays.md section 8). A period outside it refuses `period_outside_calendar`.
-  vocabulary: fin_calendar  # [unread] [general]
+  # With exactly one calendar declared, a contract may omit `calendar` and the one declared is used.
+  calendar: us_federal_fy26  # [optional] [ev_fixture]
 # The period the program is reported through. Named here so a time-phased row can mark it from
 # data; never a constant in a measure row.
 status_period: status_period  # [unread] [ev_fixture]

@@ -69,10 +69,10 @@ def _labels() -> tuple[str, ...]:
     if _installed is not None:
         return _installed
     try:  # flat in the image (/app), packaged in the repo
-        from fiscal_calendar import declared_calendar
+        from fiscal_calendar import default_calendar
     except ImportError:
-        from agent_fleet.finance_agent.fiscal_calendar import declared_calendar
-    return declared_calendar().labels
+        from agent_fleet.finance_agent.fiscal_calendar import default_calendar
+    return default_calendar().labels
 
 
 def fiscal_periods() -> tuple[str, ...]:

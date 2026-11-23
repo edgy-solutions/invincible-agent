@@ -16,8 +16,11 @@ THE ORDER IS THE LIST ORDER. Each period has exactly those six keys; `start` and
 date or an ISO `YYYY-MM-DD` string. Every failure RAISES `FiscalCalendarError` naming the file and
 the reason, so the engine does not boot half a declaration.
 
-Composition: a file with the same `calendar_id` in a later directory replaces the earlier one
-WHOLE. Two different `calendar_id`s in one composition are refused; a deployment has one calendar.
+Calendars are NAMED. Composition: several `calendar_id`s may be declared; a file with the same
+`calendar_id` in a later directory replaces the earlier one WHOLE; the same `calendar_id` in two files
+of ONE directory is refused. A contract names its calendar (`period.calendar`); a deployment with one
+calendar declares one, and it is the default (`default_calendar`). With a dataset configured and no
+calendar declared the engine is not ready (`asset_inputs.check_config`).
 """
 from __future__ import annotations
 
@@ -160,27 +163,53 @@ def _parse(f: Path) -> FiscalCalendar:
     return FiscalCalendar(calendar_id=cid, periods=tuple(out), source=f.name)
 
 
-def load_calendar(overlay_dirs: list[Path] | None = None) -> FiscalCalendar:
-    """The declared calendar. Unset, or no files, is the EMPTY calendar."""
+def load_calendars(overlay_dirs: list[Path] | None = None) -> dict[str, FiscalCalendar]:
+    """Every declared calendar, keyed by `calendar_id`. Unset, or no files, is `{}`."""
     dirs = overlay_dirs if overlay_dirs is not None else _overlay_dirs()
-    chosen: FiscalCalendar | None = None
+    out: dict[str, FiscalCalendar] = {}
     for d in dirs:
+        here: dict[str, FiscalCalendar] = {}
         for f in sorted(Path(d).glob("*.yaml")):
             cal = _parse(f)
-            if chosen is not None and chosen.calendar_id != cal.calendar_id:
+            if cal.calendar_id in here:
                 raise FiscalCalendarError(
-                    f"{chosen.source} and {f.name} declare different calendars "
-                    f"({chosen.calendar_id!r} and {cal.calendar_id!r}); a deployment has one calendar")
-            chosen = cal
-    return chosen if chosen is not None else _EMPTY
+                    f"{here[cal.calendar_id].source} and {f.name} declare the same calendar_id "
+                    f"{cal.calendar_id!r} in one directory; a calendar is declared once per directory")
+            here[cal.calendar_id] = cal
+        out.update(here)
+    return out
 
 
-_cache: dict[str, FiscalCalendar] = {}
+_cache: dict[str, dict[str, FiscalCalendar]] = {}
 
 
-def declared_calendar() -> FiscalCalendar:
-    """The calendar the environment declares, cached by the env var's current value."""
+def declared_calendars() -> dict[str, FiscalCalendar]:
+    """The calendars the environment declares, cached by the env var's current value."""
     key = os.getenv(_ENV, "")
     if key not in _cache:
-        _cache[key] = load_calendar()
+        _cache[key] = load_calendars()
     return _cache[key]
+
+
+def default_calendar() -> FiscalCalendar:
+    """The only declared calendar; EMPTY when none or several are declared."""
+    cals = declared_calendars()
+    return next(iter(cals.values())) if len(cals) == 1 else _EMPTY
+
+
+def calendar_for(calendar_id: str | None) -> FiscalCalendar:
+    """The calendar a contract names. None is the default, and only when exactly one is declared."""
+    cals = declared_calendars()
+    if calendar_id is None:
+        if len(cals) == 1:
+            return next(iter(cals.values()))
+        if not cals:
+            raise FiscalCalendarError(
+                f"no fiscal calendar is declared ({_ENV}); a dataset reads its periods in a declared calendar")
+        raise FiscalCalendarError(
+            f"{len(cals)} fiscal calendars are declared ({sorted(cals)}) and the contract names none; "
+            "a contract names one (`period.calendar`)")
+    if calendar_id not in cals:
+        raise FiscalCalendarError(
+            f"fiscal calendar {calendar_id!r} is not declared; the declared calendars are {sorted(cals)}")
+    return cals[calendar_id]

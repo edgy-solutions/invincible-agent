@@ -104,7 +104,8 @@ nothing, and raises no error.
 
 | item | needed |
 |---|---|
-| a `fin_calendar` file: `calendar_id` and the `periods` list, in `FIN_CALENDAR_OVERLAY_DIRS` | yes. With none declared, every period is refused (`period_outside_calendar`), whether or not `FIN_DATASET_URN` is set |
+| a `fin_calendar` file: `calendar_id` and the `periods` list, in `FIN_CALENDAR_OVERLAY_DIRS` | yes. With none declared, every period is refused (`period_outside_calendar`); with a dataset configured the engine does not boot either (next row) |
+| a configured dataset needs a declared calendar | with none declared the engine does not boot (not ready). With several declared, every contract names one in `period.calendar` |
 
 A private policy repo delivered by `policyOverlay` needs a `fin_calendar` directory before it rolls
 a chart that carries this. The file shape and every rule are in

@@ -749,13 +749,16 @@ The service refuses to start, naming the file and the reason, when:
   share one fiscal year.
 
 **Composition.** A file with the same `calendar_id` in a later directory replaces the earlier one
-whole; nothing is merged. Two different `calendar_id`s anywhere in the composition are refused,
-naming both files, because a deployment has one calendar.
+whole; nothing is merged. Calendars are named: several `calendar_id`s may be declared, and a
+contract names the one it uses in `period.calendar`. One declared calendar is the default, so a
+contract may omit `period.calendar`; with several declared, every contract names one. The same
+`calendar_id` in two files of one directory is refused, naming both files. A configured dataset
+with no calendar declared fails at boot (not ready), not on each answer.
 
 **No calendar means every period is refused.** With the variable unset, or pointing at no file, the
 calendar is empty. A read of a dataset refuses with the rule id `period_outside_calendar`, and a
 question over a period window is refused as not in the model. An empty answer is never given. A
 period outside a declared calendar is refused with the same rule id.
 
-**The template names this kind.** `contracts/ev_fixture.yaml` gives `period.vocabulary` as
-`fin_calendar`: the periods of a dataset are the deployment's declared fiscal calendar.
+**The template names this kind.** `contracts/ev_fixture.yaml` gives `period.calendar`: the
+`calendar_id` of the declared `fin_calendar` the dataset's periods are drawn from.

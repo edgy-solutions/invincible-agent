@@ -79,7 +79,9 @@ What you do about the column names depends on which measures read the asset:
 
 The labels in your period column must be periods of your deployment's declared fiscal calendar
 ([finance-overlays.md](finance-overlays.md), the `fin_calendar` section). Otherwise the read
-refuses `period_outside_calendar`.
+refuses `period_outside_calendar`. A calendar is named: your contract names its calendar in
+`period.calendar`; with one calendar declared it is the default and the key may be omitted. A
+configured dataset with no calendar declared fails at boot.
 
 ### Which rule ids are general
 

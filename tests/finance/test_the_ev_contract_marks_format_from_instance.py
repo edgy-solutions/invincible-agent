@@ -187,8 +187,20 @@ def test_every_line_with_a_value_names_whose_it_is():
 def test_a_key_under_an_unread_parent_is_unread():
     for i, line in enumerate(LINES):
         if re.match(r"^  [\w/]+:", line) and _section_of(i) in {
-                "dataset", "period", "limits", "cadence", "tags"}:
+                "dataset", "limits", "cadence", "tags"}:
             assert "unread" in tags_of(line), f"line {i + 1}: {line[:70]}"
+
+
+def test_under_period_only_the_calendar_is_read():
+    """The parser reads `period.calendar` and nothing else under `period` (ruled 2026-11-23)."""
+    seen = set()
+    for i, line in enumerate(LINES):
+        m = re.match(r"^  ([\w/]+):", line)
+        if m and _section_of(i) == "period":
+            seen.add(m.group(1))
+            read = "unread" not in tags_of(line)
+            assert read == (m.group(1) == "calendar"), f"line {i + 1}: {line[:70]}"
+    assert "calendar" in seen
 
 
 def _rules_tagged() -> dict[str, set[str]]:
@@ -232,7 +244,10 @@ def test_the_marking_does_not_move_the_parse(tmp_path):
 
 def test_the_template_names_no_fiscal_year_constant():
     raw = yaml.safe_load(TEXT)
-    assert raw["period"]["vocabulary"] == "fin_calendar"
+    # The template names its calendar by id, an instance value; the periods live in the calendar.
+    assert raw["period"]["calendar"] == "us_federal_fy26"
+    line = next(x for x in LINES if re.match(r"^  calendar:", x))
+    assert "ev_fixture" in tags_of(line)
     assert "FISCAL_PERIODS" not in TEXT
     assert "FY27" not in TEXT
 

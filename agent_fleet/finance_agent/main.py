@@ -1146,6 +1146,13 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     return envelope
 
 
+def _row_calendar_labels(row: "measure_verbs.MeasureVerbRow") -> Optional[tuple[str, ...]]:
+    """The labels of the calendar the row's contract resolved to at load, in the CURRENT
+    composition; None when that id is no longer declared (the env changed after load)."""
+    cal = measure_verbs._fiscal_calendar.declared_calendars().get(row.calendar_id)
+    return cal.labels if cal is not None else None
+
+
 def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
     """The envelope of a dataset row drawn as MULTI_SERIES: a governed read of the ROW'S URN as
     the caller, the module run once over the program's periods, one row per period. Same keys as
@@ -1159,7 +1166,7 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
                 _ticketed_reader(receipts), urn, scope=row.scope_column, period=row.period_column,
                 status=row.status_column, per_period=tuple(row.per_period.values()),
                 per_program=tuple(row.per_program.values()), program_id=program_id,
-                contract=row.contract)
+                contract=row.contract, calendar=_row_calendar_labels(row))
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
     rows = measure_verbs.run_dataset_series(read, row)

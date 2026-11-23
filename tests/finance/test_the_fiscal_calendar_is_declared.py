@@ -22,7 +22,7 @@ pl = pytest.importorskip("polars")
 
 from agent_fleet.finance_agent import asset_inputs, entities, fiscal_calendar, seed, slots  # noqa: E402
 from agent_fleet.finance_agent.entities import NotInModel, fiscal_periods, periods_in  # noqa: E402
-from agent_fleet.finance_agent.fiscal_calendar import FiscalCalendarError, load_calendar  # noqa: E402
+from agent_fleet.finance_agent.fiscal_calendar import FiscalCalendarError, load_calendars  # noqa: E402
 from agent_fleet.utils.dataset_contracts import ContractViolation  # noqa: E402
 from tests.finance.test_a_dataset_series_row_draws_from_the_asset import (  # noqa: E402,F401
     _clean_env, frame_012, gate, members, post, series_rows,
@@ -61,7 +61,7 @@ def _write(d: Path, name="cal.yaml", cid="test_cal", periods=None, **over):
 # -- 1. the sample ----------------------------------------------------------------------------------
 
 def test_the_sample_calendar_loads_and_is_the_fy26_the_engine_used_to_hold():
-    cal = load_calendar([SAMPLE])
+    cal = load_calendars([SAMPLE])["us_federal_fy26"]
     assert cal.calendar_id == "us_federal_fy26"
     assert list(cal.labels) == [f"FY26-{m:02d}" for m in range(1, 13)]
     assert cal.periods[0].start == date(2025, 10, 1) and cal.periods[-1].end == date(2026, 9, 30)
@@ -81,7 +81,7 @@ def test_a_yaml_date_and_an_iso_string_are_both_dates(tmp_path):
     ps = _periods(GOOD)
     ps[0]["start"] = date.fromisoformat(ps[0]["start"])      # dumped as a YAML date
     _write(tmp_path, periods=ps)
-    assert load_calendar([tmp_path]).periods[0].start == date(2030, 1, 1)
+    assert load_calendars([tmp_path])["test_cal"].periods[0].start == date(2030, 1, 1)
 
 
 # -- 2. every refusal names the file ----------------------------------------------------------------
@@ -89,7 +89,7 @@ def test_a_yaml_date_and_an_iso_string_are_both_dates(tmp_path):
 def _refused(tmp_path, fragment=None, **kw):
     f = _write(tmp_path, name="the_file.yaml", **kw)
     with pytest.raises(FiscalCalendarError) as e:
-        load_calendar([tmp_path])
+        load_calendars([tmp_path])
     assert f.name in str(e.value), str(e.value)
     if fragment:
         assert fragment in str(e.value)
@@ -154,7 +154,7 @@ def test_a_missing_key_is_refused(tmp_path):
     f = tmp_path / "the_file.yaml"
     f.write_text("periods: []\n", encoding="utf-8")
     with pytest.raises(FiscalCalendarError, match="the_file.yaml"):
-        load_calendar([tmp_path])
+        load_calendars([tmp_path])
 
 
 @pytest.mark.parametrize("bad", ["2030-1-01", "not a date", 20300101, "2030-02-30"])
@@ -166,19 +166,24 @@ def test_an_empty_periods_list_is_refused(tmp_path):
     _refused(tmp_path, "non-empty list", periods=[])
 
 
-def test_two_calendar_ids_across_dirs_are_refused_naming_both_files(tmp_path):
+def test_two_calendar_ids_across_dirs_load_as_two(tmp_path):
     _write(tmp_path / "a", name="first.yaml", cid="one")
     _write(tmp_path / "b", name="second.yaml", cid="two")
-    with pytest.raises(FiscalCalendarError) as e:
-        load_calendar([tmp_path / "a", tmp_path / "b"])
-    assert "first.yaml" in str(e.value) and "second.yaml" in str(e.value)
+    assert sorted(load_calendars([tmp_path / "a", tmp_path / "b"])) == ["one", "two"]
 
 
-def test_two_calendar_ids_in_one_dir_are_refused(tmp_path):
+def test_two_calendar_ids_in_one_dir_load_as_two(tmp_path):
     _write(tmp_path, name="a.yaml", cid="one")
     _write(tmp_path, name="b.yaml", cid="two")
-    with pytest.raises(FiscalCalendarError, match="different calendars"):
-        load_calendar([tmp_path])
+    assert sorted(load_calendars([tmp_path])) == ["one", "two"]
+
+
+def test_the_same_id_twice_in_one_dir_is_refused_naming_both_files(tmp_path):
+    _write(tmp_path, name="a.yaml", cid="one")
+    _write(tmp_path, name="b.yaml", cid="one")
+    with pytest.raises(FiscalCalendarError) as e:
+        load_calendars([tmp_path])
+    assert "a.yaml" in str(e.value) and "b.yaml" in str(e.value) and "'one'" in str(e.value)
 
 
 # -- 3. composition ---------------------------------------------------------------------------------
@@ -187,8 +192,8 @@ def test_the_same_id_in_a_later_dir_replaces_the_earlier_file_whole(tmp_path):
     _write(tmp_path / "a", cid="same")
     later = _periods([("B-1", "Z1", "Q1", "H1"), ("B-2", "Z1", "Q1", "H1")])
     _write(tmp_path / "b", cid="same", periods=later)
-    cal = load_calendar([tmp_path / "a", tmp_path / "b"])
-    assert list(cal.labels) == ["B-1", "B-2"]
+    cals = load_calendars([tmp_path / "a", tmp_path / "b"])
+    assert list(cals) == ["same"] and list(cals["same"].labels) == ["B-1", "B-2"]
 
 
 # -- 4. no calendar declared ------------------------------------------------------------------------
@@ -199,7 +204,8 @@ def no_calendar(monkeypatch):
 
 
 def test_with_no_calendar_the_empty_calendar_is_returned(no_calendar):
-    cal = load_calendar()
+    assert load_calendars() == {}
+    cal = fiscal_calendar.default_calendar()
     assert (cal.calendar_id, cal.periods, cal.source) == ("", (), "")
     assert fiscal_periods() == ()
 
@@ -234,41 +240,90 @@ FY27 = [("FY27-01", "FY27", "FY27-Q1", "FY27-H1"), ("FY27-02", "FY27", "FY27-Q1"
         ("FY27-03", "FY27", "FY27-Q1", "FY27-H1")]
 
 
-def test_the_engine_reads_the_declared_labels_not_the_sample(tmp_path, monkeypatch):
+PROGRAM_B = REPO / "tests" / "fixtures" / "fin_program_b" / "fin_calendar"
+BOTH = pytest.mark.parametrize("cal_dir", [SAMPLE, PROGRAM_B], ids=["sample", "program_b"])
+
+
+def _declared(cal_dir, monkeypatch):
+    """Point the environment at `cal_dir`; the declared labels, in list order. Program B's are the
+    non-lexical control: sorted, P10 falls before P2, so a sort cannot pass for the declared order."""
+    monkeypatch.setenv(ENV, str(cal_dir))
+    (cal,) = load_calendars([cal_dir]).values()
+    labels = list(cal.labels)
+    if cal_dir == PROGRAM_B:
+        assert sorted(labels) != list(labels)
+    return labels
+
+
+@BOTH
+def test_the_engine_reads_the_declared_labels_not_the_sample(cal_dir, monkeypatch):
+    labels = _declared(cal_dir, monkeypatch)
+    first3 = frame_of().filter(pl.col("period").is_in(["FY26-01", "FY26-02", "FY26-03"]))
+    pid = first3["program_id"][0]
+    mapping = dict(zip(["FY26-01", "FY26-02", "FY26-03"], labels))
+    relabelled = first3.with_columns(pl.col("period").replace(mapping))
+    assert asset_inputs.state_from_rows(relabelled, pid).facts
+    assert periods_in(None) == labels
+    assert fiscal_periods() == tuple(labels)
+    assert entities.period_order() == {p: i for i, p in enumerate(labels)}
+    if cal_dir == PROGRAM_B:
+        with pytest.raises(ContractViolation) as e:      # FY26 is outside this deployment's calendar
+            asset_inputs.state_from_rows(first3, pid)
+        assert e.value.rule == "period_outside_calendar"
+        with pytest.raises(NotInModel, match="unknown fiscal period"):
+            periods_in(["FY26-01"])
+
+
+def test_the_engine_reads_a_declared_fy27_calendar_not_the_sample(tmp_path, monkeypatch):
     _write(tmp_path, cid="fy27", periods=_periods(FY27))
     monkeypatch.setenv(ENV, str(tmp_path))
     first3 = frame_of().filter(pl.col("period").is_in(["FY26-01", "FY26-02", "FY26-03"]))
     pid = first3["program_id"][0]
-    with pytest.raises(ContractViolation) as e:      # FY26 is outside this deployment's calendar
+    with pytest.raises(ContractViolation) as e:
         asset_inputs.state_from_rows(first3, pid)
     assert e.value.rule == "period_outside_calendar"
     relabelled = first3.with_columns(pl.col("period").str.replace("FY26", "FY27"))
     assert asset_inputs.state_from_rows(relabelled, pid).facts      # the control: same frame, FY27
     assert periods_in(None) == ["FY27-01", "FY27-02", "FY27-03"]
-    assert fiscal_periods() == ("FY27-01", "FY27-02", "FY27-03")
-    assert entities.period_order() == {"FY27-01": 0, "FY27-02": 1, "FY27-03": 2}
-    with pytest.raises(NotInModel, match="unknown fiscal period"):
-        periods_in(["FY26-01"])
 
 
-def test_the_series_read_follows_the_declared_calendar_too(tmp_path, monkeypatch, post, gate):
-    _write(tmp_path, cid="fy27", periods=_periods(FY27))
-    monkeypatch.setenv(ENV, str(tmp_path))
+@BOTH
+def test_the_series_read_follows_the_declared_calendar_too(cal_dir, monkeypatch, post, gate):
+    # The rows loaded under the sample and their contract names the sample's calendar. Under the
+    # sample it serves, in the declared order; once only program B is declared, that calendar is gone.
+    labels = _declared(cal_dir, monkeypatch)
     status, body = post()
-    assert status == 502 and body["detail"]["rule"] == "period_outside_calendar"
+    if cal_dir == SAMPLE:
+        assert status == 200 and [r["period"] for r in body["rows"]] == labels[:6]
+    else:
+        assert status == 502 and body["detail"]["rule"] == "period_outside_calendar"
 
 
 # -- 6. registration and the seed follow the calendar -----------------------------------------------
 
-def test_registration_attaches_the_declared_periods_when_given_none():
+@BOTH
+def test_registration_attaches_the_declared_periods_when_given_none(cal_dir, monkeypatch):
+    labels = _declared(cal_dir, monkeypatch)
     records = [{"name": name, "values": []} for name in sorted(slots._PERIOD_SLOTS)]
     out = slots.with_live_vocabularies(records)
-    assert out and all(r["values"] == list(fiscal_periods()) and r["values"] for r in out)
+    assert out and all(r["values"] == labels and r["values"] for r in out)
 
 
-def test_the_seed_reports_the_first_six_declared_periods():
-    assert seed.REPORTED_PERIODS == fiscal_periods()[:6]
-    assert len(seed.REPORTED_PERIODS) == 6
+@BOTH
+def test_the_seed_reports_the_first_six_declared_periods(cal_dir, monkeypatch):
+    labels = _declared(cal_dir, monkeypatch)
+    # `seed` fixes its reported periods at import: import a private copy under the declared calendar.
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location("_seed_under_test", seed.__file__)
+    copy = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = copy
+    try:
+        spec.loader.exec_module(copy)
+    finally:
+        sys.modules.pop(spec.name, None)
+    assert copy.REPORTED_PERIODS == tuple(labels[:6])
+    assert len(copy.REPORTED_PERIODS) == 6
 
 
 # -- 7. the census: no period label in engine code --------------------------------------------------
@@ -308,7 +363,7 @@ def test_the_sandbox_declares_the_sample_calendar_and_the_repo_dir_holds_one_loa
     values = list(find(sandbox))
     assert len(values) == 1 and values[0].endswith("policy/overlays/sample/fin_calendar"), values
     assert len(list(SAMPLE.glob("*.yaml"))) == 1 and len(list(SAMPLE.iterdir())) == 1
-    assert load_calendar([SAMPLE]).periods
+    assert load_calendars([SAMPLE])["us_federal_fy26"].periods
 
 
 def test_the_chart_gives_engine_fin_a_fin_calendar_overlay_row():

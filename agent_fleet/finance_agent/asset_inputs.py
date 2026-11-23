@@ -38,6 +38,11 @@ except ImportError:
         ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage, fiscal_periods,
     )
 
+try:  # the declared fiscal calendars, with the same two-way import
+    import fiscal_calendar as _fiscal_calendar
+except ImportError:
+    from agent_fleet.finance_agent import fiscal_calendar as _fiscal_calendar
+
 try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils in the repo
     from utils.dataset_contracts import ContractViolation, check_contract_rows, check_contract_schema
 except ImportError:
@@ -182,6 +187,17 @@ def check_config() -> None:
     if urn is None:
         return
     problems: list[str] = []
+    try:
+        declared = sorted(_fiscal_calendar.declared_calendars())
+    except _fiscal_calendar.FiscalCalendarError as exc:
+        problems.append(str(exc))
+    else:
+        if not declared:
+            problems.append(f"no fiscal calendar is declared ({_fiscal_calendar._ENV}); "
+                            "the dataset's periods are read in one")
+        elif len(declared) > 1:
+            problems.append(f"{len(declared)} fiscal calendars are declared ({declared}) and this read "
+                            "names none (its contract is not read yet)")
     if not urn.startswith(URN_PREFIX) or len(urn) == len(URN_PREFIX):
         problems.append(f"{URN_ENV} is not a '{URN_PREFIX}...' URN")
     if not dataset_banner():
@@ -427,7 +443,8 @@ class SeriesRead(NamedTuple):
 
 def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, period: str,
                         status: str, per_period: tuple[str, ...], per_program: tuple[str, ...],
-                        program_id: str, contract: Any) -> SeriesRead:
+                        program_id: str, contract: Any,
+                        calendar: tuple[str, ...] | None = None) -> SeriesRead:
     """`read_rows` for a dataset row drawn as MULTI_SERIES: the rows of ONE program of the ROW'S
     columns, reduced the two ways the row may ask and no other.
 
@@ -441,7 +458,10 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
     A `per_program` column, and the `status` column when the row names one, is declared determined
     by the scope (held at load), so the dependency check leaves it one value across the program's
     rows. A period, or the status, outside the fiscal calendar is `period_outside_calendar`. A
-    message names the rule and the column, never a row's value."""
+    message names the rule and the column, never a row's value.
+
+    `calendar` is the labels of the row's declared calendar, in order, looked up by the caller. None
+    (the row's calendar is no longer declared) is the empty calendar: every period is outside it."""
     import polars as pl
 
     t0 = time.perf_counter()
@@ -481,7 +501,7 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
     check_contract_rows(df, contract)
-    calendar = list(fiscal_periods())
+    calendar = list(calendar or ())
     if not df[period].is_in(calendar).all() or (status and df[status][0] not in calendar):
         raise ContractViolation("period_outside_calendar", "a period outside the fiscal calendar")
     sums: dict[str, dict[str, Decimal]] = {}
