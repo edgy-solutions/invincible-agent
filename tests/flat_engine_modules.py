@@ -6,9 +6,14 @@ Each engine module imports its siblings flat first and falls back to the package
 process, whichever engine's bare `seed` is in `sys.modules` first is bound by every engine imported
 after it, so a test that stages one engine flat leaves a stranger's module for the next. This
 plugin snapshots every flat name (derived from the top-level `*.py` stems of `agent_fleet/*/`)
-around each collected module and each test, and puts back any entry that changed: absent stays
-absent, a replaced entry returns to the old object. It is test-side only because production runs
-each engine as its own flat process, where only one engine's modules exist.
+around each test, and puts back any entry that changed: absent stays absent, a replaced entry
+returns to the old object. It is test-side only because production runs each engine as its own
+flat process, where only one engine's modules exist.
+
+Around each TEST, not each collected module: several test modules import an engine flat at
+module scope (`import main` with `agent_fleet/restate_analyst` on `sys.path`) and rely on that
+binding staying cached. Popping it after collection makes the next `import main` search a
+`sys.path` that other modules have extended, and it finds another engine's `main.py`.
 """
 
 from __future__ import annotations
@@ -47,11 +52,5 @@ def _guard():
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_protocol(item, nextitem):
-    with _guard():
-        yield
-
-
-@pytest.hookimpl(hookwrapper=True)
-def pytest_make_collect_report(collector):
     with _guard():
         yield
