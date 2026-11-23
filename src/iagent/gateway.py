@@ -3544,9 +3544,9 @@ class ExportPackageRequest(_BaseModel):
     # `canvas_seed`), because `validate_bindings` and `panel_dispatch` are the identical
     # functions that call reads. Ignored on the cost path.
     bindings: Optional[dict[str, Any]] = None
-    # THE DATE THE PACKAGE CLAIMS, `YYYY-MM-DD`, on the COST path. Absent, `export_package` takes
-    # the request date once and forwards it to every cost engine call. A template export REFUSES
-    # it (422 `as_of_not_accepted`, ruled 2026-11-22): engine-fin stamps its own dates.
+    # NEVER ACCEPTED. The field exists so a caller's value is REFUSED (422 `as_of_not_accepted`,
+    # ruled 2026-11-23) on every export path, not silently dropped: engine-fin and engine-cost
+    # each stamp their own dates, and the BFF forwards none.
     as_of: Optional[str] = None
 
     @field_validator("as_of")
@@ -3558,11 +3558,6 @@ class ExportPackageRequest(_BaseModel):
             raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
         _date.fromisoformat(v)  # a ValueError here is a 422 too
         return v
-
-
-def _export_request_date() -> str:
-    """TODAY (UTC), AS THE DATE A REQUEST CLAIMS. One place, so a test can pin it."""
-    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
@@ -4267,19 +4262,16 @@ async def export_package(
             ),
         )
 
-    # RULED 2026-11-22 (architect): a template export's dates come from engine-fin, which stamps
-    # `generated` from its own clock; the BFF sends none and refuses one.
-    if body.template_id and body.as_of is not None:
+    # RULED 2026-11-22/23 (architect): an export's dates are stamped by the engine's own clock
+    # (engine-fin, engine-cost); the BFF sends none and refuses a caller's, on every path.
+    if body.as_of is not None:
         raise HTTPException(status_code=422, detail={
             "error": "as_of_not_accepted", "field": "as_of",
-            "reason": ("a template export's dates come from engine-fin, which stamps "
-                       "`generated` from its own clock; the caller cannot supply one.")})
+            "reason": ("an export's dates are stamped by the server (engine-fin or engine-cost "
+                       "clock); the caller cannot supply one.")})
 
     if body.template_id:
         return await _export_package_from_template(body, request, current_user)
-
-    # RESOLVED ONCE, then forwarded on every cost engine call below.
-    as_of = body.as_of or _export_request_date()
 
     # RULED 2026-10-17: a request naming no answers (and no template) is refused. An empty
     # list used to export the recipient's whole program -- a disclosure path nothing in the
@@ -4361,7 +4353,7 @@ async def export_package(
     if not has_fin:
         # ONLY engine-cost's answers: today's path and today's response, unchanged
         # -- unless the engine REFUSED some of them (RULED 2026-10-16), below.
-        params: dict = {"recipient_scope": recipient_scope, "as_of": as_of}
+        params: dict = {"recipient_scope": recipient_scope}
         params["canvas"] = {"answers": parts[0][1]}
         cost_first = await _call_engine_cost_package(
             params, bearer, recipient_scope=recipient_scope, template_id=body.template_id,
@@ -4380,8 +4372,7 @@ async def export_package(
         else:
             try:
                 section = await _call_engine_cost_package(
-                    {"recipient_scope": recipient_scope, "canvas": {"answers": answers},
-                     "as_of": as_of},
+                    {"recipient_scope": recipient_scope, "canvas": {"answers": answers}},
                     bearer, recipient_scope=recipient_scope, template_id=None,
                 )
             except HTTPException as exc:
