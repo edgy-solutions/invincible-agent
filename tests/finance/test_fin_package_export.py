@@ -29,6 +29,7 @@ for _p in (ROOT, ROOT / "src", ROOT / "scripts"):
         sys.path.insert(0, str(_p))
 
 from agent_fleet.finance_agent import export as fin_export  # noqa: E402
+from agent_fleet.finance_agent import export_dates  # noqa: E402
 from agent_fleet.finance_agent import state_codec  # noqa: E402
 from agent_fleet.finance_agent.seed import build_seed  # noqa: E402
 from tests.recipient_rail_double import install as install_rail  # noqa: E402
@@ -280,7 +281,7 @@ def engine(monkeypatch):
         @staticmethod
         def build(**kw):
             built.append(kw)
-            return {"manifest": {"panels": kw["panels"], "as_of": "2026-01-01",
+            return {"manifest": {"panels": kw["panels"], "generated_on": "2026-01-01",
                                  "recipient_scope": kw["recipient_scope"],
                                  "algorithm_sha": kw["sha"],
                                  "template_id": kw["template_id"],
@@ -582,7 +583,8 @@ def test_the_html_half_alone_parses_without_duckdb():
         pytest.skip("no .pyodide-cache in this checkout")
     html = b.build_html(SCOPE, "NP-MERIDIAN", ROOT / ".pyodide-cache", _narrowed_dict(),
                         _served_panels(),
-                        template_id="program_finance", as_of="2026-01-01", sha="0" * 40)
+                        template_id="program_finance", data_as_of="2026-01-01",
+                        generated_on="2026-01-01", sha="0" * 40)
     assert check_javascript(html) == []
     assert "cdn.jsdelivr.net" not in html
 
@@ -619,12 +621,15 @@ def test_as_of_malformed_is_refused_by_the_request_model(bad):
         gw.ExportPackageRequest(**GOOD, as_of=bad)
 
 
-def test_engine_as_of_in_the_body_reaches_the_builder(engine):
+def test_engine_generated_on_is_the_server_clock_and_reaches_the_builder(engine, monkeypatch):
+    from agent_fleet.finance_agent import main as fmain
+
     client, built = engine
+    monkeypatch.setattr(fmain, "_request_date", lambda: "2026-02-03")
     r = client.post("/package_export", json={
-        "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
+        "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
-    assert built[0]["as_of"] == "2026-02-03"
+    assert built[0]["generated_on"] == "2026-02-03"
 
 
 def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypatch):
@@ -635,7 +640,7 @@ def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypat
     monkeypatch.setattr(fmain, "_request_date", lambda: calls.append(1) or "2031-03-04")
     r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
-    assert len(calls) == 1 and built[0]["as_of"] == "2031-03-04"
+    assert len(calls) == 1 and built[0]["generated_on"] == "2031-03-04"
 
 
 @pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
@@ -668,16 +673,20 @@ def test_the_real_build_carries_as_of_in_the_page_and_the_manifest_and_is_byte_s
         return real_audit(manifest, **kw)
 
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fmain, "_request_date", lambda: "2026-02-03")
         mp.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
         mp.setattr(fmain, "_dist_dir", lambda root: dist)
         mp.setattr(fin_export, "audit_line", spy)
         with TestClient(fmain.app) as client:
             for _ in range(2):
                 r = client.post("/package_export", json={
-                    "user_email": CALLER, "recipient_scope": SCOPE, "canvas": canvas, "as_of": "2026-02-03"})
+                    "user_email": CALLER, "recipient_scope": SCOPE, "canvas": canvas})
                 assert r.status_code == 200, r.text[:400]
                 pages.append((dist / html_name).read_bytes())
     assert pages[0] == pages[1]
     html = pages[0].decode("utf-8")
-    assert "as of 2026-02-03" in html
-    assert [m["as_of"] for m in manifests] == ["2026-02-03", "2026-02-03"]
+    assert "generated 2026-02-03" in html
+    assert f"data as of {export_dates.SAMPLE_DATA_AS_OF}" in html
+    assert "as of 2026-02-03" not in html
+    assert [m["generated_on"] for m in manifests] == ["2026-02-03", "2026-02-03"]
+    assert [m["data_as_of"] for m in manifests] == [export_dates.SAMPLE_DATA_AS_OF] * 2

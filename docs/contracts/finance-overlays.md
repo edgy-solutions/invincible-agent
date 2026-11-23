@@ -386,7 +386,7 @@ Top-level keys. The first four are the shared header.
 | `cdrl` | `item` (required), and optional `title`, `data_item`, `frequency`. These are the facts a title-block cell can show. |
 | `template` | `file` (a file beside this row, no path) and `sha256`. xlsx and docx only. |
 | `sheet` | The template sheet to fill. xlsx only. |
-| `cells` | Title block: coordinate to fact. Facts: `program.name`, `program.id`, `as_of`, `cdrl.item`, `cdrl.title`, `cdrl.data_item`, `cdrl.frequency`. Not for csv. |
+| `cells` | Title block: coordinate to fact. Facts: `program.name`, `program.id`, `as_of` (the DATA's as-of, from the source's own receipt; `as-of unavailable` with the reason when the source has none), `generated_on` (the server's clock; a request carrying `as_of` is refused with a 422); a seed-sourced export reads `sample data (notional seed): no as-of` for the as-of, `cdrl.item`, `cdrl.title`, `cdrl.data_item`, `cdrl.frequency`. Not for csv. |
 | `sources` | List of `{fn: <measure>}`, built-in measures (for example `fin_performance_indices`) or your own `measure_id`s. |
 | `table` | `key` (the field rows are joined on, usually `period`), `columns`, and `start` or `at` (below). |
 | `methods_sheet` | Optional name for the methods sheet. Default `Methods`. xlsx only. |
