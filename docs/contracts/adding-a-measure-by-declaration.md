@@ -110,12 +110,20 @@ Each of these needs engine code and a review, or is not supported at all.
   `pv`/`ev`/`ac`/`bac` for `cumulative`, and `eac`/`bac` for `eac_trend`. A row can map other
   columns onto those keywords, but the served keys would then misname them. A genuinely new
   `MULTI_SERIES` measure is a new module. Today the declaration-only path is the flow row.
-- **Being drawn, for a flow row (as of 2026-11-21).** A `FLOW_DECOMPOSITION` answer is computed and
+- **Being drawn, for a flow row (as of 2026-11-22).** A `FLOW_DECOMPOSITION` answer is computed and
   served, but the UI has no card registered for that shape. The hops it waits on are listed in
   cortex-ui's 11-21 page "what a new finance measure needs served":
-  - the projector row (Lane 1);
-  - `/menu_blocks` serving the row's `menu:` block (lane/74);
-  - cortex reading it.
+  - **`/menu_blocks` serving the row's `menu:` block (lane/74).** The route is on master (0.4.91),
+    but it does not serve a measure row yet, for two reasons:
+    - it reads only `<overlay>/menu_blocks/*.yaml`, never a measure row's own `menu:` block;
+    - it keys a placement by `(subject, archetype)`, and every finance row declares the subject
+      `fin:DeclaredMeasureSeries`. The three flow rows therefore collide, and the registry serves
+      none of them.
+
+    Which of the two changes fixes the key (key by the declaring verb, or a subject per row) is
+    the architect's to rule.
+  - **The projector row (Lane 1).** It is built on a branch and held until the menu block is served.
+  - **Cortex reading it.**
 
   A `MULTI_SERIES` answer draws today only because hand-written rows for other subjects carry that
   archetype. And no measure *appears* in a list anywhere: it is found only by asking for it.
@@ -238,7 +246,7 @@ Each edge carries:
 - `value_exact`: the figure as a string with two decimals.
 
 **In chat,** a person asks in their own words: "show me the cost variance flow for the program".
-The router chooses your verb from its synonyms and anti-synonyms. As of 2026-11-21 the UI draws no
+The router chooses your verb from its synonyms and anti-synonyms. As of 2026-11-22 the UI draws no
 card for a flow answer (section 4 lists what that waits on).
 
 **A person without access** gets a refusal, never a figure:
