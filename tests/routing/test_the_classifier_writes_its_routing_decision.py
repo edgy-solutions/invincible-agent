@@ -47,10 +47,10 @@ _AUDIT = "iagent.routing.audit"
 # Two ranked candidates, the second the lower score. Everything the asserts compare is derived
 # from this list, never retyped.
 CANDS = [
-    {"verb_iri": "mesh:verbHigh", "endpoint": "http://engine-a/x", "score": 0.9,
+    {"verb_iri": "mesh:verbHigh", "endpoint": "http://engine-high/x", "score": 0.9,
      "domains": ["MAINTENANCE"], "cost_class": "cheap", "input_uri": "mro:Thing",
      "description": "high", "verb_type": "ObjectProperty", "owner_persona": "AUDITOR"},
-    {"verb_iri": "mesh:verbLow", "endpoint": "http://engine-b/x", "score": 0.5,
+    {"verb_iri": "mesh:verbLow", "endpoint": "http://engine-low/x", "score": 0.5,
      "domains": [], "cost_class": "slow", "input_uri": "mro:Thing",
      "description": "low", "verb_type": "ObjectProperty", "owner_persona": "AUDITOR"},
 ]
