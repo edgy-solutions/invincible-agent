@@ -107,7 +107,7 @@ No test pins `dataset` as user-only today.
 3. **`svc:` members:** refused (§2.4)? Lane 1 recommends yes.
 4. **The drift audit:** is a logged member count and hash at each sync enough, or must a widening
    wait for approval? Lane 1 recommends the log. Membership changes are already reviewed where
-   `groups.yaml` changes.
+   `policy/users.yaml` changes (§4).
 
 ## 7. Delivery
 
