@@ -10,6 +10,8 @@
 
 - **`/menu_blocks` is keyed by verb, and serves the declared measures' menu blocks** (74; the architect, 2026-11-22: "/menu_blocks is keyed by verb. Serve finance's menu blocks from the BFF for declared measures."). A placement is keyed by its declaring verb, so distinct verbs may share a subject and archetype; only a verb declared twice is left out and named. When `MEASURE_VERB_OVERLAY_DIRS` is set, the BFF also serves each declared measure row's in-row `menu:` block, declared by the verb engine-fin registers. **Chart change:** with `policyOverlay` on, `components.cortex-bff` gains `{dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS, optional: true}`, so the BFF reads the same measure rows as engine-fin. `values-sandbox.yaml` changes a comment only: the sandbox already gives both pods the env through the shared configmap. With the overlay off and no env set, nothing changes. **Before the roll:** nothing. The response shape is unchanged.
 
+- **The finance source reaches five more cards.** The finance source (`data_provenance`) now reaches the CONTRIBUTION_RANKING, VARIANCE_TREE, SHORTFALL_GRID, COMPETING_MEASURES and FORECAST_MEASURE cards; before, the projector dropped it for every finance tuple but MULTI_SERIES and FLOW_DECOMPOSITION.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
