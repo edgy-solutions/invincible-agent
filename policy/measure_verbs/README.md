@@ -11,11 +11,17 @@ place, and so the image carries the path. Its row `fin_funding_status.yaml` is a
 **source-only row** for a built-in, besides its listing: with `FIN_DATASET_URN` set, funding keeps reading the notional
 seed (`source: seed`, `reason: contract carries no funding lines yet`, `ratified_by: owner`)
 until the EV contract carries funding lines (ruled 2026-11-09). A row naming a built-in may carry
-only `measure_id`, `source`, `reason`, `ratified_by` and, together, `name` and `description`;
+only `measure_id`, `source`, `reason`, `ratified_by`, `name` and `description` (together) and, with them,
+`example_ask` and `group_label`;
 anything else is refused at load. `source` stays required on every such row (an overlay row replaces
 the seed row whole, so a row that left it out would move funding off `seed`). `name` and
 `description` list the built-in in the askable list (each a non-empty string, both or neither; a row
-with no `name` is source-only and is not listed). `cells` and `synonyms` stay refused on a built-in's
+with no `name` is source-only and is not listed). `example_ask` and `group_label` are optional, each a
+non-empty string (stripped), and only on a row that also carries `name`; a declared row may carry them
+too. `example_ask` is one question that answers with this measure, and `group_label` the heading it is
+listed under. An `example_ask` must route to its own verb; the seal for that is a sandbox eval still
+to come, so no row in this tree carries either field yet. A built-in's listing also serves its `unit`
+when the engine declares one (`measures.VALUE_UNIT`), never a shape. `cells` and `synonyms` stay refused on a built-in's
 row: it is not cell-gated, its listed cells are the engine's own `DOMAINS`, and its listed phrasings
 are its routing synonyms (`VERBS`), so every phrasing offered routes to its own verb. This directory
 carries one row per built-in. Under

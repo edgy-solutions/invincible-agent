@@ -70,7 +70,7 @@ def test_the_seed_layer_lists_exactly_the_built_ins():
     by_verb = {v["verb"]: v for v in engine.VERBS}
     for e in got:
         v = by_verb[e["verb"]]
-        assert set(e) == {"verb", "name", "description", "phrasings", "cells"}
+        assert {"verb", "name", "description", "phrasings", "cells"} <= set(e) <= {"verb", "name", "description", "phrasings", "cells", "unit"}
         assert e["phrasings"] == list(v["synonyms"]) and e["phrasings"]
         assert e["cells"] == sorted(engine.DOMAINS)
         assert e["name"].strip() and e["description"].strip()
@@ -149,3 +149,82 @@ def test_declared_rows_are_the_overlay_rows_whatever_the_seed_lists():
     assert with_seed and {r.measure_id for r in with_seed} == {r.measure_id for r in without}
     assert {r.measure_id for r in with_seed} == {
         yaml.safe_load(p.read_text(encoding="utf-8"))["measure_id"] for p in SAMPLE.glob("*.yaml")}
+
+
+# 7 ── `example_ask` and `group_label`: schema only (architect ruling 2026-11-23)
+
+def _declared_raw(**extra):
+    """A real declared row (the first sample-overlay row), with `extra` top-level keys added."""
+    p = sorted(SAMPLE.glob("*.yaml"))[0]
+    return {**yaml.safe_load(p.read_text(encoding="utf-8")), **extra}
+
+
+def _declared(tmp_path, raw):
+    d = _dir(tmp_path, [raw])
+    return measure_verbs.load_measure_verbs(policy_dir=tmp_path / "no-seed", overlay_dirs=[d],
+                                            builtins=BUILTINS)
+
+
+def test_a_declared_row_carries_example_ask_and_group_label_stripped(tmp_path):
+    (row,) = _declared(tmp_path, _declared_raw(example_ask="  how is burn?  ", group_label=" Cost "))
+    assert (row.example_ask, row.group_label) == ("how is burn?", "Cost")
+
+
+def test_a_declared_row_without_them_carries_empty_strings(tmp_path):
+    (row,) = _declared(tmp_path, _declared_raw())
+    assert (row.example_ask, row.group_label) == ("", "")
+
+
+@pytest.mark.parametrize("extra,key", [
+    ({"example_ask": "  "}, "example_ask"), ({"example_ask": ""}, "example_ask"),
+    ({"group_label": 7}, "group_label"), ({"group_label": ["a"]}, "group_label"),
+])
+def test_a_declared_row_refuses_an_empty_or_non_string_value(tmp_path, extra, key):
+    d = _dir(tmp_path, [_declared_raw(**extra)])
+    with pytest.raises(measure_verbs.MeasureVerbError) as ei:
+        measure_verbs.load_measure_verbs(policy_dir=tmp_path / "no-seed", overlay_dirs=[d],
+                                         builtins=BUILTINS)
+    assert "row0.yaml" in str(ei.value) and f"`{key}`" in str(ei.value) and "non-empty" in str(ei.value)
+
+
+def test_a_built_in_row_lists_example_ask_and_group_label(tmp_path):
+    d = _dir(tmp_path, [{"measure_id": "fin_burn_rate", "source": "asset", **LISTED,
+                         "example_ask": " what is the burn rate? ", "group_label": " Cost "}])
+    (e,) = [e for e in _askable([d]) if e["verb"] == "mesh:finBurnRate"]
+    assert (e["example_ask"], e["group_label"]) == ("what is the burn rate?", "Cost")
+
+
+@pytest.mark.parametrize("key", ["example_ask", "group_label"])
+def test_a_built_in_row_with_either_but_no_name_is_refused(tmp_path, key):
+    _refused(tmp_path, {"measure_id": "fin_burn_rate", "source": "asset", key: "x"},
+             f"`{key}`", "`name`")
+
+
+@pytest.mark.parametrize("key,value", [("example_ask", ""), ("group_label", 3)])
+def test_a_built_in_row_refuses_an_empty_or_non_string_value(tmp_path, key, value):
+    _refused(tmp_path, {"measure_id": "fin_burn_rate", "source": "asset", **LISTED, key: value},
+             f"`{key}`", "non-empty")
+
+
+def test_a_listed_built_in_carries_the_unit_of_its_value_and_no_other():
+    by_verb = {v["verb"]: v["fn"] for v in engine.VERBS}
+    got = _askable()
+    assert got
+    for e in got:
+        fn = by_verb[e["verb"]]
+        if fn in measures.VALUE_UNIT:
+            assert e["unit"] == measures.VALUE_UNIT[fn]
+        else:
+            assert "unit" not in e
+    assert any("unit" not in e for e in got), "no listed built-in lacks a unit: the control is gone"
+    assert any("unit" in e for e in got)
+
+
+@pytest.mark.parametrize("overlays", [[], [SAMPLE, SANDBOX]], ids=["seed", "seed+sample+sandbox"])
+def test_no_policy_row_writes_an_example_ask_a_group_label_or_a_shape(overlays):
+    for e in _askable(overlays):
+        assert not {"example_ask", "group_label", "shape"} & set(e), e["verb"]
+    for d in (SEED_DIR, SAMPLE, SANDBOX):
+        for p in d.glob("*.yaml"):
+            raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+            assert not {"example_ask", "group_label"} & set(raw), p.name
