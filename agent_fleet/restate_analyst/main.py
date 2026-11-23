@@ -853,7 +853,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
         from smolagents import tool
 
-        @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
+        @safe_observe(as_type="retriever", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
             # ADR-0016 r2 Open Items: agent_id partition.
             # Engine A and Engine E share the Mem0 collection. Without

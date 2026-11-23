@@ -494,7 +494,7 @@ class HumanTask(_Strict):
     """One pending task row of the caller's queue, with its kind's declaration."""
     id: Any
     kind: str | None
-    task_id: str | None
+    task_id: str
     workflow_id: str | None
     audience: str | None
     status: str

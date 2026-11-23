@@ -1612,15 +1612,8 @@
             "title": "Summary"
           },
           "task_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Id"
+            "title": "Task Id",
+            "type": "string"
           },
           "title": {
             "anyOf": [

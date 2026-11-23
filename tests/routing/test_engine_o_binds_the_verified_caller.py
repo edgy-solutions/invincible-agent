@@ -522,8 +522,13 @@ def test_the_ttl_comes_from_the_environment(monkeypatch):
 # =============================================================================================
 
 def test_the_bound_log_line_carries_no_email_and_no_domain(client, resolve_instance_spy, caplog):
-    with caplog.at_level(logging.INFO, logger="engine-o.caller_binding"):
-        _resolve_instance(client, _bearer(BOB), user_email=ALICE, entitled_domains=list(DIRECTORY[ALICE]))
+    lg = logging.getLogger("engine-o.caller_binding")
+    lg.addHandler(caplog.handler)                  # the logger does not propagate: attach, then detach
+    try:
+        with caplog.at_level(logging.INFO, logger="engine-o.caller_binding"):
+            _resolve_instance(client, _bearer(BOB), user_email=ALICE, entitled_domains=list(DIRECTORY[ALICE]))
+    finally:
+        lg.removeHandler(caplog.handler)
     lines = [r.getMessage() for r in caplog.records if r.name == "engine-o.caller_binding"]
     assert len(lines) == 1 and lines[0].startswith("caller bound route=resolve_instance kind=person")
     assert "grants=1" in lines[0] and "body_identity=ignored" in lines[0]

@@ -32,9 +32,8 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
-import re
 import threading
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import httpx
@@ -46,6 +45,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import asset_inputs
     import cdrl
     import export
+    import export_dates
     import export_profiles
     import instance_overlays
     import measure_verbs
@@ -60,6 +60,7 @@ except ImportError:
     from agent_fleet.finance_agent import asset_inputs
     from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import export_dates
     from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import instance_overlays
     from agent_fleet.finance_agent import measure_verbs
@@ -1302,14 +1303,8 @@ def _request_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _valid_as_of(v: Optional[str]) -> Optional[str]:
-    """`as_of` is a calendar date or absent. Shared by every export request."""
-    if v is None:
-        return v
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-        raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
-    date.fromisoformat(v)  # a ValueError here is a 422 too
-    return v
+_AS_OF_REFUSED = ("as_of is not accepted: an export's generated date is stamped by the server "
+                  "clock (ruling 2026-11-21); omit the field")
 
 
 class PackageExportRequest(BaseModel):
@@ -1322,8 +1317,11 @@ class PackageExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 @app.post("/package_export")
@@ -1352,7 +1350,9 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
     """
-    as_of = body.as_of or _request_date()  # RESOLVED ONCE; the manifest and page share it
+    # `generated_on` is the server's clock (a caller's date is refused at the model); the data's
+    # as-of comes from the source's receipt.
+    generated_on = _request_date()  # RESOLVED ONCE; the manifest and page share it
     try:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
@@ -1387,6 +1387,8 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     program_receipts: list[dict[str, Any]] = []
     package_state, program_source = _export_program_state(
         reads, program_id, [fn for _p, fn in resolved], program_receipts)
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     panels: list[dict[str, Any]] = []
     for p, fn in resolved:
@@ -1433,7 +1435,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
             template_id=body.canvas.template_id, template_hash=body.canvas.template_hash,
             panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
             html_path=dist / html_name, duckdb_path=dist / duckdb_name,
-            as_of=as_of, program_source=program_source,
+            data_as_of=data_as_of, generated_on=generated_on, program_source=program_source,
             data_provenance=_package_provenance(program_source, program_receipts),
         )
     except SourceUnavailable as exc:
@@ -1511,8 +1513,11 @@ class CdrlExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1599,14 +1604,20 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     reads = _asset_reads(profile.sources)
     _require_asset_grants(reads.values())
     # The program facts' read; each source cites its own read's ticket in its own envelope.
-    program_state, program_source = _export_program_state(reads, body.program_id, profile.sources, [])
-    as_of = body.as_of or _request_date()
+    program_receipts: list[dict[str, Any]] = []
+    program_state, program_source = _export_program_state(
+        reads, body.program_id, profile.sources, program_receipts)
+    # `generated_on` is the server's clock; a caller's `as_of` is refused at the model.
+    generated_on = _request_date()
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     out_dir = _cdrl_out_dir()
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         path, envelope = cdrl.build_cdrl(
-            program_state, profile, program_id=body.program_id, as_of=as_of,
+            program_state, profile, program_id=body.program_id,
+            data_as_of=data_as_of, generated_on=generated_on,
             out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
             program_source=program_source,
         )
@@ -1628,7 +1639,8 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         "artifact_uri": _artifact_uri(path.name),
         "profile": profile.name,
         "program_id": body.program_id,
-        "as_of": as_of,
+        "data_as_of": data_as_of,
+        "generated_on": generated_on,
         "envelope": envelope,
     }
 

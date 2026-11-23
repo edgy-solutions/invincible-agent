@@ -8,7 +8,13 @@ Declaration, additive (architect, 2026-11-19). The shape hash moves.
 
 - **New optional `fields` on the act request** (`{name: value}`). A follow-on task cannot complete without what it exists to settle: when the task's kind declares completion fields and the decision is one that completes the task, the act is refused with 422 `completion_fields_missing` (a field is absent, blank or the blank text) or `completion_fields_invalid` (a value fails its type). Both carry the names in a structured `fields` list; the `message` carries no list. A decision that does not complete the task needs none. Sent for a kind that declares none, `fields` is ignored. When the deployment's completion declarations cannot be read, only a decision that may need recorded fields (one a row of the kind names in `required_on`, or any decision when a row cannot be attributed) is refused with 409 `completion_declaration_unreadable` (the caller did nothing wrong; an operator must fix the declarations), and the task stays pending; a rejection goes through. New `GET /ready` (unauthenticated, readiness only): 503 with `completion_declarations` while the declarations cannot be read, 200 otherwise; `/health` is unchanged.
 - **New optional `completion_fields` on a task kind's declaration**, present only for a kind that declares it: `{by, required_on, blank, fields}`, so a client can render the inputs.
-- Every body that validated against 1.10.0 still validates.
+- Every body that validated against 1.10.1 still validates.
+
+## 1.10.1 — 2026-11-20
+
+Declaration, narrowing a response (architect, item 4). The shape hash moves.
+
+- **`HumanTask.task_id` is a required string, no longer nullable.** Every queue row has one: the column is `TEXT NOT NULL` (`sql/create_human_task_projection.sql`), `register_task` and the register request body both require it, and each of the ten producers supplies it (census: `docs/measurements/2026-11-16-humantask-task-id-census.md`). A client that read `task_id` as nullable still reads every body; a client generated from the old shape may drop its null branch. Numbering: this was drafted as 1.9.2; master took 1.10.0 in the meantime and the lock is append-only, so it ships as 1.10.1.
 
 ## 1.10.0 — 2026-11-17
 

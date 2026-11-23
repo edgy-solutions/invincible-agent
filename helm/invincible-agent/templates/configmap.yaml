@@ -22,6 +22,16 @@ data:
   # Agent HTTP timeout
   AGENT_HTTP_TIMEOUT: "300"
 
+  {{- /* NO THIRD-PARTY CALLS HOME.
+  Two libraries reach the public internet by default, from every pod that imports them.
+  mem0 sends usage events to its vendor's analytics service. LiteLLM fetches its model cost
+  map from GitHub at import, and on a cluster with no route out it waits for the handshake
+  timeout before using the copy it ships with. Neither call is ours to make. A container
+  env beats this envFrom, so one workload can still opt back in. (A template comment, so the
+  rendered ConfigMap carries only the two keys.) */}}
+  MEM0_TELEMETRY: "False"
+  LITELLM_LOCAL_MODEL_COST_MAP: "True"
+
   # LangGraph checkpointer
   LANGGRAPH_POSTGRES_URI: {{ include "invincible-agent.pgUri" . | quote }}
 
