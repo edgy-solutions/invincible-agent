@@ -2040,9 +2040,11 @@ class MenuBlocksResponse(_BaseModel):
 
 @app.get("/menu_blocks", response_model=MenuBlocksResponse)
 async def get_menu_blocks(current_user: User = Depends(get_current_user)):
-    """The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by
-    (subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves
-    it, cortex reads it.
+    """The menu placements the overlay rows declare, sorted by (subject, archetype, verb). Two
+    sources: `<overlay>/menu_blocks/*.yaml`, and the in-row `menu:` blocks of declared measure rows
+    (`MEASURE_VERB_OVERLAY_DIRS`). A placement is keyed by its declaring verb: distinct verbs may
+    share a (subject, archetype) and are all served; a verb declared twice is left out and named.
+    The 2026-11-07 ruling: the row declares its placement, the BFF serves it, cortex reads it.
 
     NOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,
     and `persona_fit` / `domain_fit` only RANK, they never gate.
@@ -2050,8 +2052,8 @@ async def get_menu_blocks(current_user: User = Depends(get_current_user)):
     NOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay
     dir configured, or one is unreadable); it never means "no blocks". `composed: true` with
     `blocks: []` means this deployment declares none. A client replaces a hand-written row only
-    with a served block for the SAME subject. A row that does not validate, or that shares its
-    (subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at
+    with a served block for the SAME subject. A row that does not validate, or that
+    declares a verb another row declares, is left out of `blocks`, named in `invalid`, and logged at
     ERROR.
     """
     from starlette.concurrency import run_in_threadpool
