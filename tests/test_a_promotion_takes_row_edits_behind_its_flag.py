@@ -16,6 +16,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway, human_tasks, ingest_status, promotion  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 HEX = "cd" * 32
 INGEST_ID = "sha256:" + HEX
@@ -70,7 +71,7 @@ class _Graph:
     def apply_row_edits(self, ingest_id, row_edits, *, domain, record_id):
         return {"deleted": 0, "corrected": 0, "added": 0, "not_applied": []}
 
-    def attest_origin(self, ingest_id, *, owner_domain, record_id):
+    def attest_origin(self, ingest_id, *, owner_domain, record_id, **_kw):
         return {"ok": True}
 
 
@@ -100,6 +101,7 @@ def world(monkeypatch):
     w.corrections = _Outbox()
     stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph(), corrections=w.corrections)
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks)
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda a, c: True)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
                         lambda tid, **kw: w.resolved.append((tid, kw)) or 1)

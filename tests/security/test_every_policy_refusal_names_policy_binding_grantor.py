@@ -241,6 +241,8 @@ COST = "agent_fleet/cost_agent/main.py"
 AUTHN = "no identity on the request: nothing to grant until the caller is known"
 PINNED = "the route is pinned to one service identity; no grant adds a caller"
 SECTION_5_1 = "ADR-0047 §5.1: a delegate reads what it seeded; no grant widens it"
+#: Chris, 2026-11-06, for #283: "a delegate cannot attach to a case it didn't seed".
+SEEDER = "a delegate attaches an occurrence only to a case it seeded; no grant makes it the seeder"
 DUTIES = "separation of duties declared by the definition; no grant lifts it"
 STATE = "workflow protocol state, not a caller's binding"
 NO_AUDIENCE = "integrity: no journalled audience to check against; fails closed"
@@ -258,17 +260,24 @@ ER = "agent_fleet/repository_agent/repo_core.py"
 
 #: No binding could lift these, so they keep their bodies. Value = why.
 NOT_POLICY: dict[str, str] = {
+    f"{GW}::_start_review_core::reissue_nothing_to_supersede": CONFLICT,  # a re-issue of a review that has no task rows
+    f"{GW}::_start_review_core::reissue_of_a_resolved_review": CONFLICT,  # a re-issue of a review already decided
     "src/iagent/gateway.py::reauth_run::service_token_refused": AUTHN,  # a service token has no person to re-authenticate
     "src/iagent/gateway.py::my_paused_runs::service_token_refused": AUTHN,  # a service token has no person whose paused runs to list
     "src/iagent/auth.py::get_current_user::Authentication failed: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Invalid token payload: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Token has expired": AUTHN,
+    # lane/74 (Q2 ruled 2026-11-19): the person's own token expired; signing in again lifts it, no grant does.
+    "agent_fleet/ontology_service/main.py::_session_expired_response::session_expired | the person's session has expired": AUTHN,
+    "agent_fleet/ontology_service/main.py::fill_slots::<dict> | <?>": AUTHN,
+    # lane/74 (Q2 condition 3, gov hold 2026-11-20): the person's own token was refused; signing in again lifts it.
+    "agent_fleet/restate_analyst/main.py::_person_token_refusal::session_expired: the person's session has expire": AUTHN,
+    "agent_fleet/restate_analyst/main.py::_person_token_refusal::caller_refused: Engine O refused the person's to": AUTHN,
     "src/iagent/auth.py::get_current_user::Token validation failed: {}": AUTHN,
     f"{GW}::_answers_scope_id::no usable caller identity on this request": AUTHN,
     f"{GW}::_entitled_artifact_rec::no caller identity on this request": AUTHN,
     f"{GW}::answer_case_signal::no_actor | a case signal needs an authentic": AUTHN,
     f"{FIN}::mesh_ticketed_read::a governed finance read requires the caller's id": AUTHN,
-    f"{FIN}::_refuse_asset_exports::asset_export_unsupported | An export cannot carry figures r": NOT_BUILT,
     "agent_fleet/graph_host/main.py::run_graph::{} runs as the INITIATOR and this request carrie": AUTHN,
     f"{GRW}::submit_decision::submit_decision requires `acted_by` (the caller'": AUTHN,
     f"{RA}::_authorize_resolution::approve requires `acted_by` (the caller's authz_": AUTHN,
@@ -316,7 +325,8 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/gateway.py::act_on_human_task::task_already_resolved | This review was already resolved': CONFLICT,
     'src/iagent/gateway.py::act_on_human_task::task_already_resolved | This task was already resolved b': CONFLICT,
     'src/iagent/gateway.py::act_on_human_task::task_unresumable | workflow_service {} is not a res': CONFLICT,
-    'src/iagent/gateway.py::ingest_event::revision_not_kept | <_restate_refusal_message>': CONFLICT,
+    "src/iagent/gateway.py::_ingest_event_body::delegate_not_seeder | this episode's open case was not": SEEDER,
+    'src/iagent/gateway.py::_ingest_event_body::revision_not_kept | <_restate_refusal_message>': CONFLICT,
     'src/iagent/gateway.py::ingest_leaf_route._moved::leaf_not_changeable | the document moved on while the': CONFLICT,
     'src/iagent/gateway.py::ingest_leaf_route::leaf_moves_audience | the new kind {} routes to {}, no': CONFLICT,
     'src/iagent/gateway.py::ingest_leaf_route::leaf_not_changeable | the kind can change only until p': CONFLICT,
@@ -343,7 +353,13 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/gateway.py::act_on_human_task::no_open_empty_task | the task names no ingest': CONFLICT,
     # -- engine-r (#133, ADR-0062 §2), classified 2026-10-28 --
     f"{ER}::Repo._check_approvals::proposer_cannot_approve": DUTIES,
+    f"{ER}::Repo._check_approvals::approver_is_excluded": DUTIES,
     f"{ER}::Repo._check_approvals::approval_of_another_sha": STATE,
+    # the grant checks (grant_flow), classified with #414: a quorum short of its count, and a row that could
+    # never apply, are the state of the proposal; a rail row with no count is the rail unconfigured.
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::too_few_approvers': STATE,
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::rail_row_without_approvers': REPO_UNCONFIGURED,
+    'agent_fleet/repository_agent/grant_flow.py::grant_rows_appliable.grant_rows_appliable_check::grant_row_unappliable': STATE,
     f"{ER}::Repo._check_approvals::no_approval": STATE,
     f"{ER}::Repo.proposal::unknown_proposal": CONFLICT,
     f"{ER}::Repo.merge::proposal_closed": CONFLICT,
@@ -352,6 +368,9 @@ NOT_POLICY: dict[str, str] = {
     f"{ER}::Repo.merge::target_moved": CONFLICT,
     f"{ER}::Repo.merge::merge_conflict": CONFLICT,
     f"{ER}::Repo.merge::missing_trailers": REPO_CHECK,
+    # 2026-11-13: check 6 under a `review: closed` row (sessions/: placed, never committed). No grant
+    # lifts it; only a diff that touches no closed path merges.
+    f"{ER}::Repo.merge::path_closed": REPO_CHECK,
     f"{ER}::Repo.merge::secret_in_diff": REPO_CHECK,
     f"{ER}::Repo.merge::customer_context_in_diff": REPO_CHECK,
     f"{ER}::Repo.merge::customer_terms_absent": REPO_UNCONFIGURED,
@@ -384,6 +403,7 @@ PENDING: dict[str, str] = {
     f"{GW}::orchestrate::cell_not_entitled | user {{}} is not entitled to perso": "groups",
     f"{GW}::federated_image::not entitled for this domain": "groups",
     "agent_fleet/ontology_service/main.py::notice_parts_route::not_entitled": "groups",
+    "agent_fleet/ontology_service/main.py::where_used_route::not_entitled": "groups",
     f"{SPO}::verify_spo_step::verb {{}} is NOT eligible for subject {{}} under dom": "groups",
     f"{GW}::_admit_on_behalf_of::not_a_delegate": "config",
     f"{GW}::_admit_on_behalf_of::principal_not_declared_for_delegate": "config",
@@ -402,7 +422,7 @@ PENDING: dict[str, str] = {
     'src/iagent/gateway.py::export_package::recipient_required | name the recipient this package': 'code',
     'src/iagent/gateway.py::ingest_retry_route::awaiting_kind | pick a leaf: POST /ingest/{id}/l': 'config',
     'src/iagent/promotion.py::act::not_authorized_to_act': 'task_grants',
-    f"{GW}::start_review::<out>": RELAY,
+    f"{GW}::_start_review_core::<out>": RELAY,   # moved from start_review (the route calls the core)
     f"{GW}::act_on_human_task::not_authorized_to_act | <_restate_refusal_message>": RELAY,
     f"{GW}::answer_case_signal::not_authorized_to_act | <msg>": RELAY,
     f"{RA}::approve_task::not_authorized_to_act | <_restate_error_message>": RELAY,
@@ -422,6 +442,10 @@ PENDING: dict[str, str] = {
     # and grantor row arrive with engine-r's engine PR; until then the governed rows are held in
     # code, which is what `code` names. That PR moves this row to `repository_paths` and builds it.
     f"{ER}::Repo.merge::path_not_governed": "code",
+    # the grant quorum (grant_flow.grant_quorum): each names policy_id repository_paths and its missing_binding
+    # in the RepoRefusal. engine-r has no service layer yet, so today the refusal reaches a caller as
+    # that RepoRefusal; the engine PR that builds the service carries both into the standard body.
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::no_approver_in_audience': "repository_paths",
 }
 
 

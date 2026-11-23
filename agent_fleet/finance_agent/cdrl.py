@@ -89,13 +89,16 @@ def _text(value: Any, number_format: Optional[str]) -> str:
     return str(value)
 
 
-def _fact(profile: ExportProfile, name: str, program: Any, as_of: str) -> str:
+def _fact(profile: ExportProfile, name: str, program: Any, data_as_of: str,
+          generated_on: str) -> str:
     if name == "program.name":
         return program.name
     if name == "program.id":
         return program.program_id
     if name == "as_of":
-        return as_of
+        return data_as_of
+    if name == "generated_on":
+        return generated_on
     return profile.cdrl[name.split(".", 1)[1]]
 
 
@@ -115,13 +118,14 @@ class _Run:
     """What every writer shares: the program, the joined keys in order, the sources' methods."""
     profile: ExportProfile
     program: Any
-    as_of: str
+    data_as_of: str
+    generated_on: str
     order: list[Any]
     keyed: dict[str, dict[Any, dict[str, Any]]]
     methods: dict[str, dict[str, Any]]
 
     def facts(self) -> list[tuple[str, Any]]:
-        return [(c, _fact(self.profile, f, self.program, self.as_of))
+        return [(c, _fact(self.profile, f, self.program, self.data_as_of, self.generated_on))
                 for c, f in self.profile.cells.items()]
 
     def table(self) -> list[list[Any]]:
@@ -313,7 +317,8 @@ def build_cdrl(
     profile: ExportProfile,
     *,
     program_id: str,
-    as_of: str,
+    data_as_of: str,
+    generated_on: str,
     out_dir: Path,
     run_source: RunSource,
     program_source: Optional[dict[str, Any]] = None,
@@ -342,7 +347,7 @@ def build_cdrl(
     methods: dict[str, dict[str, Any]] = {fn: m for fn, (_e, m) in served.items()}
 
     written, save = _WRITERS[profile.format](
-        _Run(profile, program, as_of, order, keyed, methods))
+        _Run(profile, program, data_as_of, generated_on, order, keyed, methods))
 
     cells_sha256 = _sha(sorted(written, key=lambda c: (c[0], c[1])))
     envelope = {
@@ -352,7 +357,8 @@ def build_cdrl(
         "profile": profile.name,
         "template_sha256": profile.template_sha256,
         "program_id": program_id,
-        "as_of": as_of,
+        "data_as_of": data_as_of,
+        "generated_on": generated_on,
         "sources": [
             {"fn": fn, "params": dict(params), "method": methods[fn],
              **{k: served[fn][0][k] for k in _SOURCE_PROVENANCE if k in served[fn][0]},

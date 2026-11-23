@@ -48,8 +48,25 @@ object prune is scoped to the `can_drop:` prefix and to prune=True; prune=False 
 existence decides nothing. What revokes it is the invoker-relation prune above (delete the row, the
 relation goes); the `can_drop:` OBJECT prune deliberately does not cover `can_export:` objects.
 
-Exit codes: 0 ok - 2 malformed - 4 readback failed - 5 a granted group object is absent from live
-Topaz.
+A `can_export:<P>` ROW NAMING A PROFILE THIS DEPLOYMENT DOES NOT KNOW is refused ON ITS OWN, with a
+report, and the rest of the sync applies (architect 2026-11-11). "Known" is per deployment: the
+image's base profiles plus the overlay directories the deployment loads (the same variables the
+engines read, composed by validate_policy.known_export_profiles through each kind's own loader
+rule). The sample profiles are known only where the sample overlay is loaded. The refused row is
+absent from the desired state, so any relation an earlier run wrote for it is pruned. The refusal
+is a report, never an exit code: the Job stays green. A profile with NO row is not an error: the
+door refuses it and the listing omits it.
+
+SAMPLE OVERLAY (add-only). `CAPABILITY_GRANT_OVERLAY_DIRS` (os.pathsep-separated, as
+CONTENT_KIND_OVERLAY_DIRS is) names directories each holding a `capability_grants.yaml`. It is
+merged into the seed IN MEMORY, before the sync (the sync prunes, so a grant applied afterwards would
+be pruned). An overlay can add grantees to a capability the seed already declares and nothing else:
+it cannot create a capability, remove or replace a grantee, or change granted_by / reason, and a row
+carrying any field beyond granted_by, reason, grant_to, grant_to_groups is refused. A listed
+directory without the file is refused (fail closed). Unset or empty: no overlay, nothing changes.
+
+Exit codes: 0 ok (a refused can_export row included: see its report) - 2 malformed (the seed or an
+overlay) - 4 readback failed - 5 a granted group object is absent from live Topaz.
 
 TESTED CORE = the pure transforms (`load_capabilities`, `derive_desired`) — no
 network. Readback (each grant resolves can_invoke TRUE) is the positive control; the
@@ -117,6 +134,85 @@ def load_capabilities(raw: dict) -> tuple[list[CapabilityRecord], list[str]]:
             granted_by=granted_by, reason=str(entry.get("reason") or ""),
             grant_to_groups=tuple(grant_to_groups)))
     return out, errors
+
+
+OVERLAY_ENV = "CAPABILITY_GRANT_OVERLAY_DIRS"
+OVERLAY_FILE = "capability_grants.yaml"
+OVERLAY_FIELDS = frozenset({"granted_by", "reason", "grant_to", "grant_to_groups"})
+
+
+def overlay_dirs() -> list[str]:
+    """The overlay directories named by CAPABILITY_GRANT_OVERLAY_DIRS, split the way
+    validate_policy splits CONTENT_KIND_OVERLAY_DIRS. Unset or empty: none."""
+    raw = (os.getenv(OVERLAY_ENV) or "").strip()
+    return [p.strip() for p in raw.split(os.pathsep) if p.strip()]
+
+
+def load_overlay_files(dirs: list[str]) -> tuple[list[tuple[str, dict]], list[str]]:
+    """Read `<dir>/capability_grants.yaml` for each dir. A missing dir or file is an error."""
+    import yaml
+    out: list[tuple[str, dict]] = []
+    errors: list[str] = []
+    for d in dirs:
+        path = os.path.join(d, OVERLAY_FILE)
+        if not os.path.isfile(path):
+            errors.append(f"overlay dir {d!r} is listed in {OVERLAY_ENV} but {path!r} does not exist")
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                doc = yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            errors.append(f"overlay {path!r} could not be read ({type(exc).__name__}: {exc})")
+            continue
+        if not isinstance(doc, dict):
+            errors.append(f"overlay {path!r} is not a mapping")
+            continue
+        out.append((path, doc))
+    return out, errors
+
+
+def apply_capability_overlays(
+    seed: list[CapabilityRecord], overlays: list[tuple[str, dict]],
+) -> tuple[list[CapabilityRecord], list[str]]:
+    """PURE: (merged, errors). ADD, AND NOTHING ELSE: an overlay row adds grantees (union of
+    grant_to and grant_to_groups, seed order kept, new ones appended) to a capability the seed
+    already declares. Refused (collected as errors): a key not in the seed, a field beyond
+    OVERLAY_FIELDS, and any row `load_capabilities` refuses. The seed's granted_by / reason are
+    unchanged and no seed grantee is removed."""
+    errors: list[str] = []
+    by_key = {c.key: c for c in seed}
+    order = [c.key for c in seed]
+    for source, raw in overlays:
+        caps = (raw or {}).get("capabilities") or {}
+        if not isinstance(caps, dict):
+            errors.append(f"overlay {source}: `capabilities` is not a mapping")
+            continue
+        for key, entry in caps.items():
+            entry = entry or {}
+            if not isinstance(entry, dict):
+                errors.append(f"overlay {source}: capability[{key}] is not a mapping")
+                continue
+            extra = sorted(str(k) for k in entry if k not in OVERLAY_FIELDS)
+            if extra:
+                errors.append(f"overlay {source}: capability[{key}] carries field(s) an overlay may "
+                              f"not: {', '.join(extra)} (add-only: {', '.join(sorted(OVERLAY_FIELDS))})")
+            if str(key) not in by_key:
+                errors.append(f"overlay {source}: capability[{key}] is not in the seed "
+                              f"(an overlay cannot create a capability)")
+            rows, row_errors = load_capabilities({"capabilities": {key: entry}})
+            errors.extend(f"overlay {source}: {e}" for e in row_errors)
+            if extra or row_errors or str(key) not in by_key:
+                continue
+            row = rows[0]
+            cur = by_key[str(key)]
+            by_key[str(key)] = CapabilityRecord(
+                key=cur.key,
+                grant_to=cur.grant_to + tuple(g for g in dict.fromkeys(row.grant_to)
+                                              if g not in cur.grant_to),
+                granted_by=cur.granted_by, reason=cur.reason,
+                grant_to_groups=cur.grant_to_groups + tuple(
+                    g for g in dict.fromkeys(row.grant_to_groups) if g not in cur.grant_to_groups))
+    return [by_key[k] for k in order], errors
 
 
 def derive_desired(capabilities: list[CapabilityRecord]) -> DesiredState:
@@ -203,10 +299,61 @@ def readback(client, capabilities: list[CapabilityRecord]) -> tuple[int, int]:
     return checked, failures
 
 
+EXPORT_PREFIX = "can_export:"
+
+
+def split_export_rows(
+    capabilities: list[CapabilityRecord], known: set[str] | None,
+) -> tuple[list[CapabilityRecord], list[CapabilityRecord]]:
+    """PURE: (kept, refused). A `can_export:<P>` row whose P is not in `known` is refused; every
+    other row, and every can_export row naming a known profile, is kept in order. `known=None`
+    means the known set could not be composed: nothing is refused (the caller says so)."""
+    if known is None:
+        return list(capabilities), []
+    kept: list[CapabilityRecord] = []
+    refused: list[CapabilityRecord] = []
+    for c in capabilities:
+        if c.key.startswith(EXPORT_PREFIX) and c.key[len(EXPORT_PREFIX):] not in known:
+            refused.append(c)
+        else:
+            kept.append(c)
+    return kept, refused
+
+
+def known_export_names() -> tuple[set[str] | None, list[str]]:
+    """The export profiles this deployment knows, and the lines to print about how that went.
+    `None` when the set cannot be trusted (a source refused, two kinds collide, or the composition
+    could not run): the refusal pass is then skipped and the lines say so loudly."""
+    try:
+        from validate_policy import known_export_profiles
+        profiles, notes = known_export_profiles()
+    except Exception as exc:  # noqa: BLE001 -- a composition fault must not take the sync down
+        return None, [f"WARN: the known export profiles could not be composed ({type(exc).__name__}: "
+                      f"{exc}); no can_export row is refused by name this run"]
+    bad = [n for n in notes if n.startswith(("REFUSED:", "COLLISION:"))]
+    if bad:
+        return None, [f"WARN: the known export profile set is not trustworthy ({n}); no can_export "
+                      f"row is refused by name this run" for n in bad]
+    return set(profiles), [f"known export profiles: {n}" for n in notes]
+
+
+def export_row_report(refused: list[CapabilityRecord], kept: list[CapabilityRecord],
+                      known: set[str] | None) -> tuple[list[str], list[str]]:
+    """PURE: (refusal lines for stderr, a summary line for stdout)."""
+    lines = [f"REFUSED ROW capability[{c.key}]: {c.key[len(EXPORT_PREFIX):]!r} is not an export "
+             f"profile this deployment knows (known: {', '.join(sorted(known or ())) or 'none'}); "
+             f"this row is not applied, every other row is" for c in refused]
+    n_kept = sum(1 for c in kept if c.key.startswith(EXPORT_PREFIX))
+    return lines, f"can_export rows: {n_kept} applied, {len(refused)} refused"
+
+
 def main() -> int:
     """CLI: sync capability invoker grants into Topaz.
     Env: CAPABILITY_GRANTS_FILE (default policy/capability_grants.yaml),
-    TOPAZ_DIRECTORY_URL. Exit: 0 ok · 2 malformed · 4 readback failed · 5 a granted group
+    CAPABILITY_GRANT_OVERLAY_DIRS (add-only grantee overlay; malformed or missing file: exit 2),
+    TOPAZ_DIRECTORY_URL, and the deployment's *_OVERLAY_DIRS (which decide the known export profiles).
+    A `can_export:<name>` row naming an unknown profile is refused alone: a stderr line per row,
+    a stdout summary, exit unchanged. Exit: 0 ok · 2 malformed · 4 readback failed · 5 a granted group
     object is absent from live Topaz."""
     import yaml
     from topaz_sync import TopazClient
@@ -223,6 +370,31 @@ def main() -> int:
         for e in malformed:
             print(f"  {e}", file=sys.stderr)
         return 2
+    overlays, overlay_errors = load_overlay_files(overlay_dirs())
+    merged: list[CapabilityRecord] = capabilities
+    if not overlay_errors:
+        merged, overlay_errors = apply_capability_overlays(capabilities, overlays)
+    if overlay_errors:
+        print("REFUSED — malformed capability overlay (nothing applied):", file=sys.stderr)
+        for e in overlay_errors:
+            print(f"  {e}", file=sys.stderr)
+        return 2
+    for source, raw_overlay in overlays:
+        one, _ = apply_capability_overlays(capabilities, [(source, raw_overlay)])
+        before = {c.key: set(c.grant_to) | set(c.grant_to_groups) for c in capabilities}
+        after = {c.key: set(c.grant_to) | set(c.grant_to_groups) for c in one}
+        added = sum(len(after[k] - before[k]) for k in before)
+        touched = sum(1 for k in before if after[k] != before[k])
+        print(f"capability overlay {source}: +{added} grantee(s) on {touched} capability(ies)")
+    capabilities = merged
+    known, known_lines = known_export_names()
+    for line in known_lines:
+        print(line, file=sys.stderr if line.startswith("WARN") else sys.stdout)
+    capabilities, refused = split_export_rows(capabilities, known)
+    refusal_lines, summary = export_row_report(refused, capabilities, known)
+    for line in refusal_lines:
+        print(line, file=sys.stderr)
+    print(summary)
     n_grants = sum(len(c.grant_to) + len(c.grant_to_groups) for c in capabilities)
     print(f"loaded {len(capabilities)} capability(ies), {n_grants} invoker grant(s)")
 

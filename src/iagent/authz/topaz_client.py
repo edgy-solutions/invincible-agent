@@ -38,6 +38,8 @@ Public API:
 from __future__ import annotations
 
 import logging
+import os
+import ssl
 import threading
 import time
 from dataclasses import dataclass, field
@@ -160,6 +162,45 @@ class Entitlements(BaseModel):
 # Topaz HTTP client.
 # ---------------------------------------------------------------------------
 
+#: The process's directory HTTP clients, one per (pid, url, timeout, factory). See
+#: `directory_http_client`.
+_SHARED_HTTP: "dict[tuple, httpx.Client]" = {}
+_SHARED_HTTP_LOCK = threading.Lock()
+
+
+def directory_http_client(url: str, timeout_seconds: float = 5.0) -> httpx.Client:
+    """The ONE `httpx.Client` this process uses for the directory at `url`. It is built on the first
+    call and returned to every later one, so its connection pool is reused across requests.
+
+    A client built per call cost about 70 ms of CPU, most of it the SSL context httpx builds even for
+    an `http://` URL. One `GET /me/entitlements` built about 37 of them, which came to about 2.6 s of
+    CPU (Lane 1's packet, 2026-11-14).
+
+    - For an `http://` URL the client is given a bare `ssl.SSLContext(PROTOCOL_TLS_CLIENT)`, so no
+      trust store is loaded. That context still requires a certificate and checks the host name, and
+      it trusts no root, so any TLS it is ever asked to make fails closed.
+    - An `https://` URL keeps httpx's default verification, which honours `SSL_CERT_FILE`.
+    - Never `close()` the returned client: every caller in this process shares it.
+
+    The cache key includes the pid, so a forked child builds its own client and never shares its
+    parent's sockets. It also includes the `httpx.Client` factory as it stands at call time, so a
+    patched factory (a test's double) gets its own client and never one built before the patch."""
+    url = url.rstrip("/")
+    factory = httpx.Client
+    key = (os.getpid(), url, timeout_seconds, factory)
+    client = _SHARED_HTTP.get(key)
+    if client is not None:
+        return client
+    with _SHARED_HTTP_LOCK:
+        client = _SHARED_HTTP.get(key)
+        if client is None:
+            kw: dict = {"base_url": url, "timeout": timeout_seconds}
+            if url.lower().startswith("http://"):
+                kw["verify"] = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            client = factory(**kw)
+            _SHARED_HTTP[key] = client
+    return client
+
 
 class TopazDirectoryClient:
     """Thin sync HTTP client for topaz's Directory v3 REST gateway.
@@ -176,15 +217,22 @@ class TopazDirectoryClient:
     but the higher-level API is scoped per-call).
     """
 
-    def __init__(self, url: str, timeout_seconds: float = 5.0):
+    def __init__(self, url: str, timeout_seconds: float = 5.0, *, shared: bool = False):
+        """`shared=True` uses the process's `directory_http_client` for `url`, and `close()` then
+        leaves it open for its other users. The default builds and owns a client, as before."""
         self._url = url.rstrip("/")
-        self._client = httpx.Client(
-            base_url=self._url,
-            timeout=timeout_seconds,
-        )
+        self._owns = not shared
+        if shared:
+            self._client = directory_http_client(self._url, timeout_seconds)
+        else:
+            self._client = httpx.Client(
+                base_url=self._url,
+                timeout=timeout_seconds,
+            )
 
     def close(self) -> None:
-        self._client.close()
+        if self._owns:
+            self._client.close()
 
     def get_entitlements(self, user_id: str) -> Entitlements:
         """Compute the user's full (persona, domain) matrix.

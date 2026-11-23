@@ -20,6 +20,7 @@ import hashlib
 import pathlib
 import sys
 
+import httpx
 import pytest
 
 _REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -83,19 +84,13 @@ class _Topaz:
     def __call__(self, url, json=None, timeout=None, **_kw):
         self.requests.append({"url": url, **json})
         if self.fail:
-            raise RuntimeError("directory unreachable")
+            raise RuntimeError("a defect, not an outage")
         ok = (json["object_type"] == "capability" and json["relation"] == "can_invoke"
               and json["subject_type"] == "user"
               and json["object_id"] in GRANTS.get(json["subject_id"], set()))
-
-        class _R:
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"check": ok}
-
-        return _R()
+        # A real httpx.Response, so the double answers whatever `can_invoke` reads of the wire
+        # (status_code since the 11-03 outage arm), not only the two methods it read before.
+        return httpx.Response(200, json={"check": ok}, request=httpx.Request("POST", url))
 
 
 class _Reader:
@@ -221,7 +216,8 @@ def test_on_behalf_of_in_the_envelope_changes_no_decision(engine):
     assert _served(named) == _served(base) == [MESH_PAGE]
 
 
-def test_a_directory_error_is_a_deny(engine):
+def test_a_defect_in_the_check_is_a_deny(engine):
+    # An outage is a 503, not a deny: test_a_malformed_pdp_answer_is_503_at_every_site, docs.can_invoke
     out, store, topaz = engine(MESH_PAGE, caller=_Caller(DATA_ENGINEER), topaz=_Topaz(fail=True))
     assert topaz.requests, "the directory was never asked -- this arm tested nothing"
     assert out.get("outcome") == "unentitled" and store.reads == []

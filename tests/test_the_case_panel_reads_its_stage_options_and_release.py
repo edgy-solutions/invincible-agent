@@ -130,14 +130,16 @@ def test_s6_the_model_refuses_a_stage_it_cannot_honour():
     ok = wd.WorkflowDefinition.model_validate(_defn([
         {"kind": "wait", "id": "w", "seconds": 5, "stage": "a"}, dict(_AWAIT, stage="b")]))
     assert ok.steps[0].stage == "a"
-    with pytest.raises(Exception, match="not in domain_stages"):
+    # The refusal's wording is the SDK's (iagent_mesh.workflow_definition) and has moved once
+    # already; assert what it must name: the stage refused and the list it was refused against.
+    with pytest.raises(Exception, match=r"stage 'nope' is not in .*domain_stages"):
         wd.WorkflowDefinition.model_validate(_defn([
             {"kind": "wait", "id": "w", "seconds": 5, "stage": "nope"}]))
-    with pytest.raises(Exception, match="cannot be observed"):
+    with pytest.raises(Exception, match=r"step r: stage is declared .*observes this step's stage"):
         wd.WorkflowDefinition.model_validate(_defn([
             {"kind": "wait", "id": "w", "seconds": 5},
             {"kind": "render", "id": "r", "template": {}, "stage": "a"}]))
-    with pytest.raises(Exception, match="cannot be observed"):
+    with pytest.raises(Exception, match=r"step h: stage is declared .*observes this step's stage"):
         wd.WorkflowDefinition.model_validate(_defn([
             {"kind": "wait", "id": "w", "seconds": 5},
             dict(_AWAIT, stage="a", completion={"mode": "grouped"})]))
@@ -148,7 +150,7 @@ def test_s6_the_model_refuses_a_stage_it_cannot_honour():
     # the overlay definitions load, with the declarations the panel reads
     assert [s.stage for s in PROPOSE.steps] == ["proposed", None, "awaiting_approval"]
     assert [s.stage for s in RELEASE.steps] == ["released"]
-    assert SUPERVISOR.domain_stages == ["awaiting_supervisor"]
+    assert list(SUPERVISOR.domain_stages) == ["awaiting_supervisor"]  # the SDK serves a tuple
 
 
 # ── OPTIONS ─────────────────────────────────────────────────────────────────────────────────

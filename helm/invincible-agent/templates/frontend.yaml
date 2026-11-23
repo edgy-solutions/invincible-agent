@@ -63,6 +63,10 @@ spec:
 ---
 {{- if .Values.cortexBff.enabled }}
 {{- $ov := include "invincible-agent.policyOverlayActive" (dict "root" . "component" "cortex-bff") }}
+{{- $bffAuthGuard := (.Values.cortexBff.auth | default dict) }}
+{{- if and $bffAuthGuard.realmAudience (not (has $bffAuthGuard.realmAudience ($bffAuthGuard.acceptedAudiences | default list))) }}
+{{- fail (printf "cortexBff.auth.realmAudience (%q) must be one of cortexBff.auth.acceptedAudiences, or the realm stamps an audience the BFF refuses" $bffAuthGuard.realmAudience) }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -168,6 +172,12 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
             {{- end }}
+            # Token acceptance (src/iagent/auth.py verified_claims). Always rendered and after cortexBff.env, so
+            # a hand-set env cannot widen it; an empty list refuses every token.
+            - name: BFF_JWT_ACCEPTED_ISSUERS
+              value: {{ include "invincible-agent.acceptedList" (dict "root" $ "key" "acceptedIssuers") | quote }}
+            - name: BFF_JWT_ACCEPTED_AUDIENCES
+              value: {{ include "invincible-agent.acceptedList" (dict "root" $ "key" "acceptedAudiences") | quote }}
             {{- if $ov }}
             # policyOverlay: the delivered dirs. LAST, as in engines.yaml: a container env beats the
             # configmap's envFrom, and the last duplicate beats `cortexBff.env`, so a hand-set path

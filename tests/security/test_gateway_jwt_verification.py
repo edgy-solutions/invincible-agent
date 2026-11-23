@@ -13,12 +13,17 @@ CONTROL — the DA read path deferring to a gateway gate, the SDK's `MESH_DEV_TO
 "you are running within the secured JupyterHub environment", and core/authz deferring here.
 Two of the three turned out to be wrong. This one is right, and now says so with a witness.
 
-WHAT THE READ CONFIRMED (src/iagent/auth.py:200-210):
+WHAT THE READ CONFIRMED (src/iagent/auth.py, verified_claims):
   * `jwks_client.get_signing_key_from_jwt(token)` — key comes from Keycloak's live JWKS.
   * `jwt.decode(..., algorithms=["RS256"])` — the algorithm is PINNED, which closes both
     `alg: none` and the HS256-signed-with-the-public-key confusion. Not asserted by accident:
     an unpinned algorithm list is the classic way a "verified" decode verifies nothing.
-  * `verify_signature` is left at its default (ON). Only `verify_aud` is relaxed, deliberately.
+  * `verify_signature` is left at its default (ON).
+  * `iss` and `aud` are checked against SERVED lists (BFF_JWT_ACCEPTED_ISSUERS / _AUDIENCES), and
+    either list empty refuses every token. Until 2026-11-11 `verify_aud` was off and no issuer was
+    passed, so any client of the realm, minted for any audience, was admitted (a delegate's report,
+    the architect's security order). Each check below is a pair: the wrong value refused, the same
+    token with the right value admitted.
   * All three except-paths return 401 — including the JWKS-fetch catch-all, so a Keycloak
     outage DENIES rather than admits.
 
@@ -48,6 +53,7 @@ from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
 
 _SENTINEL = "PROBE-REACHED-IDENTITY-RESOLUTION"
+ISSUER, AUDIENCE = "https://realm.test/realms/r", "bff.test"
 
 
 def _keypair():
@@ -60,19 +66,30 @@ def _keypair():
     return pem, key.public_key()
 
 
-def _token(private_pem: str) -> str:
+_UNSET = object()
+
+
+def _token(private_pem: str, *, iss=ISSUER, aud=AUDIENCE) -> str:
     now = datetime.datetime.now(datetime.timezone.utc)
-    return jwt.encode(
-        {
-            "sub": "probe-subject",
-            "email": "probe@example.com",
-            "iat": now,
-            "exp": now + datetime.timedelta(minutes=5),
-            "realm_access": {"roles": []},
-        },
-        private_pem,
-        algorithm="RS256",
-    )
+    claims = {
+        "sub": "probe-subject",
+        "email": "probe@example.com",
+        "iat": now,
+        "exp": now + datetime.timedelta(minutes=5),
+        "realm_access": {"roles": []},
+    }
+    if iss is not _UNSET:
+        claims["iss"] = iss
+    if aud is not _UNSET:
+        claims["aud"] = aud
+    return jwt.encode(claims, private_pem, algorithm="RS256")
+
+
+def _outcome(mod, token: str) -> str:
+    """The refusal detail, or the sentinel when the token got past verification."""
+    with pytest.raises(Exception) as exc:
+        mod.get_current_user(token=token)
+    return f"{getattr(exc.value, 'status_code', None)} {getattr(exc.value, 'detail', '')} {exc.value}"
 
 
 @pytest.fixture()
@@ -98,6 +115,8 @@ def auth_mod(monkeypatch):
         raise ValueError(_SENTINEL)
 
     monkeypatch.setattr(mod, "resolve_token_identity", _short_circuit, raising=True)
+    monkeypatch.setenv(mod.ACCEPTED_ISSUERS_ENV, ISSUER)
+    monkeypatch.setenv(mod.ACCEPTED_AUDIENCES_ENV, AUDIENCE)
     return mod, keycloak_pem
 
 
@@ -140,6 +159,70 @@ def test_legitimately_signed_token_passes_the_signature_gate(auth_mod):
     )
 
 
+@pytest.mark.parametrize("aud", ["account", "training-workbench", ["account", "another.test"]])
+def test_a_token_for_another_audience_is_refused(auth_mod, aud):
+    """The same realm, the same key, minted for someone else: refused, naming the audience."""
+    mod, keycloak_pem = auth_mod
+    got = _outcome(mod, _token(keycloak_pem, aud=aud))
+    assert got.startswith("401") and "audience" in got.lower(), got
+    assert _SENTINEL not in got, got
+
+
+@pytest.mark.parametrize("aud", [AUDIENCE, ["account", AUDIENCE]])
+def test_control_the_same_token_naming_the_served_audience_is_admitted(auth_mod, aud):
+    """Control for the refusal above: only `aud` differs. Keycloak may emit a list; one match admits."""
+    mod, keycloak_pem = auth_mod
+    assert _SENTINEL in _outcome(mod, _token(keycloak_pem, aud=aud))
+
+
+def test_a_token_with_no_audience_is_refused(auth_mod):
+    mod, keycloak_pem = auth_mod
+    got = _outcome(mod, _token(keycloak_pem, aud=_UNSET))
+    assert got.startswith("401") and "aud" in got.lower(), got
+    assert _SENTINEL not in got, got
+
+
+@pytest.mark.parametrize("iss", ["https://realm.test/realms/other", "https://evil.test/realms/r"])
+def test_a_token_from_another_issuer_is_refused(auth_mod, iss):
+    """Signed by the pinned key but naming another issuer: refused, naming the issuer."""
+    mod, keycloak_pem = auth_mod
+    got = _outcome(mod, _token(keycloak_pem, iss=iss))
+    assert got.startswith("401") and "issuer" in got.lower(), got
+    assert _SENTINEL not in got, got
+
+
+def test_a_token_with_no_issuer_is_refused(auth_mod):
+    mod, keycloak_pem = auth_mod
+    got = _outcome(mod, _token(keycloak_pem, iss=_UNSET))
+    assert got.startswith("401") and "iss" in got.lower(), got
+    assert _SENTINEL not in got, got
+
+
+def test_control_every_served_issuer_is_admitted(auth_mod, monkeypatch):
+    """Control for the issuer refusals: a served list of two (public and in-cluster) admits both."""
+    mod, keycloak_pem = auth_mod
+    other = "http://realm.internal.test/realms/r"
+    monkeypatch.setenv(mod.ACCEPTED_ISSUERS_ENV, f"{ISSUER}, {other}")
+    for iss in (ISSUER, other):
+        assert _SENTINEL in _outcome(mod, _token(keycloak_pem, iss=iss)), iss
+
+
+@pytest.mark.parametrize("env", ["ACCEPTED_ISSUERS_ENV", "ACCEPTED_AUDIENCES_ENV"])
+@pytest.mark.parametrize("value", [None, "", " , "])
+def test_an_empty_served_list_refuses_a_correct_token(auth_mod, monkeypatch, env, value):
+    """Empty refuses everything, never allows everything. The control is the legitimately signed
+    test above: this token is identical, only the served list is emptied."""
+    mod, keycloak_pem = auth_mod
+    name = getattr(mod, env)
+    if value is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, value)
+    got = _outcome(mod, _token(keycloak_pem))
+    assert got.startswith("401") and name in got, got
+    assert _SENTINEL not in got, got
+
+
 def test_algorithm_is_pinned_to_rs256():
     """`algorithms=` must be an explicit allow-list.
 
@@ -159,9 +242,19 @@ def test_algorithm_is_pinned_to_rs256():
         kwargs = {k.arg: k.value for k in call.keywords}
         assert "algorithms" in kwargs, f"line {call.lineno}: jwt.decode with no allow-list"
         assert ast.literal_eval(kwargs["algorithms"]) == ["RS256"], f"line {call.lineno}"
+        assert "issuer" in kwargs and "audience" in kwargs, (
+            f"line {call.lineno}: jwt.decode without issuer= and audience= checks neither"
+        )
+        for k in ("issuer", "audience"):
+            assert not isinstance(kwargs[k], ast.Constant), (
+                f"line {call.lineno}: {k}= is a literal; it must be the served value"
+            )
         if "options" in kwargs:
-            assert ast.literal_eval(kwargs["options"]).get("verify_signature", True) is True, (
-                f"line {call.lineno} disables signature verification"
+            options = ast.literal_eval(kwargs["options"])
+            for flag in ("verify_signature", "verify_aud", "verify_iss", "verify_exp"):
+                assert options.get(flag, True) is True, f"line {call.lineno} turns off {flag}"
+            assert {"exp", "iss", "aud"} <= set(options.get("require", [])), (
+                f"line {call.lineno}: a token without exp/iss/aud must be refused, not skipped"
             )
     # The door goes through the one that was read.
     src = inspect.getsource(auth.get_current_user)

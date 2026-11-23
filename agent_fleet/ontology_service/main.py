@@ -19,10 +19,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,13 +50,14 @@ except IndexError:
     pass  # Running in CNB container — baml_client is already in /workspace/
 
 from baml_client import b  # noqa: E402  — BAML async client
+from baml_py.errors import BamlValidationError  # noqa: E402
 from baml_client.types import SemanticResolution as BamlSemanticResolution  # noqa: E402
 from baml_client.type_builder import TypeBuilder
 
 # Telemetry (ADR-0038): join Engine O's work to the caller's trace. telemetry.py sits at /app
 # in the fleet image; guarded so the engine runs identically when the shim/leaf is absent.
 try:
-    from telemetry import observed_trace, MAPPING, build_trace_values  # noqa: E402
+    from telemetry import observed_trace, MAPPING, build_trace_values, emit_misses  # noqa: E402
 except Exception:  # pragma: no cover — telemetry never load-bearing
     from contextlib import contextmanager as _cm
 
@@ -62,18 +65,25 @@ except Exception:  # pragma: no cover — telemetry never load-bearing
     def observed_trace(*_a, **_k):  # type: ignore[misc]
         yield
 
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
+
     def build_trace_values(**_k):  # type: ignore[misc]
         return {}
 
     MAPPING = None
 
 # Initialize runtime BAML configuration logic
+def routing_call_options(call):  # fallback: no llm_utils, no per-call options
+    return {}
+
+
 try:
-    from llm_utils import init_baml_client
+    from llm_utils import init_baml_client, routing_call_options
     b = init_baml_client(b)
 except ImportError:
     try:
-        from agent_fleet.llm_utils import init_baml_client
+        from agent_fleet.llm_utils import init_baml_client, routing_call_options
         b = init_baml_client(b)
     except ImportError:
         pass
@@ -215,6 +225,11 @@ IOF_CONSTRUCT = rdflib.Namespace(
 # ---------------------------------------------------------------------------
 import os
 import httpx
+
+#: The `provider` this engine registers its own `mesh:resolveInstance` verb under. ONE constant,
+#: read by the registration and by `_call_resolver`, which answers a row carrying it IN-PROCESS
+#: (ruled 2026-11-19, Q2: "Engine O answers its own provider in-process").
+_SELF_RESOLVE_PROVIDER = "engine_o_sustainment"
 
 # ─── ADR-0025 ontology-IRI visibility gate ──────────────────────────────────
 # Filters the OntologyClass candidate pool through Topaz can_view BEFORE BAML
@@ -916,7 +931,7 @@ async def lifespan(app: FastAPI):
                 domains=["SUSTAINMENT"],
                 cost_class="fast",
                 requires_human_approval=False,
-                provider="engine_o_sustainment",
+                provider=_SELF_RESOLVE_PROVIDER,
                 timeout_s=5.0,
             )
             print(f"[ontology-service] registered SUSTAINMENT mesh:resolveInstance provider -> {_pcn_endpoint}")
@@ -984,6 +999,64 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[ontology-service] {_notice_parts.VERB} registration failed: {e}")
 
+    # THE SUSTAINMENT READ "where is this part used" (where_used.py). Reads one repository
+    # dataset, so it is gated on that dataset loading: the store it reads.
+    try:
+        _where_used_endpoint = os.getenv(
+            "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
+        ).rstrip("/") + "/where_used"
+
+        def _where_used_answers() -> bool:
+            try:
+                _where_used.load_dataset()
+                return True
+            except _where_used.DatasetRefused:
+                return False
+
+        def _register_where_used():
+            for name, input_uri in _where_used.REGISTRATIONS:
+                mr.register_engine_to_mesh(
+                    mint=mr.engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
+                    name=name,
+                    description=(
+                        "Answers which end items use one part and which program each is sustained "
+                        "under, one row per end item and program, with the part's quantity per end "
+                        "item rolled up through every level of the product structure. Takes a "
+                        "declared configuration (as_designed, as_built, as_maintained; default "
+                        "as_designed) and every row states the configuration it was answered from. "
+                        "REFUSES, never an empty table: part_required, unknown_part (also the answer "
+                        "when every end item is withheld from the caller), ambiguous_part, "
+                        "unknown_configuration, configuration_not_available (naming the end items "
+                        "with no data for it) and no_usage. Population and stock have no source: "
+                        "they are absent on every row, never 0. READ-ONLY."
+                    ),
+                    verb=_where_used.VERB,
+                    input_uri=input_uri,
+                    output_uri=_where_used.OUTPUT_URI,
+                    verb_synonyms=[
+                        "where is this part used", "where used", "which end items use this part",
+                        "what uses this part", "impact of this part",
+                    ],
+                    verb_anti_synonyms=["what failed on this part", "propose a disposition"],
+                    endpoint_url=_where_used_endpoint,
+                    owner_persona="SUSTAINMENT_ENGINEER",
+                    domains=[_where_used.DOMAIN],
+                    cost_class="fast",
+                    requires_human_approval=False,
+                    provider="engine_o_sustainment",
+                    timeout_s=5.0,
+                    slots=_where_used.slots(),
+                )
+                print(f"[ontology-service] registered {_where_used.VERB} on {input_uri} -> {_where_used_endpoint}")
+
+        mr.when_stores_answer(
+            "engine_o_where_is_this_part_used:stores",
+            {"where_used_dataset": _where_used_answers},
+            _register_where_used,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ontology-service] {_where_used.VERB} registration failed: {e}")
+
     await _check_jena_populated()
     yield
     if _WEAVIATE_CLIENT:
@@ -1009,26 +1082,160 @@ try:
 except ImportError:
     from agent_fleet.utils.mesh_vectors import WeaviateVectors
 
-# Sibling module, the same dual layout as `mesh_ontology` above.
+# Sibling modules, PACKAGE-FIRST, as `read_outcome` above and for the same reason: where both
+# forms are importable, flat-first gave engine O a second module object. A seal that patches
+# `agent_fleet.ontology_service.notice_parts` then missed the code under test, and went red by
+# test order (Q8, 11-16). The container has no `agent_fleet` package, so it falls through to the
+# flat import exactly as before. Sealed by tests/security/test_engine_o_reads_one_sibling_module.py.
 try:
-    import notice_parts as _notice_parts  # type: ignore[no-redef]
-except ImportError:
     from agent_fleet.ontology_service import notice_parts as _notice_parts
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    import notice_parts as _notice_parts  # type: ignore[no-redef]
+
+try:
+    from agent_fleet.ontology_service import where_used as _where_used
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    import where_used as _where_used  # type: ignore[no-redef]
 
 try:
     from utils import origin_entitlement as _origin_entitlement  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.utils import origin_entitlement as _origin_entitlement
 
+try:  # the caller's FULL entitlement, for naming another domain only to one entitled to it
+    from utils.entitled_domains import entitled_domains as _held_domains_of  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.utils.entitled_domains import entitled_domains as _held_domains_of
+
+# The caller's identity and grants come from the VERIFIED caller, never the body (order 11-19).
+# Package-first, as the siblings above, so a seal patching the package module reaches this code.
+try:
+    from agent_fleet.ontology_service import caller_binding as _caller_binding
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    import caller_binding as _caller_binding  # type: ignore[no-redef]
+from iagent_mesh.transport_auth import _bearer_from as _sdk_bearer_from
+from iagent_mesh.transport_auth import current_caller as _current_caller
+
+#: The inbound bearer of THIS request, request-scoped: set by `_capture_inbound_bearer` (an async
+#: app-level dependency, so the value reaches the handler), read ONLY by `_relay_authorization`.
+#: Never logged, never stored anywhere else (ruled 2026-11-19, Q2).
+_INBOUND_BEARER: ContextVar[str] = ContextVar("engine_o_inbound_bearer", default="")
+
+
+async def _capture_inbound_bearer(request: Request) -> None:
+    _INBOUND_BEARER.set(_sdk_bearer_from(request.headers.get("Authorization")) or "")
+
+
+def _caller_session_expired() -> bool:
+    """True when the verified caller's token is expired: the SDK names an expired signature, or
+    the verified claims carry an `exp` at or before now (no leeway)."""
+    caller = _current_caller()
+    if caller is None:
+        return False
+    if "ExpiredSignatureError" in str(getattr(caller, "reason", "") or ""):
+        return True
+    raw = getattr(caller, "raw", None) if isinstance(getattr(caller, "raw", None), dict) else {}
+    if getattr(caller, "verified", False) and raw.get("exp") is not None:
+        try:
+            return float(raw["exp"]) <= time.time()
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def _relay_authorization() -> tuple[str, dict]:
+    """How a provider call carries the person (ruled 2026-11-19, Q2).
+
+    ``("relay", {"Authorization": "Bearer <t>"})`` only for a VERIFIED PERSON whose own bearer
+    this request carried; ``("expired", {})`` when that token has expired (the caller must make no
+    call and report an expired session); otherwise ``("none", {})``. A service caller relays
+    nothing: declared delegation stays for calls with no live person token (ruling 1b)."""
+    if _caller_session_expired():
+        return "expired", {}
+    caller = _current_caller()
+    token = _INBOUND_BEARER.get()
+    if (caller is not None and getattr(caller, "verified", False) and token
+            and _caller_binding._is_person(str(getattr(caller, "authz_id", "") or ""))):
+        return "relay", {"Authorization": f"Bearer {token}"}
+    return "none", {}
+
+
+def _session_expired_response() -> JSONResponse:
+    return JSONResponse(status_code=401, content={
+        "reason": "session_expired",
+        "message": "the person's session has expired; sign in again"})
+
+
+_bind_log = logging.getLogger("engine-o.caller_binding")
+# The post-roll gate reads every route's binding line, whatever the root logger is set to.
+if not _bind_log.handlers:
+    _bh = logging.StreamHandler()
+    _bh.setFormatter(logging.Formatter("%(message)s"))
+    _bind_log.addHandler(_bh)
+    _bind_log.setLevel(logging.INFO)
+    _bind_log.propagate = False
+
+# A declared delegation names BOTH identities on one line (architect 11-19). Its own handler, as
+# _routing_audit_logger above, so the line arrives whatever the root logger is set to.
+_delegation_audit_logger = logging.getLogger("engine-o.audit.delegation")
+if not _delegation_audit_logger.handlers:
+    _dh = logging.StreamHandler()
+    _dh.setFormatter(logging.Formatter("%(message)s"))
+    _delegation_audit_logger.addHandler(_dh)
+    _delegation_audit_logger.setLevel(logging.INFO)
+    _delegation_audit_logger.propagate = False
+
+
+async def _bound(request, *, route: str, email_field: str | None = "user_email",
+                 grant_field: str | None = "entitled_domains", asked=None,
+                 delegate_field: str | None = None):
+    """`(request, Binding)` with the body's identity and grant REPLACED by the verified caller's.
+
+    ``asked`` (default: the body's own grant field) can only NARROW the caller's held domains. An
+    unverified, forged, unsigned or absent token binds anonymous: subject "" and grant
+    ``(NO_GRANT,)``, never an empty list (several sites below read empty as unscoped). A route with
+    no grant field passes ``grant_field=None``, one with no identity field ``email_field=None``.
+    ``delegate_field`` names the body field in which a service states whom it acts for; it is
+    honoured only with a ``door: engine-o`` row (see caller_binding). The log line carries the
+    route, kind, grant count, body_identity and delegation labels: no email, no domain. A delegated
+    or not-declared call also writes one line to the audit logger naming both identities."""
+    if asked is None and grant_field:
+        asked = getattr(request, grant_field, None)
+    binding = await asyncio.to_thread(
+        _caller_binding.bind, _current_caller(),
+        body_subject=str(getattr(request, email_field, "") or "") if email_field else "",
+        asked=asked, held_of=lambda s: _held_domains_of(s),
+        on_behalf_of=str(getattr(request, delegate_field, "") or "") if delegate_field else "",
+        route=route)
+    _bind_log.info("caller bound route=%s kind=%s grants=%d body_identity=%s delegation=%s",
+                   route, binding.kind, len(binding.grants), binding.body_identity,
+                   binding.delegation)
+    if binding.delegation in ("delegated", "not_declared"):
+        # both identities on the record: the service that authenticated, the person it stated.
+        # `person` is %r: on not_declared it is an unverified statement, and quoting it means no
+        # value can end the line and forge another.
+        _delegation_audit_logger.info(
+            "delegation route=%s service=%s person=%r outcome=%s", route,
+            binding.via or binding.subject,
+            binding.subject if binding.delegation == "delegated"
+            else str(getattr(request, delegate_field, "") or ""),
+            binding.delegation)
+    update = {email_field: binding.subject} if email_field else {}
+    if grant_field:
+        grants = list(binding.grants)
+        update[grant_field] = tuple(grants) if isinstance(getattr(request, grant_field, None), tuple) else grants
+    return request.model_copy(update=update), binding
+
+
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 from iagent_mesh import Initiator
-from iagent_mesh import ResolveInstanceRequest
+from iagent_mesh import ResolveInstanceRequest as _SdkResolveInstanceRequest
 _announce_transport_auth(component="engine-o")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
-    dependencies=[Depends(_transport_auth("engine-o"))],
+    dependencies=[Depends(_transport_auth("engine-o")), Depends(_capture_inbound_bearer)],
     title="Engine O — Ontology Reasoner",
     description=(
         "Translates natural language into IOF/MIMOSA sustainment terms. "
@@ -1053,14 +1260,16 @@ _mount_version(app, "engine-o")
 @app.middleware("http")
 async def _telemetry_join(request: Request, call_next):
     # ADR-0038: join this engine's work to the CALLER's trace. The analyst forwards its trace
-    # id as X-Trace-Id (discovery.py); observed_trace seeds create_trace_id on it, so every
+    # id as X-Trace-Id (discovery.py); observed_trace seeds trace_id_for on it (a 32-hex id is used verbatim,
+    # anything else is hashed), so every
     # endpoint nests under the caller's trace. Fail-soft; no-op without a trace id / when off.
     tid = request.headers.get("X-Trace-Id")
     if not tid:
         return await call_next(request)
     with observed_trace(MAPPING, build_trace_values(
         trace_id=tid, engine="ontology_service", verb=request.url.path,
-    ), name="engine-o " + request.url.path):
+    ), name="engine-o " + request.url.path,
+        parent_span_id=request.headers.get("X-Parent-Span-Id")):
         return await call_next(request)
 
 
@@ -1139,8 +1348,8 @@ class ResolveRequest(BaseModel):
     # ADR-0025 ontology-IRI namespace (2026-07-08): the caller's ENTITLEMENT KEY
     # (email) — the subject of the per-IRI can_view gate that filters the
     # OntologyClass candidate pool BEFORE BAML classifies it (select-from-
-    # authorized-set: the LLM can't pick a class it was never shown). Threaded
-    # from the supervisor's JWT, same as the smolagents engines thread user_email.
+    # authorized-set: the LLM can't pick a class it was never shown). THE BODY VALUE IS
+    # IGNORED: `_bound` replaces it with the verified caller's (iagent_mesh current_caller()).
     # Empty when absent → the gate (when ENABLE_AGENTIC_AUTH is on) treats the
     # caller as ungranted → deny-by-default on compartmented classes. Identity
     # MUST reach this seam before the gate can discriminate on the subject.
@@ -1294,8 +1503,8 @@ class SearchPredicatesRequest(BaseModel):
 
     ``entitled_domains`` filters at the Weaviate layer: callers see
     predicates whose ``r.domains`` shares an entry with their scope OR is
-    empty (domain-agnostic). An empty entitled_domains list means "no
-    scope filter applied" (admin / system caller).
+    empty (domain-agnostic). The body's list is only an ASK that can narrow the verified
+    caller's grant (`_bound`); the engine never sees an empty one, so no body means "no scope".
     """
     query: str = Field(..., description="NL phrasing — drives Weaviate hybrid search")
     entitled_domains: list[str] = Field(default_factory=list, description="Caller's entitled domain scopes")
@@ -2013,7 +2222,10 @@ def _predicate_hybrid_search_sync(
             # concept and the mesh arm never sees one, so sharing the unwrap would have made the
             # shared function take a driver object from one caller and a plain float from the other.
             # What both arms genuinely have in common is (properties, score) and nothing above it.
-            out.append(_predicate_row(query, obj.properties, score))
+            row = _predicate_row(query, obj.properties, score)
+            # A renderer (a `mesh:rendersAs` row) has no endpoint and is not a routable verb.
+            if row["endpoint"]:
+                out.append(row)
         return _predicate_ranked(out)
     except Exception as e:
         # RULED 2026-09-14, same rule as the OntologyClass search above.
@@ -2141,7 +2353,12 @@ def _predicate_pool_via_mesh_sync(
         )
 
     return _predicate_ranked(
-        [_predicate_row(query, r, r.get("score")) for r in (result.rows or ())]
+        [
+            row
+            for row in (_predicate_row(query, r, r.get("score")) for r in (result.rows or ()))
+            # A renderer has no endpoint and is not a routable verb.
+            if row["endpoint"]
+        ]
     )
 
 
@@ -2205,6 +2422,8 @@ try:
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
+        instance_out_of_domain_message as _ir_out_of_domain_msg,
+        OUT_OF_DOMAIN_REASON as _IR_OUT_OF_DOMAIN,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
         declared_id_namespaces as _ir_declared_namespaces,
@@ -2218,6 +2437,8 @@ except ImportError:
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
+        instance_out_of_domain_message as _ir_out_of_domain_msg,
+        OUT_OF_DOMAIN_REASON as _IR_OUT_OF_DOMAIN,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
         declared_id_namespaces as _ir_declared_namespaces,
@@ -2325,7 +2546,7 @@ class _ResolverOutcome:
     __slots__ = ("status", "candidates", "provider", "endpoint_url", "elapsed_s")
     def __init__(self, *, status: str, candidates: list, provider: str,
                  endpoint_url: str, elapsed_s: float) -> None:
-        self.status = status              # "ok" | "timeout" | "error"
+        self.status = status              # "ok" | "timeout" | "error" | "session_expired"
         self.candidates = candidates
         self.provider = provider
         self.endpoint_url = endpoint_url
@@ -2502,6 +2723,46 @@ async def _call_resolver(
     # provider hasn't told us its SLO.
     budget_s = resolver.get("timeout_s") or _INSTANCE_RESOLVER_FANOUT_TIMEOUT_S
     started = time.monotonic()
+
+    def _outcome(status: str, candidates: list | None = None) -> _ResolverOutcome:
+        return _ResolverOutcome(
+            status=status, candidates=candidates or [], provider=provider,
+            endpoint_url=endpoint_url, elapsed_s=time.monotonic() - started,
+        )
+
+    # THE PERSON TRAVELS AS THEMSELVES (ruled 2026-11-19, Q2). An expired token makes NO call:
+    # the session is reported expired, never answered as an anonymous caller would be.
+    relay_mode, _ = _relay_authorization()
+    if relay_mode == "expired":
+        return _outcome("session_expired")
+
+    if provider == _SELF_RESOLVE_PROVIDER:
+        # ENGINE O ANSWERS ITS OWN PROVIDER IN-PROCESS: the handler binds from the SAME request's
+        # verified caller, so no bearer is needed and none leaves the process.
+        try:
+            result = await resolve_instance(ResolveInstanceRequest(
+                identifier=identifier, query=query, user_email=user_email,
+                entitled_domains=tuple(entitled_domains or ()),
+            ))
+        except HTTPException as exc:
+            # AN OUTAGE IS NOT A PROVIDER'S MISS. A 5xx here is engine O's own store or PDP
+            # failing; folding it into "error" would resolve from the other providers and serve
+            # an answer missing this one's rows as though it were whole. It escapes the fan-out
+            # (gather does not return exceptions) and the route answers it as the outage it is.
+            if exc.status_code >= 500:
+                raise
+            print(f"mesh:resolveInstance provider {provider!r} (in-process) REFUSED on "
+                  f"identifier={identifier!r}: HTTP {exc.status_code}")
+            return _outcome("session_expired" if exc.status_code == 401 else "error")
+        except Exception as exc:  # noqa: BLE001 -- no exception escapes the fan-out
+            print(f"mesh:resolveInstance provider {provider!r} (in-process) ERRORED on "
+                  f"identifier={identifier!r}: {type(exc).__name__}")
+            return _outcome("error")
+        if isinstance(result, JSONResponse):  # the handler's own refusal (expired session)
+            return _outcome("session_expired" if result.status_code == 401 else "error")
+        return _outcome("ok", _parse_resolver_candidates(
+            (result or {}).get("candidates"), provider))
+
     try:
         async with httpx.AsyncClient(timeout=budget_s) as client:
             resp = await client.post(
@@ -2509,7 +2770,14 @@ async def _call_resolver(
                 json={"identifier": identifier, "query": query,
                       "user_email": user_email or "",
                       "entitled_domains": list(entitled_domains or [])},
+                headers=_relay_authorization()[1],
             )
+            if relay_mode == "relay" and resp.status_code in (401, 403):
+                # The provider refused the person's own token, never an error to be folded and
+                # never an answer from the other providers. Expired when it says so (401, or a
+                # 403 naming ExpiredSignatureError); any other refusal is `caller_refused`.
+                # Nothing of resp.text is printed or kept.
+                return _outcome(_relayed_refusal_reason(resp.status_code, resp.text))
             resp.raise_for_status()
             data = resp.json() or {}
     except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
@@ -2519,24 +2787,23 @@ async def _call_resolver(
             f"EXCEEDED its budget of {budget_s}s on identifier="
             f"{identifier!r}: {type(exc).__name__} after {elapsed:.2f}s"
         )
-        return _ResolverOutcome(
-            status="timeout", candidates=[], provider=provider,
-            endpoint_url=endpoint_url, elapsed_s=elapsed,
-        )
+        return _outcome("timeout")
     except Exception as exc:  # noqa: BLE001 — non-timeout failures stay distinct from kept-empty
-        elapsed = time.monotonic() - started
+        # A call carrying a bearer prints the exception TYPE only: the token appears in no text.
+        detail = type(exc).__name__ if relay_mode == "relay" else f"{type(exc).__name__}: {exc}"
         print(
             f"mesh:resolveInstance provider {provider!r} ({endpoint_url}) "
-            f"ERRORED on identifier={identifier!r}: "
-            f"{type(exc).__name__}: {exc}"
+            f"ERRORED on identifier={identifier!r}: {detail}"
         )
-        return _ResolverOutcome(
-            status="error", candidates=[], provider=provider,
-            endpoint_url=endpoint_url, elapsed_s=elapsed,
-        )
-    elapsed = time.monotonic() - started
+        return _outcome("error")
+    return _outcome("ok", _parse_resolver_candidates(data.get("candidates"), provider))
+
+
+def _parse_resolver_candidates(raw, provider: str) -> list:
+    """A provider's `candidates` list as `_IRCandidate`s, skipping malformed rows. ONE parser for
+    the HTTP answer and the in-process answer."""
     out: list[_IRCandidate] = []
-    for c in data.get("candidates") or []:
+    for c in raw or []:
         try:
             out.append(
                 _IRCandidate(
@@ -2550,10 +2817,54 @@ async def _call_resolver(
             )
         except Exception:  # noqa: BLE001 — skip malformed candidate
             continue
-    return _ResolverOutcome(
-        status="ok", candidates=out, provider=provider,
-        endpoint_url=endpoint_url, elapsed_s=elapsed,
+    return out
+
+
+_PERSON_TOKEN_REFUSALS = ("session_expired", "caller_refused")
+
+
+def _relayed_refusal_reason(status: int, text: str) -> str:
+    """Why a provider refused the person's relayed token (status is 401 or 403).
+
+    The SDK has no structured code: REQUIRE answers 403 with the TEXT
+    ``transport auth failed: invalid: <ExceptionName>``, so expiry is read from the exception
+    name. The structured code belongs to a later SDK release; a seal (G11) turns red if the SDK's
+    wording moves. Leeway agrees with `_caller_session_expired`: the SDK's jwt.decode has none.
+    """
+    if status == 401 or "ExpiredSignatureError" in (text or ""):
+        return "session_expired"
+    return "caller_refused"
+# A provider refusing the person's own relayed token. Both halt the fan-out and both are terminal
+# in engine A (which holds the same tuple; a seal keeps them equal).
+_PERSON_TOKEN_REFUSAL_DETAIL = {
+    "session_expired": "the person's session has expired; sign in again",
+    "caller_refused": "a provider refused the person's token; sign in again",
+}
+
+
+def _session_expired_resolution(provenance: dict, mode):
+    """The /resolve answer for a refused person token: UNKNOWN with the reason, never the LLM's
+    class guess (which would be an answer given to nobody in particular)."""
+    reason = provenance.get("instance_match")
+    return SemanticResolutionResponse(
+        resolved_uri="UNKNOWN", confidence_score=0.0,
+        reasoning=_PERSON_TOKEN_REFUSAL_DETAIL.get(
+            reason, _PERSON_TOKEN_REFUSAL_DETAIL["session_expired"]),
+        provenance=provenance, mode=mode,
     )
+
+
+def _person_token_refusal_provenance(reason: str = "session_expired") -> dict:
+    return {
+        "instance_resolved": False,
+        "instance_match": reason,
+        "instance_n": 0,
+        "instance_detail": _PERSON_TOKEN_REFUSAL_DETAIL[reason],
+    }
+
+
+def _session_expired_provenance() -> dict:
+    return _person_token_refusal_provenance("session_expired")
 
 
 async def _resolve_instance(
@@ -2573,6 +2884,10 @@ async def _resolve_instance(
     (one or more providers ran out of budget — the failure mode that
     used to hide as ``empty`` until the 2s strangle bug was caught).
     """
+    if _relay_authorization()[0] == "expired":
+        # RULED 2026-11-19 (Q2): an expired token is reported as an expired session. NO provider
+        # is called (engine O's own included) and nothing is answered as an anonymous caller.
+        return None, _session_expired_provenance()
     discovery = _discover_instance_resolvers()
     if discovery.outcome in ("failed", "unreachable"):
         # THE REGISTRY COULD NOT BE READ. This function's docstring is proud of separating `empty`
@@ -2637,6 +2952,12 @@ async def _resolve_instance(
     outcomes: list[_ResolverOutcome] = await asyncio.gather(
         *tasks, return_exceptions=False
     )
+    if any(o.status in _PERSON_TOKEN_REFUSALS for o in outcomes):
+        # A provider refused the person's own token. Do NOT resolve from the others' answers.
+        # session_expired wins when both reasons are present.
+        _reason = ("session_expired" if any(o.status == "session_expired" for o in outcomes)
+                   else "caller_refused")
+        return None, _person_token_refusal_provenance(_reason)
 
     # AN OUT-OF-DOMAIN HIT IS A CANDIDATE, NOT AN AUTHORITY. RULED 2026-09-11.
     #
@@ -2666,6 +2987,9 @@ async def _resolve_instance(
                          for r in resolvers}
     candidates: list[_IRCandidate] = []
     demoted: list[dict] = []
+    #: the demoted providers' own claims, kept ONLY to tell "nobody knows this name" from
+    #: "it is known outside the asked domains". Never resolves the question.
+    demoted_candidates: list[_IRCandidate] = []
     for o in outcomes:
         owns = _provider_domains.get(o.provider) or set()
         # Empty `_asked` = the caller named no domain, so there is nothing to scope
@@ -2675,6 +2999,7 @@ async def _resolve_instance(
         if _asked and owns and not (owns & _asked):
             demoted.append({"provider": o.provider, "provider_domains": sorted(owns),
                             "n_candidates": len(o.candidates)})
+            demoted_candidates.extend(o.candidates)
             continue
         candidates.extend(o.candidates)
 
@@ -2812,6 +3137,50 @@ async def _resolve_instance(
         # another domain" are different answers and the trace must distinguish them.
         provenance["instance_out_of_domain_demoted"] = demoted
         provenance["instance_asked_domains"] = sorted(_asked)
+        # KNOWN, BUT NOT HERE (2026-11-16). When nothing in the asked domains resolves the name,
+        # ask the SAME decision table whether the demoted claims would have. If they would, the
+        # name is known outside the asked domains and the abstention must say so, rather than
+        # "no provider recognizes it". The shadow subject is recorded as a fact and never used:
+        # the question still does not resolve, because the caller did not ask in that domain.
+        if decision.subject_uri is None and demoted_candidates:
+            _shadow = _ir_decide(
+                demoted_candidates,
+                exact_threshold=_INSTANCE_RESOLVE_EXACT,
+                min_score=_INSTANCE_RESOLVE_MIN_SCORE,
+                identifier=identifier,
+                class_chains=None,
+            )
+            if _shadow.subject_uri is not None:
+                _winner = _shadow.provenance.get("instance_provider")
+                _where = (_provider_domains.get(_winner) if _winner
+                          else set().union(*(set(d["provider_domains"]) for d in demoted
+                                             if d["n_candidates"])))
+                # RULED 2026-11-16 (Chris): "The answer names the other domain only when the
+                # caller is entitled to that domain; otherwise it is a plain 'not found'."
+                # `_entitled` is the caller's ACTIVE domains, so it cannot answer that. The
+                # caller's FULL entitlement is read from the directory, and ONLY here (the shadow
+                # path), so no other resolution pays for it. Only the held domains are named,
+                # never the rest of the provider's set. A non-person, an empty answer, or a
+                # directory failure is not entitled (fail closed): no flag is set, the gate
+                # returns `instance_not_found`, and the answer is byte-identical to a name nobody
+                # knows. The trace key below is internal and carries no domain name.
+                _held: set[str] = set()
+                _unnamed = "not_entitled"
+                if not _origin_entitlement.is_person(user_email):
+                    _unnamed = "no_person"
+                else:
+                    try:
+                        _held = {str(d).upper() for d in
+                                 await asyncio.to_thread(_held_domains_of, user_email)}
+                    except Exception:  # noqa: BLE001 -- fail closed; nothing logged names a domain
+                        _held = set()
+                        _unnamed = "directory_unavailable"
+                _named = sorted(set(_where or ()) & _held)
+                if _named:
+                    provenance["instance_resolves_out_of_domain"] = True
+                    provenance["instance_out_of_domain_domains"] = _named
+                else:
+                    provenance["instance_out_of_domain_unnamed"] = _unnamed
 
     # Per-provider audit so the trace shows which phone book said what.
     provenance["instance_provider_outcomes"] = [
@@ -2866,11 +3235,17 @@ def _local_name(uri: str) -> str:
 async def _input_declared_pool(request, domains) -> tuple[list[dict], dict]:
     """Classes the question's top verb declares as input, or ([], trace). NEVER raises.
 
+    `domains` is the BOUND grant (the verified caller's, see `_bound`) and `request.user_email` the
+    bound subject; the verb recall and the served lookup are scoped by it, by keyword.
+
     Degrades to today's behaviour on any failure: a failure here must not fail /resolve.
     """
+    # Upper-cased as /search_predicates and /classify_predicate do: the incumbent's domain filter is
+    # case-sensitive and the mesh arm's is not, so an un-normalised scope makes the two arms differ.
+    entitled = [str(d).upper() for d in domains]
     try:
         rows = await predicate_hybrid_search(
-            request.query, list(domains), limit=10, user_email=request.user_email)
+            request.query, entitled_domains=entitled, limit=10, user_email=request.user_email)
     except Exception as exc:
         print(f"[Engine O] input-declared verb recall failed ({type(exc).__name__}) - "
               "keeping the recalled pool")
@@ -2973,6 +3348,7 @@ _SERVED_CLASSES_CYPHER = """
 MATCH (c:OntologyClass)-[:subClassOf*0..5]->(anc:OntologyClass)
 MATCH (anc)-[r]->(:OntologyClass)
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
   AND (
     size($domains) = 0
     OR coalesce(r.domains, []) = []
@@ -3283,6 +3659,7 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
     nothing of that kind exists, and an unreachable provider has not made a claim. That is why
     the two are counted apart below.
     """
+    request, _ = await _bound(request, route="enumerate_instances")
     # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
     # restate_analyst send a real test persona or get refused -- a domains list is never an
     # entitlement"; architect, 2026-10-14 -- "a svc: literal counts as absent in every arm, same
@@ -3602,6 +3979,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     2. Inject these candidates into BAML TypeBuilder as a dynamic enum.
     3. Call BAML ClassifyDomainIntent to strictly select the best match.
     """
+    request, _ = await _bound(request, route="resolve", grant_field="domains")
     # Step 0: a DOCS caller's subject is a page. None means "not a DOCS question, or no page
     # won", and the class contest below runs exactly as before.
     _docs_bound = await _resolve_docs_subject(request)
@@ -3748,8 +4126,10 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 # candidate and record it as "retained". What it retained is now REMOVED and
                 # recorded as such (admission rule, 2026-10-20), so the artifact shows the
                 # gate acted rather than stood down.
+                # THE BOUND GRANT (`_bound` above made `request.domains` the verified caller's),
+                # never the legacy `request.domain`, which defaults to a domain nobody granted.
                 _injected, _input_declared_trace = await _input_declared_pool(
-                    request, request.domains or ([request.domain] if request.domain else []))
+                    request, list(request.domains))
                 if _injected:
                     print("[Engine O] input-declared grounding: every recalled class is a dead end; "
                           f"offering the declared input(s) of {_input_declared_trace.get('verb_iri')}: "
@@ -3869,6 +4249,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
+            if instance_provenance.get("instance_match") in _PERSON_TOKEN_REFUSALS:
+                return _session_expired_resolution(instance_provenance, retrieval_mode)
             # THE LABEL NAMES WHICH CONDITION FIRED. It was hard-coded
             # `class_recall_empty_fallback`, which was true while the only condition was an
             # EMPTY recall. This branch now also fires on a non-empty recall whose top class
@@ -3960,7 +4342,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         result = await b.ClassifyDomainIntent(
             query=request.query,
             domain=request.domain,
-            baml_options={"tb": tb}
+            baml_options={"tb": tb, **routing_call_options("SUBJECT")},
         )
     except Exception as exc:
         raise HTTPException(
@@ -3984,6 +4366,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
+        if instance_provenance.get("instance_match") in _PERSON_TOKEN_REFUSALS:
+            return _session_expired_resolution(instance_provenance, retrieval_mode)
         if _input_declared_trace is not None:
             instance_provenance["input_declared"] = _input_declared_trace
         if instance_subject is not None:
@@ -4043,16 +4427,24 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         # ``instance_match``. When it fires, we emit UNKNOWN (the router's
         # honest short-circuit) with an ACTIONABLE message — NOT another
         # LLM re-judgment. See [[project_abstention_gate_llm_mediated]].
-        if _ir_abstention(
+        _abstain = _ir_abstention(
             identifier=identifier,
             instance_subject=instance_subject,   # None on this branch
             instance_match=str(instance_provenance.get("instance_match") or ""),
-        ) == "instance_not_found":
-            instance_provenance["abstention_reason"] = "instance_not_found"
+            resolves_out_of_domain=bool(
+                instance_provenance.get("instance_resolves_out_of_domain")),
+        )
+        if _abstain in ("instance_not_found", _IR_OUT_OF_DOMAIN):
+            instance_provenance["abstention_reason"] = _abstain
             return SemanticResolutionResponse(
                 resolved_uri="UNKNOWN",
                 confidence_score=0.0,
-                reasoning=_ir_not_found_msg(identifier),
+                reasoning=(
+                    _ir_out_of_domain_msg(
+                        identifier,
+                        instance_provenance.get("instance_out_of_domain_domains"))
+                    if _abstain == _IR_OUT_OF_DOMAIN
+                    else _ir_not_found_msg(identifier)),
                 provenance=instance_provenance,
                 candidates=candidates,
                 excluded=_gate_excluded,
@@ -4273,13 +4665,15 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
     "cold" is a brand-new-cluster transient that self-heals.
 
     Scope semantics:
-      * Empty entitled_domains → no scope filter (unscoped / admin).
+      * The scope is the verified caller's grant (`_bound`); no grant is `NO_GRANT`, which
+        matches no domain. An empty list is unscoped here but is never what arrives.
       * Domain-agnostic predicates (``r.domains == []``) are always kept.
       * Domain-scoped predicates require at least one shared entry.
 
     Exact ``(subject_uri, verb_label)`` lookups belong on ``/find_tool``;
     this endpoint is exclusively NL-driven.
     """
+    request, _ = await _bound(request, route="search_predicates")
     # ADR-0015 Phase 1: capture timings + decision context for the
     # routing-decision audit log emit at the end of the handler.
     _total_t0 = time.perf_counter()
@@ -4538,6 +4932,26 @@ async def classify_legacy_table(request: LegacyTableDossier) -> TableClassificat
 # ---------------------------------------------------------------------------
 # POST /plan
 # ---------------------------------------------------------------------------
+_plan_logger = logging.getLogger("iagent.plan")
+
+
+def _planner_unparseable_plan(request: PlanRequest) -> dict:
+    """The plan served when the planner's answer cannot be parsed: one task holding the person's
+    question, no persona (the zero-task passthrough's default awaits its own ruling), flagged."""
+    return {
+        "tasks": [{
+            "sub_query": request.query,
+            "target_persona": "",
+            "tools_needed": [],
+            "expected_output": "Direct response to the user's query.",
+        }],
+        "extracted_concepts": [],
+        "reasoning": "",
+        "domain": request.domain,
+        "degraded": "planner_unparseable",
+    }
+
+
 @app.post("/plan")
 async def plan_query(request: PlanRequest) -> dict:
     """
@@ -4688,10 +5102,18 @@ async def plan_query(request: PlanRequest) -> dict:
         # Pass through our deliberate 502 (silent-degrade detection)
         # without rewrapping it.
         raise
+    except BamlValidationError as exc:
+        # The planner answered in prose, not in the contract's shape: one degraded task holding
+        # the person's question, never a failed run. DecomposeQuery is the only BAML call in this
+        # try. The exception's str carries the system prompt, the persona roster and the raw
+        # output, so it is never interpolated or logged: the class name is the whole record.
+        _plan_logger.warning("plan: planner answer unparseable (%s)", type(exc).__name__)
+        return _planner_unparseable_plan(request)
     except Exception as exc:
+        # The class only, whatever the error: a BAML error's str carries the prompt and roster.
         raise HTTPException(
             status_code=502,
-            detail=f"BAML decomposition failed: {exc}",
+            detail=f"BAML decomposition failed: {type(exc).__name__}",
         ) from exc
 
 
@@ -4902,6 +5324,58 @@ def _slot_spec(declarations: list[dict]) -> tuple[str, dict[str, dict]]:
     }
 
 
+#: One `key: value` pair of a flat map that was turned into a string: an identifier key, then the
+#: value up to the next pair or the end.
+_STRINGIFIED_PAIR = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*?)\s*$", re.DOTALL)
+
+
+def _parse_slots_reply(text: Any) -> Any:
+    """`slots_json` as JSON, or as the one other form measured on the wire. Raises ValueError otherwise.
+
+    MEASURED 2026-11-16 (rehearsal, "where is part 5530-182 used as built"): the model's reply
+    held `"slots_json": {"configuration": "as_built"}`, an OBJECT where the contract declares a
+    string. The parser turned that object into the string `{configuration: as_built}`. That
+    string is not JSON, so this endpoint returned no slots, the verb ran on its default
+    (`as_designed`), and an `as_built` question was answered with as-designed rows and no word
+    that it had been substituted.
+
+    The second form accepted here is exactly that: a FLAT map of identifier keys to scalar values.
+    Each value is read as JSON when it is valid JSON (a number, true/false, null or a quoted
+    string), and kept as the bare string otherwise. Anything nested, any piece without a key, or a
+    key named twice still raises, because the reader cannot tell where such a value ends. A slot
+    that arrives here still goes through the same acceptance checks below as a JSON one does.
+    """
+    if text is None or text == "":
+        return {}
+    if not isinstance(text, str):
+        raise TypeError(f"slots_json is a {type(text).__name__}, not a string")
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    body = text.strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        raise ValueError("neither JSON nor a stringified flat map")
+    inner = body[1:-1].strip()
+    if not inner:
+        return {}
+    if any(ch in inner for ch in "{}[]\"'"):
+        raise ValueError("a stringified map with nested or quoted values is not read")
+    out: dict[str, Any] = {}
+    for piece in inner.split(","):
+        m = _STRINGIFIED_PAIR.match(piece)
+        if m is None or not m.group(2):
+            raise ValueError(f"not a key: value pair: {piece!r}")
+        key, value = m.group(1), m.group(2)
+        if key in out:
+            raise ValueError(f"key named twice: {key!r}")
+        try:
+            out[key] = json.loads(value)
+        except ValueError:
+            out[key] = value
+    return out
+
+
 @app.post("/fill_slots", response_model=FillSlotsResponse)
 async def fill_slots(request: FillSlotsRequest):
     """Extract the parameters the speaker named, for an already-routed verb.
@@ -4911,6 +5385,7 @@ async def fill_slots(request: FillSlotsRequest):
     on its defaults). This endpoint must never be able to make routing worse than it was
     before it existed, so it degrades to the old behaviour rather than to an exception.
     """
+    request, _ = await _bound(request, route="fill_slots", grant_field="acting_domains")
     # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
     # restate_analyst send a real test persona or get refused -- a domains list is never an
     # entitlement"; architect, 2026-10-14 -- "a svc: literal counts as absent in every arm, same
@@ -4939,18 +5414,22 @@ async def fill_slots(request: FillSlotsRequest):
         # "resolve no relative period" — so a verb with no period slot is unaffected and a
         # missing calendar degrades to the pre-anchor behaviour rather than to a guess.
         anchor = _anchor_period(declarations)
+        _slots_kw = {}
+        if _slots_opts := routing_call_options("SLOTS"):
+            _slots_kw["baml_options"] = _slots_opts
         filled = await b.FillVerbSlots(
             question=request.query,
             verb=request.verb_iri,
             slot_spec=spec,
             today=anchor or "unknown",
+            **_slots_kw,
         )
     except Exception as exc:  # noqa: BLE001 — degrade to defaults, never 500 the route
         _slots_logger.warning("fill_slots: model call failed for %s: %s", request.verb_iri, exc)
         return FillSlotsResponse(reasoning=f"slot extraction unavailable: {exc}")
 
     try:
-        raw = json.loads(filled.slots_json or "{}")
+        raw = _parse_slots_reply(filled.slots_json)
     except (ValueError, TypeError):
         _slots_logger.warning(
             "fill_slots: %s returned unparseable slots_json %r",
@@ -5068,6 +5547,12 @@ async def fill_slots(request: FillSlotsRequest):
             user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
         )
         outcome = str(prov.get("instance_match") or "empty")
+        if outcome in _PERSON_TOKEN_REFUSALS:
+            # NOT a slot outcome: `slot_disposition` knows neither ASK nor ABSTAIN for it and
+            # would fall through to a menu built for nobody. The whole call is refused.
+            raise HTTPException(status_code=401, detail={
+                "reason": outcome,
+                "message": _PERSON_TOKEN_REFUSAL_DETAIL[outcome]})
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
         # by the slot's referent class — which would have emptied the list for exactly the
         # case that most needs a menu: "the ERP Modernization project" resolves to an
@@ -5250,6 +5735,7 @@ async def route_intent(request: RouteIntentRequest) -> RouteIntentResponse:
     Behavior is deliberately stateless and side-effect-free — the gateway
     can call this on every request without worrying about ordering.
     """
+    request, _ = await _bound(request, route="route_intent", email_field=None)
     try:
         intent = await b.ExtractIntent(user_query=request.query)
     except Exception as exc:
@@ -5365,6 +5851,7 @@ async def classes(request: ResolveRequest) -> dict:
     ``authorized_subjects``); empty caller → ungranted → deny-by-default on compartmented
     classes when the gate is on. [[feedback_identity_reaches_enforcement_point]].
     """
+    request, _ = await _bound(request, route="classes", grant_field="domains")
     rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
     results = []
     dropped = 0
@@ -5425,6 +5912,7 @@ async def health():
         "status": "ok",
         "jena_configured": _JENA.configured,
         "neo4j_configured": _NEO4J.configured,
+        "telemetry_misses": emit_misses(),
     }
 
 @app.get("/personas")
@@ -5512,6 +6000,7 @@ class OperableSubjectsResponse(BaseModel):
 _OPERABLE_SUBJECTS_CYPHER = """
 MATCH (s:OntologyClass)-[r]->()
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
   AND ($domain IS NULL OR s.domain = $domain)
 RETURN DISTINCT s.uri AS uri, s.label AS label
 ORDER BY label
@@ -5524,6 +6013,7 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
     carry at least one registered verb edge — domain-scoped and can_view-filtered
     (Decision D). The interview offers THESE for the operation-subject question, so
     every offered subject leads to >=1 compatible verb (no 94%-dead-end menu)."""
+    request, _ = await _bound(request, route="operable_subjects", grant_field=None)
     if not _NEO4J_DRIVER:
         raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
 
@@ -5648,12 +6138,23 @@ async def _filter_sustainment_candidates(candidates: list[dict], *, user_email: 
     return out
 
 
+class ResolveInstanceRequest(_SdkResolveInstanceRequest):
+    """The SDK's wire shape plus one field (the SDK model forbids extras, so it is added here)."""
+    #: The person a declared service delegate acts for, honoured only with a `door: engine-o` row in
+    #: the delegates file (architect 11-19). Ignored from anyone else.
+    on_behalf_of: str = ""
+
+
 @app.post("/resolve_instance")
 async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     """Resolve an identifier to pcn instance candidates (matcher: agent_fleet/ontology_service/
     sustainment_instance_provider.py). Contract matches _call_resolver's expectation: returns
     ``{candidates: [{instance_id, class_uri, label, score}]}``; an empty list is a first-class
     ABSTAIN. The async Jena fetch lives here; the matching is the pure, unit-tested core."""
+    if _caller_session_expired():
+        # REFUSED BEFORE ANY READ (ruled 2026-11-19, Q2): an expired token is never bound anonymous.
+        return _session_expired_response()
+    request, _ = await _bound(request, route="resolve_instance", delegate_field="on_behalf_of")
     try:
         rows = await execute_sparql(_SUSTAINMENT_INSTANCES_QUERY, domain="SUSTAINMENT")
     except SubstrateUnavailable as exc:  # execute_sparql's only outage; a defect answers 500
@@ -5714,6 +6215,7 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
 
     DOMAIN-SCOPED, deny by default: a caller whose entitled domains do not include SUSTAINMENT is
     refused before the graph is read, so an empty scope can never read as "no parts"."""
+    request, _ = await _bound(request, route="notice_parts")
     if _notice_parts.DOMAIN not in (request.entitled_domains or []):
         return {
             "status": "refused",
@@ -5736,8 +6238,50 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
             table=_load_domain_consumption_for_notice_parts(),
             can_view_program=_notice_parts_can_view_program,
         )
-    except Exception as exc:  # noqa: BLE001
+    except _VISIBILITY_OUTAGE as exc:  # NARROWED ON PURPOSE: a defect answers 500, see _VISIBILITY_OUTAGE
         raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
+
+
+class WhereUsedRequest(BaseModel):
+    """The specialist dispatch body, read for the fields this verb uses; the rest is ignored."""
+    params: dict = Field(default_factory=dict)
+    resolved_instance_id: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+    #: The caller's authz_id, body-asserted at the same trust level as `entitled_domains`.
+    user_email: str = ""
+
+
+@app.post("/where_used")
+async def where_used_route(request: WhereUsedRequest) -> dict:
+    """`mesh:whereIsThisPartUsed` (dataset and shaping: where_used.py). READ.
+
+    DOMAIN-SCOPED, deny by default: a caller whose entitled domains do not include SUSTAINMENT is
+    refused before the dataset is read."""
+    request, _ = await _bound(request, route="where_used")
+    if _where_used.DOMAIN not in (request.entitled_domains or []):
+        return {
+            "status": "refused",
+            "refused": True,
+            "outcome": "refused",
+            "reason": "not_entitled",
+            "verb": _where_used.VERB,
+            "message": "This read needs the SUSTAINMENT domain, which the caller is not entitled to.",
+        }
+    try:
+        dataset = await asyncio.to_thread(_where_used.load_dataset)
+    except _where_used.DatasetRefused as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    configuration = (request.params or {}).get("configuration") or _where_used.DEFAULT_CONFIGURATION
+    # The program check reads the Topaz directory: its outage is a 503, every other raise a 500
+    # (the _VISIBILITY_OUTAGE rule). Either way no row is returned.
+    try:
+        return await asyncio.to_thread(
+            _where_used.where_used, dataset,
+            _where_used.part_of(request.params, request.resolved_instance_id), configuration,
+            caller_id=request.user_email, can_view_program=_notice_parts_can_view_program,
+        )
+    except _VISIBILITY_OUTAGE as exc:
+        raise HTTPException(status_code=503, detail=f"where used read failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -6187,6 +6731,7 @@ WITH start, collect(DISTINCT scope) AS scopes
 UNWIND scopes AS scope
 MATCH (scope)-[r]->(o:OntologyClass)
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
 RETURN DISTINCT
     r.iri                         AS verb_iri,
     type(r)                       AS verb_local,
@@ -6250,6 +6795,7 @@ MATCH (vsubj)-[r]->(o:OntologyClass)
 // "without _tool_urn in the match-key, N providers offering the same predicate collapse
 // into one edge with last-write-wins".
 WHERE r.iri = p.verb_iri AND r._tool_urn = p._tool_urn
+  AND coalesce(r.endpoint_url, '') <> ''
 RETURN DISTINCT
     r.iri                         AS verb_iri,
     type(r)                       AS verb_local,
@@ -6309,6 +6855,7 @@ WHERE coalesce(p.required, false) = true
 // arithmetic applies here.
 MATCH (vsubj)-[r]->(o:OntologyClass)
 WHERE r.iri = p.verb_iri AND r._tool_urn = p._tool_urn
+  AND coalesce(r.endpoint_url, '') <> ''
 RETURN DISTINCT
     r.iri                         AS verb_iri,
     type(r)                       AS verb_local,
@@ -6438,6 +6985,7 @@ async def find_compatible_verbs(
     fallback. Non-empty list → caller passes the verb_iris into
     /classify_predicate as compatible_verb_iris.
     """
+    request, _ = await _bound(request, route="find_compatible_verbs", email_field="on_behalf_of")
     if not _NEO4J_DRIVER:
         raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
 
@@ -6692,6 +7240,7 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     Confidence is the LLM's own assessment; the supervisor thresholds
     against it the same way ADR-0008 thresholded against the BM25 score.
     """
+    request, _ = await _bound(request, route="classify_predicate")
     entitled = [d.upper() for d in (request.entitled_domains or [])]
     compatible = set(request.compatible_verb_iris or [])
 
@@ -7006,7 +7555,7 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
             subject_uri=request.subject_uri or "UNKNOWN",
             subject_reasoning=request.subject_reasoning or "",
             domain=request.domain,
-            baml_options={"tb": tb},
+            baml_options={"tb": tb, **routing_call_options("VERB")},
         )
     except Exception as exc:
         raise HTTPException(

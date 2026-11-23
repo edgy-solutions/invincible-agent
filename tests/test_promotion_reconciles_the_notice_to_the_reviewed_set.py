@@ -96,7 +96,7 @@ class Graph:
     def write_fact(self, iid, fact):
         self.calls.append(("write_fact",))
 
-    def attest_origin(self, iid, *, owner_domain, record_id):
+    def attest_origin(self, iid, *, owner_domain, record_id, **_kw):
         return "written"
 
     def delete_carrying(self, iid):

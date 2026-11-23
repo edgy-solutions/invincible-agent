@@ -91,11 +91,9 @@ PHANTOM_CITATIONS = {
     "docs/adr/ADR-0016-memory-boundary-revised.md":
         "Linked by ADR-0019. Never created. Same shape as 0006: a numbered ADR referenced as "
         "though it were on file.",
-    "docs/measurements/2026-09-29-the-acceptance-consumer-is-still-unreached-and-the-docs-pages-are-not-missing.md":
-        "WRITTEN, NOT A PHANTOM: added by cea00aad on lane/74-acceptance-and-docs-subject "
-        "(2026-09-29), which never reached master, so the honesty seal reports it PENDING. Cited "
-        "as the full report by the 09-29 packet to the architect. Retires when 74 merges that "
-        "branch or retires it; past PENDING_MAX_AGE_DAYS it reds on its own.",
+    # The 09-29 acceptance-consumer measurement (cea00aad, lane/74) was allowlisted PENDING
+    # here and deleted 2026-11-16: its only citer was a session packet, untracked since
+    # 11-12, and the pruner below had counted the entry's own key as a citation.
     # ── THE THREE WALK SHEETS THE CENSUS WAS WAITING ON — ALL THREE LANDED (2026-09-19) ──────
     # No walk sheet is allowlisted any more. They retired themselves, which is what the entries
     # were for; the last one was `docs/measurements/docs-walk-sheet.md`, deleted here when 5f's
@@ -149,13 +147,36 @@ def _is_cross_repo(target: str) -> bool:
     return target.startswith("../../../")
 
 
+# VENDORED COPIES — a file copied VERBATIM from a sibling repo. Its `docs/` paths are the
+# SIBLING's docs, written bare because they were written in that repo, and editing them here
+# would break the verbatim copy the file's own seal pins. Not a phantom (the file exists, in
+# the other repo) and not rot (nothing here moved). Enforced by
+# `test_vendored_copies_are_honest`: an entry must be tracked AND still carry a bare citation
+# that does not resolve here, or it is an exemption with nothing left to exempt.
+VENDORED_COPIES = {
+    "tests/fixtures/dag_tools_mfg_trace/mfg_trace.yaml":
+        "dag-tools' examples/mfg_trace/contracts/mfg_trace.yaml, copied verbatim (fin's "
+        "multi-document reader seals; repinned by #428). Its plans/ citation is dag-tools'.",
+}
+
+
 def _iter_text_files():
-    for dirpath, dirnames, filenames in os.walk(ROOT):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for fn in filenames:
-            p = pathlib.Path(dirpath) / fn
-            if p.suffix.lower() in TEXT_EXT:
-                yield p
+    """TRACKED files only. The walk used to be `os.walk(ROOT)`, which read whatever was on the
+    disk: since 2026-11-12 every packet and handoff lives untracked under the gitignored
+    sessions directory, so the same sha was red in the master tree (hundreds of local packets
+    citing paths) and green in a fresh worktree. A green belongs to a sha, not a directory —
+    `test_citation_anchors_resolve.py` reads tracked files for the same reason."""
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True,
+    ).stdout.decode("utf-8")
+    for rel in out.split("\0"):
+        if not rel or any(part in SKIP_DIRS for part in rel.split("/")):
+            continue
+        p = ROOT / rel
+        if p.suffix.lower() in TEXT_EXT and p.is_file():
+            yield p
 
 
 def _collect_citations():
@@ -167,6 +188,8 @@ def _collect_citations():
         except (UnicodeDecodeError, PermissionError, OSError):
             continue
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        if rel in VENDORED_COPIES:
+            continue
         for lineno, line in enumerate(text.splitlines(), 1):
             for m in DOC_PATH.finditer(line):
                 cited = m.group(0)
@@ -505,10 +528,34 @@ def test_phantom_allowlist_entries_are_still_cited():
     # BOTH shapes, or the ADR entries (cited only as relative links) would read as stale and
     # get deleted — after which the seal would fail on them again. An allowlist pruner that
     # cannot see every citation shape prunes live entries.
-    cited = set(_collect_citations()) | _collect_relative_link_targets()
+    # THIS FILE'S OWN SITES DO NOT COUNT. Every entry's KEY is a citation-shaped literal in
+    # this file, so every entry was "still cited" by itself and this guard could not fire: the
+    # acceptance-consumer entry stayed legal for 48 days after its only citer left the repo.
+    me = pathlib.Path(__file__).resolve().relative_to(ROOT).as_posix()
+    cited = {
+        c for c, sites in _collect_citations().items()
+        if any(not s.startswith(me + ":") for s in sites)
+    } | _collect_relative_link_targets()
     stale = sorted(set(PHANTOM_CITATIONS) - cited)
     assert not stale, (
         f"PHANTOM_CITATIONS entries no longer cited anywhere — delete them: {stale}"
+    )
+
+
+@pytest.mark.parametrize("path", sorted(VENDORED_COPIES))
+def test_vendored_copies_are_honest(path):
+    """A vendored entry is legal only while it is tracked AND still carries a bare citation
+    that does not resolve in this repo. Otherwise it hides nothing, or it hides a file of ours."""
+    import subprocess
+
+    r = subprocess.run(["git", "ls-files", "--error-unmatch", "--", path],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, f"{path} is not tracked — delete its VENDORED_COPIES entry"
+    text = (ROOT / path).read_text(encoding="utf-8")
+    unresolved = [m.group(0) for m in DOC_PATH.finditer(text) if not (ROOT / m.group(0)).is_file()]
+    assert unresolved, (
+        f"{path} cites nothing that fails to resolve here — the exemption has nothing left to "
+        f"exempt. Delete its VENDORED_COPIES entry so the file is scanned like any other."
     )
 
 

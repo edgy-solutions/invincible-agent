@@ -98,6 +98,8 @@ spec:
             # observed transient-blip floor.
             - name: REGISTER_SAGA_BUDGET_S
               value: {{ .Values.meshRegistrar.registerSagaBudgetSeconds | default "15" | quote }}
+            # Token checks (SDK transport_auth, v0.9.20+). LAST, so nothing above can widen them.
+            {{- include "invincible-agent.engineTokenEnv" . | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /v1/healthz

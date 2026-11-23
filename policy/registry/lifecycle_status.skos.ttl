@@ -1,0 +1,39 @@
+# GENERATED from policy/registry/lifecycle_status.yaml by scripts/generate_vocabulary_skos.py. Do not edit.
+# Regenerate after changing the source; --check fails while this file is stale.
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+<urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> a skos:ConceptScheme ;
+    skos:prefLabel "lifecycle_status" ;
+    dcterms:source "policy/registry/lifecycle_status.yaml" ;
+    dcterms:rightsHolder "owner" .
+
+<urn:uuid:01a1b95f-c38e-7a76-b62b-7b7d4fedff4a> a skos:Concept ;
+    skos:inScheme <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:topConceptOf <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:notation "active" ;
+    skos:prefLabel "active" .
+
+<urn:uuid:01a1b95f-c38e-7537-a828-05160421ea16> a skos:Concept ;
+    skos:inScheme <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:topConceptOf <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:notation "not-recommended-for-new-design" ;
+    skos:prefLabel "not-recommended-for-new-design" .
+
+<urn:uuid:01a1b95f-c38e-7c9f-b1f1-c809e513d6c0> a skos:Concept ;
+    skos:inScheme <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:topConceptOf <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:notation "last-time-buy" ;
+    skos:prefLabel "last-time-buy" .
+
+<urn:uuid:01a1b95f-c38e-7469-b906-761e93215748> a skos:Concept ;
+    skos:inScheme <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:topConceptOf <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:notation "obsolete" ;
+    skos:prefLabel "obsolete" .
+
+<urn:uuid:01a1b95f-c38e-7978-a518-7110a048149a> a skos:Concept ;
+    skos:inScheme <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:topConceptOf <urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78> ;
+    skos:notation "unknown" ;
+    skos:prefLabel "unknown" .

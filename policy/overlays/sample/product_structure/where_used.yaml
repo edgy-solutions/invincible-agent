@@ -1,0 +1,98 @@
+# SYNTHETIC three-level bill of materials for the where-used read (ADR-0065 section 4 names this
+# fixture). It is not a claim about any real part, end item or program: every identity, part
+# number and CAGE value below is invented. The program keys are the sandbox ones in
+# policy/program_members.yaml.
+#
+# What it exercises, because these are where a rolled-up quantity goes wrong:
+#   * P is used at TWO levels inside one end item (E1): through SUB-B, and directly under ASM-A
+#     where the direct usage applies to E1 only.
+#   * P is used in TWO end items sustained under different programs (E1, E2).
+#   * E3 reaches P too but has NO sustained_under row: deny by default, never served.
+#   * P-UNUSED is used nowhere.
+# Expected: qty_per(E1, P) = 2 * (3*4 + 1) = 26; qty_per(E2, P) = 1 * 3 * 4 = 12.
+#
+# N-182 and N-183 are the two parts of PCN26-182, a synthetic notice OpenDDIL built (Chris,
+# 2026-11-10). They are here so the notice's parts and this BOM join. Each is known by the number
+# the notice prints and by the component the notice's graph edge names.
+#   * N-182 sits under SUB-B: qty_per(E1) = 2 * 3 * 2 = 12; qty_per(E2) = 1 * 3 * 2 = 6.
+#   * N-183 sits directly under ASM-A for E1 only: qty_per(E1) = 2 * 1 = 2; E2 does not use it.
+#
+# Each input carries its own provenance. No input has a catalogue entry or a classification label
+# (ADR-0064 is Proposed: an unlabelled input gives an unlabelled result).
+inputs:
+  product_structure:
+    dataset_urn: null
+    as_of: "2026-11-07"
+    classification: null
+    notional: true
+  sustained_under:
+    dataset_urn: null
+    as_of: "2026-11-07"
+    classification: null
+    notional: true
+
+# One row per thing. An alias is never a second node (ADR-0067 item 1).
+identities:
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000001"
+    label: "E1"
+    aliases:
+      - {scheme: "cage_part_number", value: "0SYN1:EI-0001", authority: "synthetic", valid_from: "2026-01-01"}
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000002"
+    label: "E2"
+    aliases:
+      - {scheme: "cage_part_number", value: "0SYN1:EI-0002", authority: "synthetic", valid_from: "2026-01-01"}
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000003"
+    label: "E3"
+    aliases:
+      - {scheme: "cage_part_number", value: "0SYN1:EI-0003", authority: "synthetic", valid_from: "2026-01-01"}
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000010"
+    label: "ASM-A"
+    aliases:
+      - {scheme: "cage_part_number", value: "0SYN1:PN-2001", authority: "synthetic", valid_from: "2026-01-01"}
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000011"
+    label: "SUB-B"
+    aliases:
+      - {scheme: "cage_part_number", value: "0SYN1:PN-2002", authority: "synthetic", valid_from: "2026-01-01"}
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000020"
+    label: "P"
+    aliases:
+      - {scheme: "cage_part_number", value: "0SYN1:PN-1001", authority: "synthetic", valid_from: "2026-01-01"}
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000021"
+    label: "P-UNUSED"
+    aliases:
+      - {scheme: "cage_part_number", value: "0SYN1:PN-1002", authority: "synthetic", valid_from: "2026-01-01"}
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000030"
+    label: "N-182"
+    aliases:
+      - {scheme: "notice_part_number", value: "5530-182", authority: "synthetic", valid_from: "2026-01-01"}
+      - {scheme: "graph_component", value: "http://internal/components/5530-182", authority: "synthetic", valid_from: "2026-01-01"}
+  - identity: "urn:uuid:01930000-0000-7000-8000-000000000031"
+    label: "N-183"
+    aliases:
+      - {scheme: "notice_part_number", value: "5530-183", authority: "synthetic", valid_from: "2026-01-01"}
+      - {scheme: "graph_component", value: "http://internal/components/5530-183", authority: "synthetic", valid_from: "2026-01-01"}
+
+# Which identities are end items, and which configurations each has data for.
+end_items:
+  - {identity: "urn:uuid:01930000-0000-7000-8000-000000000001", configurations: [as_designed]}
+  - {identity: "urn:uuid:01930000-0000-7000-8000-000000000002", configurations: [as_designed]}
+  - {identity: "urn:uuid:01930000-0000-7000-8000-000000000003", configurations: [as_designed]}
+
+# ps:PartUsage rows. `applicability` absent means every end item; `configuration` absent means
+# as_designed.
+usages:
+  - {parent: "urn:uuid:01930000-0000-7000-8000-000000000001", child: "urn:uuid:01930000-0000-7000-8000-000000000010", quantity: 2, reference_designator: "A1"}
+  - {parent: "urn:uuid:01930000-0000-7000-8000-000000000002", child: "urn:uuid:01930000-0000-7000-8000-000000000010", quantity: 1, reference_designator: "A1"}
+  - {parent: "urn:uuid:01930000-0000-7000-8000-000000000010", child: "urn:uuid:01930000-0000-7000-8000-000000000011", quantity: 3, reference_designator: "B1"}
+  - {parent: "urn:uuid:01930000-0000-7000-8000-000000000011", child: "urn:uuid:01930000-0000-7000-8000-000000000020", quantity: 4, reference_designator: "P1"}
+  - {parent: "urn:uuid:01930000-0000-7000-8000-000000000010", child: "urn:uuid:01930000-0000-7000-8000-000000000020", quantity: 1, reference_designator: "P2",
+     applicability: ["urn:uuid:01930000-0000-7000-8000-000000000001"]}
+  - {parent: "urn:uuid:01930000-0000-7000-8000-000000000003", child: "urn:uuid:01930000-0000-7000-8000-000000000011", quantity: 1, reference_designator: "B1"}
+  - {parent: "urn:uuid:01930000-0000-7000-8000-000000000011", child: "urn:uuid:01930000-0000-7000-8000-000000000030", quantity: 2, reference_designator: "N1"}
+  - {parent: "urn:uuid:01930000-0000-7000-8000-000000000010", child: "urn:uuid:01930000-0000-7000-8000-000000000031", quantity: 1, reference_designator: "N2",
+     applicability: ["urn:uuid:01930000-0000-7000-8000-000000000001"]}
+
+# Per asset: end item -> program. Not from the BOM (ADR-0065 section 4). E3 has no row on purpose.
+sustained_under:
+  - {end_item: "urn:uuid:01930000-0000-7000-8000-000000000001", program: SANDBOX_PROGRAM_ALPHA}
+  - {end_item: "urn:uuid:01930000-0000-7000-8000-000000000002", program: SANDBOX_PROGRAM_BRAVO}

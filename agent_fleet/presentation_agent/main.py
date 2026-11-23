@@ -147,13 +147,16 @@ async def lifespan(fastapi_app: FastAPI):
 # Telemetry (ADR-0038): join Engine F's work to the caller's trace. telemetry.py is at /app
 # in the fleet image; guarded so the engine runs identically when the shim/leaf is absent.
 try:
-    from telemetry import observed_trace, MAPPING, build_trace_values
+    from telemetry import observed_trace, MAPPING, build_trace_values, emit_misses
 except Exception:  # pragma: no cover — telemetry never load-bearing
     from contextlib import contextmanager as _cm
 
     @_cm
     def observed_trace(*_a, **_k):
         yield
+
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
 
     def build_trace_values(**_k):
         return {}
@@ -646,9 +649,10 @@ _ELICITATION_STATUS_BY_DISPOSITION: Dict[str, str] = {
 #: under REFUSAL_FIELD. ONE definition: producer (`_refusal_envelope`) and seal both read it.
 #: `refused`/`outcome`/`reason` are always present; the OPTIONAL keys travel only when the
 #: producer supplied them (absent means silent, same as the passthroughs).
+#: `message` is the producer's plain-language reason, drawn as the card's line; `reason` stays the code.
 REFUSAL_FIELD = "refusal"
 REFUSAL_ENVELOPE_REQUIRED: tuple = ("refused", "outcome", "reason")
-REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap")
+REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap", "message")
 
 
 def _refusal_envelope(resp: Dict[str, Any]) -> Dict[str, Any]:
@@ -978,7 +982,13 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # The reporting lane read it as a producer bug — "report says emitted, wire says absent" —
     # and it was, at the wire that matters to a card. Both wires were telling the truth about
     # different hops.
-    "MULTI_SERIES": ("rows", ("series", "reference", "verdict", "value_label", "scope_label")),
+    #
+    # `data_provenance` ADDED 2026-11-08 (the architect, via Chris: it "arrives whole: dataset
+    # URN, as-of, ticket id"). It is an ENVELOPE field, so it rides only by being named here. A
+    # producer that does not send it (cost, safety) is unchanged: an absent key is not carried.
+    # Sealed by tests/finance/test_provenance_arrives_whole.py.
+    "MULTI_SERIES": ("rows", ("series", "reference", "verdict", "value_label", "scope_label",
+                              "data_provenance")),
 
     # ── SOURCE_LEDGER (lane 32, 2026-09-19). Runbook site 2. ──────────────────────────────
     #
@@ -1034,14 +1044,22 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # chosen. `columns` is required by the view (it maps over it), so a producer that omits it
     # is a card that throws. The producer's conformance case is
     # tests/test_notice_parts_renders_as_instances_by_property.py.
+    #
+    # `group_by` (mesh:WhereUsedSet, ADR-0065 section 4): the column key the rows group by,
+    # named by the producer so the card never guesses one. Envelope-level, so it is carried
+    # only because it is declared here (tests/finance/test_the_wire_carries_what_the_engine_declares.py).
+    #
+    # `absent_reason` ({column key: short phrase}): envelope-level, served so cortex draws the
+    # producer's words in a null cell instead of "-". Ruled by Chris 11-19; never a 0.
     "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
-                                       "state_vocabulary")),
+                                       "state_vocabulary", "group_by", "absent_reason")),
 
-    # ── FLOW_DECOMPOSITION (Lane 1, 0.4.81). Runbook site 2. ──────────────────────────────
+    # ── FLOW_DECOMPOSITION (Lane 1; held from 0.4.81, opened 2026-11-23). Runbook site 2. ──
     #
     # Bound for a dataset-kind measure row (#255): `rows` is the edge table, root edge first,
     # passed through verbatim. Cortex proposed the tuple and Chris accepted it (2026-11-05:
-    # "Projector row accepted as proposed"). It was ruled for 0.4.80 and missed that cut.
+    # "Projector row accepted as proposed"). It was ruled for 0.4.80 and missed that cut; it
+    # was held until a menu carried the shape (#513: each dataset row declares its own `menu:`).
     #
     # `render` travels WHOLE because `unit` and `other_label` live only inside it; the card
     # reads `render.value_label` first and the top-level `value_label` only as a fallback.
@@ -1816,8 +1834,8 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
     return baml_response.model_dump()
 
 @app.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok", "engine": "F"}
+def health() -> Dict[str, Any]:
+    return {"status": "ok", "engine": "F", "telemetry_misses": emit_misses()}
 
 if __name__ == "__main__":
     import os

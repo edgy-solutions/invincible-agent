@@ -193,6 +193,28 @@ spec:
                       name: {{ .Release.Name }}-secrets
                       key: DATAHUB_TOKEN
                       optional: true
+                # THE APPROVED-GRANT LEDGER (ruled 2026-11-16): this Job is the ONE pruner of
+                # `reader` relations, and its grant_sync input is committed policy UNION the
+                # ledger rows not yet committed (`access_grant_ledger`, in the same Postgres the
+                # BFF records into). Without it each tick would revoke every approved grant. The
+                # Job reads the ledger and nothing else. An unreadable ledger exits 5 with
+                # nothing applied and nothing pruned. The password is a secretKeyRef (never
+                # envFrom the whole secret); same DSN template as projector.yaml.
+                - name: BPMN_POSTGRES_HOST
+                  value: {{ include "invincible-agent.pgHost" . | quote }}
+                - name: BPMN_POSTGRES_PORT
+                  value: {{ include "invincible-agent.pgPort" . | quote }}
+                - name: BPMN_POSTGRES_DB
+                  value: {{ include "invincible-agent.pgDatabase" . | quote }}
+                - name: BPMN_POSTGRES_USER
+                  value: {{ include "invincible-agent.pgUser" . | quote }}
+                - name: BPMN_POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-secrets
+                      key: BPMN_POSTGRES_PASSWORD
+                - name: PROJECTOR_POSTGRES_DSN
+                  value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)"
                 - name: PYTHONPATH
                   value: "/app/policy/sync"
               command: ["sh", "-c"]
@@ -246,6 +268,9 @@ spec:
                   export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
                   export ONTOLOGY_COMPARTMENTS_FILE="$POLICY_DIR/ontology_compartments.yaml"
                   export CAPABILITY_GRANTS_FILE="$POLICY_DIR/capability_grants.yaml"
+                  # What the engine pods see: their overlay-directory variables, so the capability sync can tell an
+                  # overlay export profile from a misspelt name (a refused can_export row is a report, never a failed Job).
+                  {{- include "invincible-agent.podOverlayEnv" (dict "root" $ "mode" $mode) | nindent 18 }}
                   echo "===== VALIDATE (every data file, BEFORE any apply) ====="
                   # Fail-closed gate: a malformed overlay refuses the WHOLE run
                   # here, instead of applying four syncs and dying on the fifth.
@@ -269,8 +294,17 @@ spec:
                   # and grant_sync REFUSES a grant to an asset not yet in the
                   # directory (deny-on-dangling). Exits 2 (malformed) / 3
                   # (dangling) / 4 (readback) — `set -e` fails the Job loudly, so
-                  # a bad grant file cannot silently seed a broken grant.
-                  python policy/sync/grant_sync.py
+                  # a bad grant file cannot silently seed a broken grant. This is the ONE
+                  # pruner: its input is committed policy plus the approved-grant ledger rows
+                  # not yet committed; exit 5 = the ledger is unreadable (nothing applied, nothing
+                  # pruned). That one code does NOT stop the run: the syncs below do not depend on
+                  # the ledger, so they still run, and the Job exits 5 at the END so it fails
+                  # visibly. Every other non-zero code keeps `set -e` (stops here).
+                  GRANT_SYNC_RC=0
+                  python policy/sync/grant_sync.py || GRANT_SYNC_RC=$?
+                  if [ "$GRANT_SYNC_RC" -ne 0 ] && [ "$GRANT_SYNC_RC" -ne 5 ]; then
+                    exit "$GRANT_SYNC_RC"
+                  fi
                   echo ""
                   echo "===== ONTOLOGY COMPARTMENT SYNC (ontology_compartment_sync) ====="
                   python policy/sync/ontology_compartment_sync.py
@@ -289,6 +323,10 @@ spec:
                   # `capability` object type exists before set_object.
                   python policy/sync/capability_grant_sync.py
                   echo ""
+                  if [ "$GRANT_SYNC_RC" -ne 0 ]; then
+                    echo "FAIL: grant_sync could not read the approved-grant ledger (exit $GRANT_SYNC_RC); nothing was pruned and the other syncs ran" >&2
+                    exit "$GRANT_SYNC_RC"
+                  fi
                   echo "===== SEED COMPLETE — six syncs applied + readbacks passed ====="
               {{- if or (ne $mode "image") .Values.topazSeed.loadManifest }}
               volumeMounts:

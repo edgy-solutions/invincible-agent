@@ -174,7 +174,7 @@ def test_3_every_declared_field_is_carried_by_the_rows(fn):
 
 def _build(profiles, out, state=None):
     return cdrl.build_cdrl(
-        state or engine.STATE, profiles[PROFILE], program_id=PROGRAM, as_of="2026-10-28",
+        state or engine.STATE, profiles[PROFILE], program_id=PROGRAM, data_as_of="2026-09-30", generated_on="2026-10-28",
         out_dir=out, run_source=lambda fn, params: engine._cdrl_source(fn, params, caller="alice@example.com"))
 
 
@@ -188,7 +188,7 @@ def test_4_the_title_block(profiles, tmp_path):
     program = next(p for p in engine.STATE.programs if p.program_id == PROGRAM)
     assert ws["B2"].value == program.name
     assert ws["B3"].value == PROGRAM
-    assert ws["B4"].value == "2026-10-28"
+    assert ws["B4"].value == "2026-09-30"
     assert ws["B5"].value == "A001"
 
 
@@ -316,7 +316,7 @@ def _post(c, profile=PROFILE, user=ALICE):
 
 def test_7_profiles_are_header_keys_only(served):
     c, _, _ = served
-    r = c.get("/cdrl_profiles")
+    r = c.get("/cdrl_profiles", params={"user_email": ALICE})
     assert r.status_code == 200
     got = r.json()
     assert PROFILE in [x["name"] for x in got]
@@ -522,7 +522,8 @@ def test_11_the_provenance_still_travels_in_the_envelope(profiles, declared, tmp
 def test_11_the_false_hash_is_not_a_stale_copy_of_the_true_one(profiles, declared, tmp_path):
     _, off = _build(_plain(declared, tmp_path), tmp_path / "off")
     _, on = _build(profiles, tmp_path / "on")
-    assert (off["program_id"], off["as_of"]) == (on["program_id"], on["as_of"])
+    assert (off["program_id"], off["data_as_of"], off["generated_on"]) == (
+        on["program_id"], on["data_as_of"], on["generated_on"])
     assert off["cells_sha256"] != on["cells_sha256"]   # Methods cells are hashed only when true
 
 

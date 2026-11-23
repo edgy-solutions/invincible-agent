@@ -1,7 +1,7 @@
 """The EAC variance row: a dataset-kind row whose value is a DIFFERENCE of two columns, taken ONCE
 per terminal path. It is the measure's first user (ruled 2026-11-04).
 
-A TEST overlay (tests/finance/overlays/variance_decomposition_eac/, never policy/) declares
+A SAMPLE row (policy/overlays/sample/measure_verbs/fin_flow_eac_variance.yaml) declares
 `value: {minus: [eac, bac]}` with `per_path: once`. The frame is the EV fixture plus two columns
 that repeat identically on each of a work package's six rows, so a sum would count each work
 package six times and `once` is the only reading that is right. The expected edges are computed
@@ -29,7 +29,9 @@ from tests.finance.test_variance_decomposition_over_the_ev_fixture import (  # n
     ALLOWED, DENIED, PROGRAM, Gate,
 )
 
-OVERLAY = Path(__file__).parent / "overlays" / "variance_decomposition_eac"
+# The shipped sample row, loaded ALONE: copied into a directory of its own, so the other sample
+# rows do not load beside it and the sample file stays the only home of the row.
+ROW = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs" / "fin_flow_eac_variance.yaml"
 FN = "fin_flow_eac_variance"
 THRESHOLD = Decimal("0.05")     # the row's own; read back from the loaded row in the first test
 SIGN = {"positive": 1, "negative": -1, "zero": 0}
@@ -55,8 +57,11 @@ def frame():
 
 
 @pytest.fixture
-def flow_rows(monkeypatch):
-    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(OVERLAY))
+def flow_rows(monkeypatch, tmp_path):
+    overlay = tmp_path / "overlay"
+    overlay.mkdir()
+    (overlay / ROW.name).write_bytes(ROW.read_bytes())
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(overlay))
     rows = engine._load_declared()
     monkeypatch.setattr(engine, "DECLARED", rows)
     monkeypatch.setitem(engine.VERB_TO_FN, "mesh:" + rows[FN].verb, FN)
@@ -203,3 +208,14 @@ def test_the_row_cap_counts_rows_read_before_the_reduction(post, monkeypatch):
     monkeypatch.setenv("FIN_ASSET_MAX_ROWS", "9")        # 9 distinct paths, but 54 rows read
     status, body = post()
     assert status == 422 and body["detail"]["error"] == "asset_too_large"
+
+
+def test_the_brief_leads_with_the_rows_verdict_not_a_pointer(post):
+    # The census in test_every_verb_says_what_it_found cannot serve a dataset row (it needs a bearer
+    # holding the asset grant), so the headline the brief reads is asserted here, where it is served.
+    from agent_fleet.graph_host.graphs.fin_program_brief import _headline
+    status, env = post()
+    assert status == 200, env
+    headline = _headline(env)
+    assert headline == env["verdict"] and headline.strip()
+    assert headline != "reported (see artifact)"

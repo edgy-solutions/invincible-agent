@@ -30,6 +30,7 @@ from src.iagent import human_tasks as ht  # noqa: E402
 from tests.test_a_promotion_records_what_was_looked_at import (  # noqa: E402,F401
     _LAB, _act, _nothing_written, world,
 )
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 HEX = "c0" * 32
 ID = "sha256:" + HEX
@@ -128,6 +129,7 @@ def _serve(w, monkeypatch, payload):
     monkeypatch.setattr(ht, "list_tasks_for", lambda caller, status="pending": [
         {"task_id": "t-1", "kind": w.kind, "audience": "document_promotion:TRAINING",
          "payload": copy.deepcopy(payload)}])
+    route_viewer_tasks_through(monkeypatch)
 
 
 # ---- the served payload ------------------------------------------------------------------------
@@ -160,7 +162,7 @@ def test_the_served_payload_satisfies_cortexs_reader(monkeypatch):
 
 
 def test_ids_follow_contract_v3_parent_id_s_i_with_the_ingest_id_as_the_course_id():
-    # docs/contracts/training-workbench.md (lane/tr-g): `{parent.id}_s{i}`, nested `{Course.id}_s1_s0`.
+    # doc-tools/docs/contracts/training-workbench.md (lane/tr-g): `{parent.id}_s{i}`, nested `{Course.id}_s1_s0`.
     out = rcov.sections_from_extraction(json.loads(_extraction(OUTLINE)), "C")
     assert [s["section_id"] for s in out] == ["C_s0", "C_s0_s0", "C_s0_s1", "C_s1", "C_s1_s0"]
 

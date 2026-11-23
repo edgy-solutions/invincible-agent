@@ -277,6 +277,7 @@ _D_PHANTOM_SCAN = (
 # ---------------------------------------------------------------------------
 # Contract C — two-pipeline integrity
 # ---------------------------------------------------------------------------
+@pytest.mark.live
 def test_C_register_lands_in_both_stores(neo4j_driver, weaviate_ready):
     """**Runnable today.** Outcome assertion: every verb edge in Neo4j
     that carries an ``r.iri`` (= a registered tool, per
@@ -425,6 +426,7 @@ def test_D_invalid_output_uri_rejected_no_phantom_created():
     pytest.fail("intentional placeholder — see skip reason")
 
 
+@pytest.mark.live
 def test_D_no_phantom_for_mesh_GraphQuery(neo4j_driver):
     """**Runnable today, framed as outcome not mechanism.** ADR-0018
     flagged Engine E's registration of ``input_uri: mesh:GraphQuery``
@@ -489,6 +491,7 @@ def test_D_no_phantom_for_mesh_GraphQuery(neo4j_driver):
     )
 
 
+@pytest.mark.live
 def test_D_phantom_scan_returns_zero(neo4j_driver):
     """**Runnable today.** Scan the entire ``:OntologyClass`` namespace
     for phantoms — nodes with no ``subClassOf`` edges in either

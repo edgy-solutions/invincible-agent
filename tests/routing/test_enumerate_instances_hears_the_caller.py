@@ -113,11 +113,12 @@ def test_EVERY_ENUMERATE_PROVIDER_IS_TOLD_THE_PERSON_AND_THE_GRANT(eo):
             "the caller displaced the request it rides with", url, body)
 
 
-def test_CONTROL_NO_PERSON_IS_REFUSED_AND_NOTHING_IS_SENT(eo):
+def test_CONTROL_NO_PERSON_IS_REFUSED_AND_NOTHING_IS_SENT(eo, _the_caller_is_verified):
     """Differs from the arm above only in the caller. Was: "nobody" forwarded as an explicit
     empty. Now (2026-10-16) a caller with no person is refused 422 `no_person` before any
     provider is asked; the refusal shape is sealed in
     test_enumerate_instances_refuses_a_caller_who_is_not_a_person.py."""
+    _the_caller_is_verified.as_("")  # the VERIFIED caller carries no person
     resp = asyncio.run(eo.enumerate_instances(eo.EnumerateInstancesRequest(class_uri=CLASS)))
     assert resp.status_code == 422
     assert eo._test_posts == []
@@ -174,13 +175,27 @@ def test_THE_FILL_SLOTS_CALLER_IS_THE_REQUESTS_OWN():
 
 class _Ctx:
     log = SimpleNamespace(warning=lambda *a, **k: None, info=lambda *a, **k: None)
+    run_id = "run-1"  # 00dcf15e: a person behind the run redeems from the vault, keyed by run id
 
 
-def _enumerated(monkeypatch, **kw) -> dict:
+REDEEMED = "redeemed-token-for-the-person"
+
+
+def _enumerated(monkeypatch, seen: dict | None = None, **kw) -> dict:
+    """`seen`, when given, collects who the vault was asked to redeem for and the headers sent."""
     from iagent.defs import dynamic_supervisor as ds
     posted: dict = {}
+    seen = {} if seen is None else seen
 
-    def _fake_post(url, json=None, timeout=None):
+    def _redeem(ctx, who, leg="call"):
+        seen["redeemed_for"] = getattr(who, "user_email", who)
+        seen["leg"] = leg
+        return REDEEMED
+
+    monkeypatch.setattr(ds, "_redeem_caller_token", _redeem)
+
+    def _fake_post(url, json=None, timeout=None, headers=None, **_kw):
+        seen["headers"] = headers
         posted.update(json or {})
         return SimpleNamespace(status_code=200, raise_for_status=lambda: None,
                                json=lambda: {"outcome": "empty", "members": [], "count": 0})
@@ -192,7 +207,10 @@ def _enumerated(monkeypatch, **kw) -> dict:
 
 
 def test_THE_SUPERVISORS_ENUMERATOR_SENDS_THE_PERSON_AND_THE_GRANT(monkeypatch):
-    posted = _enumerated(monkeypatch, user_email=PERSON, entitled_domains=GRANT)
+    seen: dict = {}
+    posted = _enumerated(monkeypatch, seen, user_email=PERSON, entitled_domains=GRANT)
+    assert seen.get("redeemed_for") == PERSON, seen  # the person reaches the vault gate
+    assert seen.get("headers") == {"Authorization": f"Bearer {REDEEMED}"}, seen  # and the redeemed caller arrives
     assert (posted.get("user_email"), posted.get("entitled_domains")) == (PERSON, GRANT), posted
     assert posted.get("bound_slots") == {"lot": "3"}, posted
 
@@ -285,3 +303,12 @@ def test_THE_SDK_GAP_IS_REAL_AND_NAMED():
         assert model.model_config.get("extra") == "forbid", (
             "the SDK model neither declares the caller keys nor forbids extras — the keys would "
             "travel to an SDK-shaped provider with nothing checking their shape")
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name ann.analyst@example.test, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "ann.analyst@example.test", ["PRODUCTION_COST","SUSTAINMENT"])

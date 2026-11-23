@@ -191,7 +191,7 @@ def _maximal() -> dict:
     cols += [{"output": f, "source": {"field": f}} for f in sorted(ep.ROW_UNSHARED)]
     cols += [{"output": f"{f}@{rf}", "source": {"field": f, "row_field": rf}}
              for f in sorted(ep.ROW_SHARED) for rf in ep.ROW_FIELDS]
-    return {"column_map_version": 1, "name": "maximal", "label": "every catalogue source",
+    return {"column_map_version": 1, "version": 1, "name": "maximal", "label": "every catalogue source",
             "format": "json", "granularity": "notice_part", "columns": cols}
 
 
@@ -263,7 +263,7 @@ OUT_OF_CATALOGUE = [
 
 @pytest.mark.parametrize("fld", OUT_OF_CATALOGUE)
 def test_s3_a_source_outside_the_catalogue_is_refused_at_load_time(fld):
-    raw = {"column_map_version": 1, "name": "t", "label": "T", "format": "json",
+    raw = {"column_map_version": 1, "version": 1, "name": "t", "label": "T", "format": "json",
            "granularity": "notice_part", "columns": [{"output": "X", "source": {"field": fld}}]}
     with pytest.raises(ep.ProfileInvalid) as e:
         ep.validate("t", raw)
@@ -272,7 +272,7 @@ def test_s3_a_source_outside_the_catalogue_is_refused_at_load_time(fld):
 
 @pytest.mark.parametrize("rf", ["field_path", "wire_evidence_ref", "../x", "s3://b/k", "", "AFFECTED_MPN"])
 def test_s3_a_row_field_outside_the_declared_three_is_refused(rf):
-    raw = {"column_map_version": 1, "name": "t", "label": "T", "format": "json",
+    raw = {"column_map_version": 1, "version": 1, "name": "t", "label": "T", "format": "json",
            "granularity": "notice_part", "columns": [
                {"output": "X", "source": {"field": "extracted_value", "row_field": rf}}]}
     with pytest.raises(ep.ProfileInvalid) as e:

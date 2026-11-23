@@ -17,6 +17,10 @@ episode: [asset_id, fault.item, fault.fault_code]
 # without one is served the episode key above, marked `episode_id_source: derived`.
 episode_id: openddil_episode_id
 
+# THE CASE'S `received` ROW IS LABELLED HERE (architect, 2026-11-08): the runner stamps this on the
+# case at open and the case read serves it as `intake`. A sample value; a deployment replaces it.
+intake: reported
+
 # EVERY FACT A LATER TABLE OR TEMPLATE READS, refused at intake rather than after a maintainer
 # has already chosen an option.
 #

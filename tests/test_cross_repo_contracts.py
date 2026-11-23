@@ -10,6 +10,8 @@ Run:  python tests/test_cross_repo_contracts.py
 """
 from __future__ import annotations
 
+import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -177,11 +179,27 @@ def test_the_derive_reads_the_POINTER_field_not_the_IDENTITY_field() -> None:
 
 
 def test_the_producer_still_emits_both_fields_separately() -> None:
-    """Both jobs, both fields. If the sensor ever stops emitting one, the other silently absorbs its
-    role again — which is exactly how this bug was born."""
+    """Both jobs, both fields. If the producer ever stops emitting one, the other silently absorbs its
+    role again — which is exactly how this bug was born.
+
+    The emit moved out of the sensor into its one builder, `iagent.review_payload.
+    build_start_review_payload` (#441, de29e0c0), and a text pin on the sensor went stale while the
+    behaviour held. So the emit is asserted on the payload the builder BUILDS, and the sensor is held
+    only to its two jobs: building the full URI and handing the builder both fields. The builder is
+    pure (no dagster, no boto3), so this file still needs no deps beyond the repo."""
+    from iagent.review_payload import build_start_review_payload
+
+    identity, location = "IDENTITY-SENTINEL", "s3://bucket-sentinel/k/review.json"
+    payload = build_start_review_payload({"review_items": []},
+                                         request_key=identity, artifact_uri=location)
+    assert payload.get("artifact_uri") == location, "the builder stopped emitting the LOCATION field"
+    assert payload.get("request_key") == identity, "the builder stopped emitting the IDENTITY field"
+
     t = _txt(SENSOR)
-    assert '"artifact_uri": artifact_uri' in t, "the sensor stopped emitting the LOCATION field"
-    assert '"request_key": request_key' in t, "the sensor stopped emitting the IDENTITY field"
+    calls = re.findall(r"build_start_review_payload\(([^)]*)\)", t)
+    assert calls, "the sensor no longer builds its payload with the one builder"
+    assert any(re.search(r"\brequest_key=request_key\b", c) and re.search(r"\bartifact_uri=artifact_uri\b", c)
+               for c in calls), "the sensor stopped handing the builder BOTH fields"
     assert 'artifact_uri = f"s3://{bucket}/{key}"' in t, (
         "the sensor no longer builds a FULL s3:// URI — a bare key is refused by the consumer on "
         "purpose (bare-key tolerance was the coupling: it required both runtimes to agree on an "
@@ -201,27 +219,35 @@ def test_the_producer_still_emits_both_fields_separately() -> None:
 # Pinned in BOTH directions, so a rename on either side goes red HERE:
 #   producer — the SDK emits clientId/authzId/secretRef and an svc:<name> user id;
 #   consumer — the chart's realm-reconcile job and realm import read exactly those keys.
-_SDK = _REPO.parent / "iagent-mesh-sdk"
+#
+# The producer is the INSTALLED, pinned iagent_mesh (the SDK the fleet runs), never a sibling
+# checkout: a sibling is whatever branch it happens to be on, and a worktree has none.
+_SDK_SPEC = importlib.util.find_spec("iagent_mesh")
+_SDK_PKG = Path(_SDK_SPEC.origin).parent if _SDK_SPEC is not None and _SDK_SPEC.origin is not None else None
 _RECONCILE = _REPO / "helm" / "invincible-agent" / "templates" / "realm-reconcile-job.yaml"
+# the service-client create body moved to a helper shared with the bodies Secret (0.4.86), so the
+# reconcile path is now these two files
+_RECONCILE_HELPERS = _REPO / "helm" / "invincible-agent" / "templates" / "_helpers.tpl"
 _KC_REALM = _REPO / "helm" / "invincible-agent" / "templates" / "keycloak-configmap.yaml"
 
 
 def _sdk_stanzas(tool_name: str = "parts_lookup"):
     """Import the SDK's PURE stanza builder — the same function the scaffold writes from."""
-    sdk = str(_SDK)
-    if sdk not in sys.path:
-        sys.path.insert(0, sdk)
     from iagent_mesh.identity_stanzas import identity_stanzas  # type: ignore
     return identity_stanzas(tool_name)
 
 
 def test_sdk_is_present_for_this_contract() -> None:
-    """Positive control: without the SDK checked out beside this repo the assertions below
-    would vacuously pass. Skip-shaped failures are how a cross-repo pin quietly stops
-    pinning."""
-    assert (_SDK / "iagent_mesh" / "identity_stanzas.py").exists(), (
-        f"SDK not found at {_SDK} — this contract cannot be verified, and silently passing "
-        "would be worse than failing"
+    """Positive control: the contract is checked against the installed, pinned iagent_mesh (the
+    SDK the fleet runs), not a sibling checkout. Without it the assertions below would vacuously
+    pass. Skip-shaped failures are how a cross-repo pin quietly stops pinning."""
+    assert _SDK_PKG is not None, (
+        "iagent_mesh is not installed in this environment — this contract cannot be verified, "
+        "and silently passing would be worse than failing"
+    )
+    assert (_SDK_PKG / "identity_stanzas.py").exists(), (
+        f"installed iagent_mesh has no identity_stanzas.py at {_SDK_PKG / 'identity_stanzas.py'} — "
+        "this contract cannot be verified, and silently passing would be worse than failing"
     )
 
 
@@ -233,7 +259,7 @@ def test_sdk_stanza_keys_are_what_the_reconcile_job_reads() -> None:
     assert set(st) == {"clientId", "authzId", "secretRef"}, (
         f"SDK emits {sorted(st)} — the reconcile path reads clientId/authzId/secretRef"
     )
-    job, realm = _txt(_RECONCILE), _txt(_KC_REALM)
+    job, realm = _txt(_RECONCILE) + _txt(_RECONCILE_HELPERS), _txt(_KC_REALM)
     for key in ("clientId", "authzId", "secretRef"):
         assert f"$c.{key}" in job, f"reconcile job no longer reads {key}"
         assert f"$c.{key}" in realm, f"realm import no longer reads {key}"

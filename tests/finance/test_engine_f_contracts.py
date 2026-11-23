@@ -738,7 +738,7 @@ def test_every_declared_verb_has_both_ends_of_contract_d_declared_in_the_ttl(mon
     ttl = (REPO / "setup" / "ontologies" / "finance_extension.ttl").read_text(encoding="utf-8")
     mesh_ttl = (REPO / "setup" / "ontologies" / "mesh_system.ttl").read_text(encoding="utf-8")
     text = ttl + mesh_ttl
-    for call in engine._registration_calls("http://engine"):
+    for call in engine._registration_calls():
         for uri in (call["input_uri"], call["output_uri"]):
             local = uri.rsplit("#", 1)[-1]
             prefix = "fin:" if uri.startswith(FIN) else "mesh:"

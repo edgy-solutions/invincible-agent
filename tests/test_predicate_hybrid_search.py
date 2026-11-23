@@ -347,7 +347,8 @@ def test_missing_score_yields_none(ontology_main, monkeypatch):
         properties={
             "verb_iri": "mesh:x", "verb_local": "x",
             "input_uri": "mesh:I", "output_uri": "mesh:O",
-            "endpoint_url": "", "owner_persona": "", "domains": [],
+            # routable: a row with no endpoint is a renderer, never a candidate
+            "endpoint_url": "http://e", "owner_persona": "", "domains": [],
             "cost_class": "fast", "requires_human_approval": False,
         },
         score=None,

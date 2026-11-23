@@ -119,8 +119,9 @@ def test_sandbox_job_runs_task_grant_sync_and_nothing_else(sandbox: str):
     i = sandbox.index("name: t-task-grant-sync")
     # The container's args block, up to the next top-level Job/other resource. Widened past
     # 3000 (2026-10-02): the program_member_sync leg's header comments and extra env/echo lines
-    # push task_grant_sync.py further from the Job name than before.
-    block = sandbox[i:i + 4500]
+    # push task_grant_sync.py further from the Job name than before. Widened again to 6000 (2026-11-11): the
+    # pods' overlay exports (podOverlayEnv) precede the syncs.
+    block = sandbox[i:i + 6000]
     assert "task_grant_sync.py" in block
     # NOT substring checks: "grant_sync.py" is a substring of "task_grant_sync.py" itself, so a
     # naive `in` check self-matches on the very line this Job is supposed to run. Require a
@@ -139,7 +140,7 @@ def test_sandbox_job_runs_task_grant_sync_and_nothing_else(sandbox: str):
 
 def test_sandbox_job_env_has_the_grants_file_and_directory_url(sandbox: str):
     i = sandbox.index("name: t-task-grant-sync")
-    block = sandbox[i:i + 4500]
+    block = sandbox[i:i + 6000]
     assert "TOPAZ_DIRECTORY_URL" in block
     assert "TASK_GRANTS_FILE" in block
 
@@ -181,7 +182,7 @@ def test_sandbox_job_runs_program_member_sync_before_task_grant_sync(sandbox: st
     """architect ruling 2026-10-02: program_member hook before grant sync. Read the ORDER from
     the rendered args, never restate it — a swap of the two legs must be visible here."""
     i = sandbox.index("name: t-task-grant-sync")
-    block = sandbox[i:i + 4500]
+    block = sandbox[i:i + 6000]
     program_i = block.index("program_member_sync.py")
     grant_i = block.index("task_grant_sync.py")
     assert program_i < grant_i, (

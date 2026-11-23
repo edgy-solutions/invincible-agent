@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
-from datetime import date
 from typing import Any, Optional
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
@@ -25,7 +24,7 @@ except ImportError:
 
 #: Bumped when the manifest's SHAPE changes, so an old package cannot be silently checked by
 #: new rules or the reverse. Not the algorithm's version — that is the pinned commit SHA.
-MANIFEST_SCHEMA = "fin-export/1"
+MANIFEST_SCHEMA = "fin-export/2"
 
 #: The one disclosure audience this engine packages for today. MUST equal
 #: `canvas_template.Package.audience`'s `Literal` args — sealed in
@@ -153,7 +152,10 @@ def build_manifest(
     template_hash: str,
     panels: list[dict[str, Any]],
     duckdb_sha256: Optional[str] = None,
-    as_of: Optional[str] = None,
+    data_as_of: str,
+    generated_on: str,
+    program_source: Optional[dict[str, Any]] = None,
+    data_provenance: Optional[str] = None,
 ) -> dict[str, Any]:
     """Capture one disclosure's identity, inputs and panels from the PRODUCING engine.
 
@@ -166,7 +168,8 @@ def build_manifest(
     `state_sha256` hashes the state the panels were actually computed from — the one this
     disclosure's `.duckdb` and embedded rows both carry (narrowed to `program_id`), so a
     recipient can confirm the manifest describes the data they received rather than the
-    engine's whole notional model.
+    engine's whole notional model. `program_source` and `data_provenance`, set when that state
+    was read from a governed asset, say so; on the seed neither key is present.
     """
     try:
         import state_codec as _state_codec
@@ -195,7 +198,10 @@ def build_manifest(
         "state_sha256": content_hash(_state_codec.state_to_dict(state)),
         "duckdb_sha256": duckdb_sha256,
         "modules": module_hashes(),
-        "as_of": as_of or date.today().isoformat(),
+        "data_as_of": data_as_of,
+        "generated_on": generated_on,
+        **({"program_source": dict(program_source), "data_provenance": data_provenance}
+           if program_source else {}),
     }
 
 
@@ -209,7 +215,7 @@ def audit_line(manifest: dict[str, Any], *, disclosed_by: str) -> dict[str, Any]
     return {
         "disclosed_to": manifest["recipient_scope"],
         "disclosed_by": disclosed_by,
-        "at": manifest["as_of"],
+        "at": manifest["generated_on"],  # when it was disclosed
         "algorithm_sha": manifest["algorithm_sha"],
         "template_id": manifest["template_id"],
         "template_hash": manifest["template_hash"],

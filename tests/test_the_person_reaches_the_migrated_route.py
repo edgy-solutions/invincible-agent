@@ -56,9 +56,11 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
     ("2 · into the stream generator",
      GATEWAY, "generate_dagster_stream", "_generate_dagster_stream_inner", (FIELD,)),
     ("3 · into the job launcher",
-     GATEWAY, "_generate_dagster_stream_inner", "_launch_supervisor_job", (FIELD,)),
+     GATEWAY, "_generate_dagster_stream_inner", "launch", (FIELD,)),  # `_ab.launch`: either answer path
+    ("4a · into the op-config builder",
+     GATEWAY, "_launch_supervisor_job", "_supervisor_op_config", (FIELD,)),
     ("4 · into the Dagster run config",
-     GATEWAY, "_launch_supervisor_job", "<dict>", (FIELD,)),
+     GATEWAY, "_supervisor_op_config", "<dict>", (FIELD,)),
     ("5 · out of the op's config",
      SUPERVISOR, "execute_subtask", "_classify_route", ("config." + FIELD,)),
     ("6 · into subject resolution",
@@ -146,6 +148,11 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
     # without registration; fin found it red on master 2a042971.
     ("23 · onto the wire to engine-fin /measure/{fn} (the finance measure relay)",
      GATEWAY, "finance_measure", "<dict>", ("current_user.authz_id",)),
+    # Hop 24: the CDRL picker (#365). The BFF names the caller to engine-fin's /cdrl_profiles,
+    # which asks the can_export rail per profile as that caller and lists only what it grants.
+    # It reaches no mint: a hop like 20-21 and 23, not a second chain.
+    ("24 · onto the wire to engine-fin /cdrl_profiles (the CDRL picker)",
+     GATEWAY, "export_cdrl_profiles", "<dict>", ("current_user.authz_id",)),
 ]
 
 #: Hops whose identity parameter has NO default, so omission is a TypeError at the call, which is

@@ -18,6 +18,7 @@ from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import content_kinds, gateway, human_tasks, ingest_status, promotion  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 #: `pcn` is an openddil-lab overlay kind; its declared review_shape (`notice`) is what a legacy
 #: `parts` body is read under (0.4.73), so the overlay must be composed.
@@ -71,7 +72,7 @@ class _Graph:
     def apply_row_edits(self, ingest_id, row_edits, *, domain, record_id):
         return {"deleted": 0, "corrected": 0, "added": 0, "not_applied": []}
 
-    def attest_origin(self, ingest_id, *, owner_domain, record_id):
+    def attest_origin(self, ingest_id, *, owner_domain, record_id, **_kw):
         return {"ok": True}
 
 
@@ -103,6 +104,7 @@ def world(monkeypatch):
 
     stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph())
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks)
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda a, c: True)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
                         lambda tid, **kw: w.resolved.append((tid, kw)) or 1)
@@ -163,7 +165,9 @@ def test_c2_no_coverage_leaves_the_inputs_exactly_as_before(world):
     assert r.status_code == 200, r.text
     assert _inputs(world) == {
         "extraction_ref": PAYLOAD["extraction_ref"], "content_kind": "pcn",
-        "reviewed_by": "human:bob", "audience": "document_promotion:SUSTAINMENT", "comment": ""}
+        "reviewed_by": "human:bob", "audience": "document_promotion:SUSTAINMENT", "comment": "",
+        # the only new key (2026-11-09): who attested; a coverage-free promotion adds nothing else
+        "attestation": {"mode": "self", "attested_by": "bob", "self_attested": False}}
     assert world.part_reads == []
 
 

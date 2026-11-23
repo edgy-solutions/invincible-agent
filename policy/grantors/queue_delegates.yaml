@@ -1,0 +1,9 @@
+# SEED -- deployment-neutral. A deployment names its own approvers in an overlay row
+# (GRANTOR_OVERLAY_DIRS), which replaces this row whole (ADR-0036).
+family: queue_delegates
+rail_file: policy/queue_delegates.yaml
+object_scoped: false
+who: the approvers of policy/queue_delegates.yaml in this deployment's policy repository
+how: >-
+  a reviewed change adding or changing the row that names the delegator, the delegate, the scope
+  and the expiry (granted_by, reason, ratified_by)

@@ -993,6 +993,15 @@ _DESCRIPTIONS: dict[str, str] = {
 }
 
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     """Liveness only.
@@ -1008,6 +1017,7 @@ async def health() -> dict[str, Any]:
         "domain": DOMAIN,
         "verbs": len(measures.VERBS),
         "lots": len(STATE.lots),
+        "telemetry_misses": emit_misses(),
         "warning": (
             "`verbs` is this process's in-process table and is NOT evidence of mesh "
             "registration — verify by name in the graph (adding-an-engine.md §9)."

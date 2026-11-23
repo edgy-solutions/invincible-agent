@@ -64,8 +64,13 @@ def fallback(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(sup.requests, "post", _post)
+    # 00dcf15e: every leg for a person redeems from the vault; not what this test is about,
+    # so the op has a run_id and the redeem is a double.
+    monkeypatch.setattr(sup, "_redeem_caller_token", lambda ctx, who, leg="call": "redeemed-token")
 
     class _Ctx:
+        run_id = "run-1"
+
         class log:
             @staticmethod
             def info(*a, **k):
@@ -196,6 +201,7 @@ def _resolve_payloads(entitled):
 
     ns = {
         "requests": _Requests,
+        "_PERSON_TOKEN_REFUSALS": ("session_expired", "caller_refused"),
         "ONTOLOGY_RESOLVE_URL": "http://engine-o:8084/resolve",
         "ONTOLOGY_TIMEOUT": 30,
         "outbound_auth_headers": lambda **k: {},

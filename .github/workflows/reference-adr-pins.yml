@@ -1,0 +1,77 @@
+# Reference ADR pins (architect, 2026-11-07).
+#
+# A reference ADR in docs/adr/ records a decision made in another repository and cites it as
+# `**Decided in:** <repo>/<path> at <sha>`. This job checks two things the ADR cannot check
+# about itself: that the cited sha is the one .github/<repo>.ref pins, and that the cited file
+# exists in that repo at that sha. The second needs the network, so it runs here, and the local
+# half (scripts/check_reference_adr_pins.py, sealed hermetically by
+# tests/test_reference_adrs_pin_their_source.py) runs first.
+#
+# WHAT KEEPS THIS FROM BEING A DECORATIVE GREEN:
+#   * The script exits 1 on ZERO reference ADRs. An empty list is not a pass.
+#   * The script runs under pipefail with its stdout to a file, not into a pipe, so a failing
+#     script fails the step (the cross-repo-kind-drift lesson: a bare `| tee` ate the exit code).
+#   * Every line is fetched by sha and FETCH_HEAD must resolve to exactly the pinned sha. Every
+#     failure is reported and the job fails after all lines are checked.
+#   * Nothing in this workflow is allowed to continue past an error.
+#
+# Scheduled daily because the cited commit can disappear without a PR here: a pin held only by
+# refs/pull/N/head is gone if that PR's ref is dropped. Repos are public; no token.
+
+name: reference ADR pins
+
+on:
+  pull_request:
+    paths:
+      - "docs/adr/**"
+      - ".github/*.ref"
+      - "scripts/check_reference_adr_pins.py"
+      - ".github/workflows/reference-adr-pins.yml"
+  push:
+    branches: [master]
+    paths:
+      - "docs/adr/**"
+      - ".github/*.ref"
+      - "scripts/check_reference_adr_pins.py"
+      - ".github/workflows/reference-adr-pins.yml"
+  schedule:
+    - cron: "43 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: the reference ADRs agree with their pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_reference_adr_pins.py > "$RUNNER_TEMP/refs.txt"
+          cat "$RUNNER_TEMP/refs.txt"
+
+      - name: each cited file exists at the pinned commit
+        shell: bash
+        run: |
+          set -uo pipefail
+          fail=0
+          while read -r adr repo sha path; do
+            dir="$(mktemp -d)"
+            git -C "$dir" init -q
+            if ! git -C "$dir" fetch -q --depth=1 "https://github.com/edgy-solutions/${repo}.git" "$sha"; then
+              echo "::error::${adr}: cannot fetch ${repo} at ${sha}"
+              fail=1; continue
+            fi
+            got="$(git -C "$dir" rev-parse FETCH_HEAD)"
+            if [ "$got" != "$sha" ]; then
+              echo "::error::${adr}: fetching ${repo} at ${sha} resolved FETCH_HEAD to ${got}"
+              fail=1; continue
+            fi
+            if ! git -C "$dir" cat-file -e "${sha}:${path}"; then
+              echo "::error::${adr}: ${repo} at ${sha} has no file ${path}"
+              fail=1; continue
+            fi
+            echo "ok ${adr} ${repo} ${sha} ${path}"
+          done < "$RUNNER_TEMP/refs.txt"
+          exit "$fail"

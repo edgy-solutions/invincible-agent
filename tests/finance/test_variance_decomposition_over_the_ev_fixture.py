@@ -1,6 +1,6 @@
 """The flow-decomposition measure proved on the EV fixture, through the REAL engine route.
 
-A TEST overlay (tests/finance/overlays/variance_decomposition/, never policy/) declares one
+A SAMPLE row (policy/overlays/sample/measure_verbs/fin_flow_acwp.yaml) is one
 dataset-kind row over the fixture's own columns. The route is real; the mesh client is replaced at
 `asset_inputs._load_client` by a double holding a gate per caller; the frame is a real parquet
 built from the seed the way `test_the_variance_live_test_can_go_red` builds it. The expected edges
@@ -23,10 +23,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 from agent_fleet.finance_agent import asset_inputs, seed  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
-    MeshUnavailable, NotEntitled, _clean_env, frame_of, token,
+    AS_OF, MeshUnavailable, NotEntitled, _clean_env, frame_of, ticketed, token,
 )
 
-OVERLAY = Path(__file__).parent / "overlays" / "variance_decomposition"
+# The shipped sample row, loaded ALONE: copied into a directory of its own, so the other sample
+# rows do not load beside it and the sample file stays the only home of the row.
+ROW = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs" / "fin_flow_acwp.yaml"
 FN = "fin_flow_acwp"
 ROW_URN = "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
 PROGRAM = seed.PROGRAM_ID
@@ -49,17 +51,20 @@ class Gate:
             def __init__(self, **kw):
                 self.who = kw["originator_email"]
 
-            def get_dataframe(self, urn):
+            def get_dataframe_with_ticket(self, urn):
                 gate.asked.append((self.who, urn))
                 if urn != ROW_URN or self.who not in gate.granted:
                     raise NotEntitled("refused")
-                return gate.frame
+                return ticketed(gate.frame, urn, len(gate.asked))
         return Client, NotEntitled, MeshUnavailable
 
 
 @pytest.fixture
-def flow_rows(monkeypatch):
-    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(OVERLAY))
+def flow_rows(monkeypatch, tmp_path):
+    overlay = tmp_path / "overlay"
+    overlay.mkdir()
+    (overlay / ROW.name).write_bytes(ROW.read_bytes())
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(overlay))
     rows = engine._load_declared()
     monkeypatch.setattr(engine, "DECLARED", rows)
     monkeypatch.setitem(engine.VERB_TO_FN, "mesh:" + rows[FN].verb, FN)
@@ -168,6 +173,8 @@ def test_the_envelope_names_the_shape_the_source_and_the_method(post, gate, flow
     assert env["render"]["shape"] == "FLOW_DECOMPOSITION"
     assert env["data_source"] == {"kind": "asset", "urn": ROW_URN}
     assert env["data_provenance"].startswith("SYNTHETIC") and ROW_URN in env["data_provenance"]
+    assert len(gate.asked) == 1 and env["data_provenance"].endswith(
+        f"(as of {AS_OF}, ticket: tkt-0001) Source: {ROW_URN}"), "the dataset kind cites its read's ticket"
     assert env["measure"] == FN and env["output_uri"].endswith("DeclaredMeasureSeries")
     assert env["artifact_id"].startswith(f"fin:{FN}:")
     assert env["method"]["version"] == "1.3.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
@@ -250,7 +257,7 @@ def test_a_mesh_outage_is_a_503(post, gate, monkeypatch):
             def __init__(self, **kw):
                 pass
 
-            def get_dataframe(self, urn):
+            def get_dataframe_with_ticket(self, urn):
                 raise MeshUnavailable("down")
         return Client, NotEntitled, MeshUnavailable
     monkeypatch.setattr(engine.asset_inputs, "_load_client", down)
@@ -271,32 +278,38 @@ def test_a_null_program_is_refused_and_carries_no_figure(post):
 
 # ── exports and registration ──────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("flag", [None, ROW_URN])
-def test_an_export_naming_a_dataset_measure_is_refused_with_the_existing_code(flow_rows, flag, monkeypatch):
-    if flag:
-        monkeypatch.setenv("FIN_DATASET_URN", flag)
-    with pytest.raises(engine.HTTPException) as e:
-        engine._refuse_asset_exports([FN])
-    assert e.value.status_code == 409 and e.value.detail["error"] == "asset_export_unsupported"
-    assert e.value.detail["measures"] == [FN]
-
-
-def test_a_built_in_only_export_is_unaffected(flow_rows):
-    engine._refuse_asset_exports(["fin_performance_indices"])
-
-
-def test_a_package_naming_it_is_a_409_before_anything_is_measured(post, gate, monkeypatch):
-    body = {"user_email": ALLOWED, "recipient_scope": f"program_office.{PROGRAM}",
+def _a_package_naming_it(post, role):
+    who = {"allowed": ALLOWED, "denied": DENIED}[role]
+    body = {"user_email": who, "recipient_scope": f"program_office.{PROGRAM}",
             "canvas": {"template_id": "program_finance", "template_hash": "h",
                        "panels": [{"panel": 0, "verb": "mesh:finFlowActualCost",
                                    "params": {"program_id": PROGRAM}}]}}
-    r = post.client.post("/package_export", json=body, headers={"Authorization": f"Bearer {token(ALLOWED)}"})
-    assert r.status_code == 409, r.text
-    assert r.json()["detail"]["error"] == "asset_export_unsupported" and gate.asked == []
+    return post.client.post("/package_export", json=body, headers={"Authorization": f"Bearer {token(who)}"})
+
+
+def test_a_package_naming_it_asks_its_rows_grant_and_the_builder_refuses_it_by_name(
+        post, gate, monkeypatch, tmp_path):
+    """The row's figures are not in the program's facts and the page's `measures.py` does not hold
+    the row, so nothing a recipient could recompute exists: the builder's refusal, nothing written."""
+    monkeypatch.setattr(engine, "_repo_root", lambda: Path(__file__).resolve().parents[2])
+    dist = tmp_path / "dist"
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: dist)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    r = _a_package_naming_it(post, "allowed")
+    assert r.status_code == 503, r.text
+    assert FN in r.json()["detail"] and "embedded measures.py" in r.json()["detail"]
+    assert (ALLOWED, ROW_URN) in gate.asked and not dist.exists()
+
+
+def test_a_package_naming_it_without_the_grant_is_a_403(post, gate):
+    r = _a_package_naming_it(post, "denied")
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["denied_assets"] == [ROW_URN]
+    assert gate.asked == [(DENIED, ROW_URN)], "one ask, before any panel is measured"
 
 
 def test_the_verb_registers_like_a_state_row(flow_rows):
-    calls = [c for c in engine._registration_calls("http://engine.test") if c["endpoint_url"].endswith(FN)]
+    calls = [c for c in engine._registration_calls() if c["fn"] == FN]
     assert len(calls) == 1
     (c,) = calls
     assert c["verb"] == "mesh:" + flow_rows[FN].verb and c["output_uri"].endswith("DeclaredMeasureSeries")
@@ -313,3 +326,14 @@ def test_the_envelope_serves_the_label_and_the_sink_is_marked_by_node_kind(post)
     assert len(others) == 1 and others[0]["level"] == 1          # accounts 4.1, 1.1, 5.1 collapse
     assert others[0]["source"] == [PROGRAM]
     assert f"{len(others)} 'All other' sink(s)" in env["verdict"]
+
+
+def test_the_brief_leads_with_the_rows_verdict_not_a_pointer(post):
+    # The census in test_every_verb_says_what_it_found cannot serve a dataset row (it needs a bearer
+    # holding the asset grant), so the headline the brief reads is asserted here, where it is served.
+    from agent_fleet.graph_host.graphs.fin_program_brief import _headline
+    status, env = post()
+    assert status == 200, env
+    headline = _headline(env)
+    assert headline == env["verdict"] and headline.strip()
+    assert headline != "reported (see artifact)"

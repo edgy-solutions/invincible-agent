@@ -1,0 +1,30 @@
+# SANDBOX SAMPLE OVERLAY (sample users only). Read by policy/sync/capability_grant_sync.py ONLY
+# when CAPABILITY_GRANT_OVERLAY_DIRS names this directory (values-sandbox.yaml sets it).
+#
+# ADD-ONLY. A row here can add grantees to a capability the shared seed
+# (policy/capability_grants.yaml) already declares. It cannot create a capability, remove or
+# replace a grantee, or change the seed's granted_by / reason. Any other field is refused.
+#
+# bob@example.com is the sample reviewer, and holds exactly these three capabilities, as a user
+# grant (not a group), so the shared seed stays free of sample users.
+capabilities:
+  can_export:part-list:
+    granted_by: seed
+    reason: >-
+      Sandbox demo: bob, the sample reviewer, exports the part-list review card. Sample user,
+      not a claim about any deployment.
+    grant_to: [bob@example.com]
+
+  can_export:part-list-reviewed:
+    granted_by: seed
+    reason: >-
+      Sandbox demo: bob, the sample reviewer, exports the part-list review card in the review
+      state. Sample user, not a claim about any deployment.
+    grant_to: [bob@example.com]
+
+  ingest:exportBatch:
+    granted_by: seed
+    reason: >-
+      Sandbox demo: bob, the sample reviewer, exports the part-list review card as a batch.
+      Sample user, not a claim about any deployment.
+    grant_to: [bob@example.com]

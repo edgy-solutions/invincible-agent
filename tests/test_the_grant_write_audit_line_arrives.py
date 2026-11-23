@@ -1,33 +1,23 @@
-"""`write_grant_and_sync` writes a reader grant into the pod's asset_grants.yaml and never commits
-it, so until ADR-0062 §7's engine-r merge replaces it, its only audit is one line: who, what, when
-(architect, 2026-10-28). The line must ARRIVE -- the BFF's root handler sits at WARNING -- so it
-has its own logger, made to arrive the same way as the other BFF audit loggers."""
+"""An approved access grant is recorded in the decision ledger (it no longer writes a file in the
+pod). Until ADR-0062 section 7's engine-r merge replaces this path with a commit, its audit is the
+ledger row plus one line: who asked, who approved, what, when (architect, 2026-10-28; the ledger,
+2026-11-15). The line must ARRIVE -- the BFF's root handler sits at WARNING -- so it has its own
+logger, made to arrive the same way as the other BFF audit loggers."""
 from __future__ import annotations
 
 import logging
 import re
-import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("psycopg2")
 from src.iagent import human_tasks as ht  # noqa: E402
+from tests.test_an_approved_access_grant_is_in_the_ledger_not_a_file import (  # noqa: E402,F401
+    FakeLedgerDb, world,
+)
 
 NAME = "iagent.audit.grant_write"
-
-
-@pytest.fixture
-def grants_file(tmp_path, monkeypatch):
-    p = tmp_path / "asset_grants.yaml"
-    p.write_text("grants: []\n", encoding="utf-8")
-    monkeypatch.setattr(ht, "_ASSET_GRANTS_FILE", str(p))
-    monkeypatch.setattr(
-        subprocess, "run",
-        lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr=""),
-    )
-    return p
 
 
 def _lines(caplog):
@@ -38,7 +28,7 @@ def test_arm1_the_logger_is_effectively_at_info():
     assert logging.getLogger(NAME).getEffectiveLevel() <= logging.INFO
 
 
-def test_arm2_a_new_grant_writes_one_line_naming_who_what_and_when(grants_file, caplog):
+def test_arm2_a_new_grant_writes_one_line_naming_who_what_and_when(world, caplog):
     caplog.set_level(logging.INFO, logger=NAME)
     out = ht.write_grant_and_sync(
         subject="user-a", asset="doc-1", granted_by="grantor-b", reason="r",
@@ -52,13 +42,13 @@ def test_arm2_a_new_grant_writes_one_line_naming_who_what_and_when(grants_file, 
     assert re.search(r"at=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", lines[0]), lines[0]
 
 
-def test_arm3_a_duplicate_grant_writes_nothing_and_logs_nothing(grants_file, caplog):
+def test_arm3_a_duplicate_grant_logs_nothing_and_records_nothing_new(world, caplog):
     ht.write_grant_and_sync(subject="user-a", asset="doc-1", granted_by="grantor-b", reason="r")
     caplog.clear()
     caplog.set_level(logging.INFO, logger=NAME)
     ht.write_grant_and_sync(subject="user-a", asset="doc-1", granted_by="grantor-c", reason="r")
     assert _lines(caplog) == []
-    assert grants_file.read_text(encoding="utf-8").count("subject: user-a") == 1
+    assert [g["granted_by"] for g in ht.ledger_grants()] == ["grantor-b"]
 
 
 def test_arm4_human_tasks_wires_the_arrival():

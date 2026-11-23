@@ -353,6 +353,19 @@ services:
         class: internal
         justification: "Property -> instance lookup. READ. Same closure condition."
       - method: POST
+        path: /where_used
+        identity: user_email
+        gate: "entitled_domains must include the engine's own domain (deny by default), then per-row program visibility via the Topaz directory"
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: gated
+        justification: >-
+          mesh:whereIsThisPartUsed. READ. A caller whose entitled domains lack the verb's domain
+          is refused before the dataset is read. Each row's program is checked against the
+          caller (`can_view_program`), and a directory outage is a 503, never rows. Added
+          2026-11-07 without its row; declared 2026-11-16 with GET /menu_blocks, whose subject
+          is this route's output class.
+      - method: POST
         path: /page_for_subject
         identity: none
         gate: none
@@ -1858,14 +1871,16 @@ services:
       - method: GET
         path: /ingest/export/profiles
         identity: keycloak-jwt
-        gate: "get_current_user only; lists the valid policy/exports profiles (name, format, granularity, label)"
+        gate: "get_current_user; lists only the valid profiles the caller holds can_invoke(can_export:<profile>) for (human_tasks.can_invoke_or_unavailable per profile; Topaz down is 503; a service caller sees none)"
         exposes: ui-state
         consumers: [cortex-ui export picker]
         class: releasable_by_design
         justification: >-
-          A profile's name, format, granularity and label are policy configuration, not notice
-          content; the same shape as the finance CDRL profile listing. Nothing per-document is
-          read, so authentication is the whole gate.
+          A profile's name, format, grain, version, accepts and dedupe are policy configuration,
+          not notice content, so the listing is releasable by design; it is nonetheless narrowed
+          to the profiles the caller may use (the can_export rail, the same rows that gate the
+          export routes), so the picker never offers a profile the route would refuse. Nothing
+          per-document is read.
       - method: GET
         path: /review-shapes
         identity: keycloak-jwt
@@ -1890,6 +1905,20 @@ services:
           capability (policy/capability_grants.yaml, the alert-processors group), not to the
           dropper rule. Loud, not partial: a notice that cannot be exported refuses the whole
           export.
+      - method: POST
+        path: /ingest/export/notices
+        identity: keycloak-jwt
+        gate: "get_current_user + can_invoke(ingest:exportBatch) (403 not_entitled_to_export_batch) AND can_invoke(can_export:<profile>) (403 not_entitled_to_export), both via human_tasks.can_invoke_or_unavailable (Topaz down is 503); every notice is pre-flighted against the caller's entitlement-cell domains, the profile's accepts, promotion and corrections BEFORE any file is built; the actor recorded is the authenticated principal (a body-supplied actor is 422)"
+        exposes: gated-content
+        consumers: [cortex-ui export by notice ids]
+        class: gated
+        justification: >-
+          The named notices rendered through one profile, up to 500. It reads other people's
+          notices, so it is held to the batch capability AND the profile's can_export row, and
+          each notice must sit in a domain the caller's cells name (a notice outside them is
+          reported as not_available, the same word as a missing one). Loud, not partial: if any
+          notice is unexportable the answer lists them with reasons and builds no file. One
+          audit record per export: actor, notice ids, profile id and version used, destination.
       - method: GET
         path: /ingest/{ingest_id}/export
         identity: keycloak-jwt
@@ -2312,6 +2341,22 @@ services:
         class: releasable_by_design
         justification: "caller's own HITL queue (self-scoped filter)"
       - method: GET
+        path: /me/queue
+        identity: get_current_user
+        gate: "auth + self-scoped (the viewer's own tasks); with on_behalf_of, a live row of policy/queue_delegates.yaml, else a 403 policy refusal naming queue_delegates; every row passes _scope_to_viewer"
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "the pending queue the caller may see, or a named person's under a live delegation (ADR-0068 s5, s6); the rows are GET /me/human_tasks's, scoped to the viewer's cells"
+      - method: GET
+        path: /me/needs_you
+        identity: get_current_user
+        gate: "auth + self-scoped; counted from the same _viewer_queue function that serves /me/queue, so count and list cannot disagree; with on_behalf_of, the same delegation check"
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "counts by kind of the pending tasks the viewer may see (ADR-0068 s6); a count of rows already scoped to the viewer, never a row"
+      - method: GET
         path: /templates
         identity: get_current_user
         gate: "auth only — DELIBERATELY not entitlement-scoped"
@@ -2359,6 +2404,26 @@ services:
           surface, or its only consumer is the error handler). It went in undeclared and this
           manifest caught it — the route shipped a day before its row, which is the gap the
           derived-population check exists for.
+      - method: GET
+        path: /menu_blocks
+        identity: get_current_user
+        gate: "auth only — DELIBERATELY not entitlement-scoped"
+        exposes: schema
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: |
+          The served menu (the 2026-11-07 ruling: the overlay row declares its placement, the
+          BFF serves it, cortex reads it). Returns, per declared row, a subject class, an
+          archetype class, the verb that declared it and the personas/domains it RANKS for:
+          the SHAPE of the menu, never an answer, a row or a task. Nothing is read from the
+          substrate; the source is `<overlay>/menu_blocks/*.yaml`.
+
+          NOT ENTITLEMENT-SCOPED ON PURPOSE, for /task_kinds' reason: persona_fit and
+          domain_fit only rank, the picker stays entitlement-driven, and the verb behind each
+          block refuses on its own gate. Invalid rows are named by file stem, never by path.
+
+          WHAT WOULD CHANGE THIS ROW: a block carrying anything deployment-specific beyond a
+          class name — a customer or programme name in a subject. Then it becomes `gated`.
       - method: POST
         path: /plan/measure/{fn}
         identity: get_current_user
@@ -2715,6 +2780,26 @@ services:
         consumers: [cortex-ui, dispatch_driver.py]
         class: gated
         justification: "gateway.py:332."
+      - method: POST
+        path: /access_grants/revoke
+        identity: get_current_user (authz_id)
+        gate: can_invoke(mesh:revokeAccessGrant)
+        exposes: action
+        consumers: [none-found]
+        class: gated
+        justification: >-
+          gateway.py:1659. INTEGRITY WRITE. Asks the directory can_invoke on mesh:revokeAccessGrant
+          for the caller BEFORE anything is recorded: unreachable is a 503 authorization_unavailable,
+          a refusal is a policy_refusal not_entitled_to_revoke_access naming the binding. It then
+          records the revocation in the decision ledger (a ledger failure is 503 ledger_unavailable
+          and nothing changes; a grant that does not exist is 404 no_such_grant; an incomplete
+          revocation, for example a missing reason, is 422 revocation_incomplete), and removes that ONE
+          reader relation (never a listing, never a prune; a later re-grant of the same key restores
+          it). When the directory cannot be reached the act stays recorded and the answer is 202
+          effective "not yet" with removed false, retried at the next start and by repeating the
+          request. Who may revoke is the access-revokers group, via capability_grants.yaml. The caller is
+          taken from the token; the body names the grant, never the revoker. No caller found in
+          cortex-ui/src or scripts/.
       - method: GET
         path: /instances_by_property
         identity: "current_user (verified JWT)"
@@ -2739,6 +2824,14 @@ services:
         consumers: [cortex-ui]
         class: gated
         justification: "gateway.py:639. Additionally filters on the CALLER'S OWN pending queue, so it is existence-oracle safe: a caller cannot learn that a review exists for someone else."
+      - method: GET
+        path: /reviews/{workflow_id}/provenance
+        identity: "current_user (verified JWT)"
+        gate: auth-only
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "gateway.py:2906. The batch route's gate (_gated_grouped_batch: the caller's OWN pending queue), so equally existence-oracle safe. It then reads the review's own kept source, confined to the configured review bucket(s); a foreign or malformed reference is refused as review_source_unreadable, never a scan."
 
   domain_broker:
     file: helm/invincible-agent/files/domain-broker.py

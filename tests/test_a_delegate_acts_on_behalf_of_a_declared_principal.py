@@ -42,6 +42,7 @@ import restate  # noqa: E402
 import main  # noqa: E402  -- the real executor
 import workflow_definition as wd  # noqa: E402
 import workflow_runner as wr  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 _CHART = "helm/invincible-agent"
 
@@ -138,6 +139,7 @@ def route(monkeypatch):
     monkeypatch.setattr(human_tasks, "get_task_resolution",
                          lambda tid, *, caller_id: calls["settled"])
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks_for)
+    route_viewer_tasks_through(monkeypatch)
 
     def login(authz_id):
         gateway.app.dependency_overrides[gateway.get_current_user] = lambda: _User(authz_id)
@@ -594,6 +596,13 @@ async def test_M_an_excluded_delegate_is_refused_even_though_the_principal_is_no
 class _ChainPromise:
     def __init__(self, ctx, name):
         self.ctx, self.name = ctx, name
+
+    async def peek(self):
+        """The first payload resolved under this name on this ctx, else None (the SDK's peek)."""
+        for name, payload in self.ctx.resolved:
+            if name == self.name:
+                return payload
+        return None
 
     def value(self):
         async def _v():

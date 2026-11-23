@@ -429,10 +429,19 @@ async def query_graph_proxy(request: Request) -> JSONResponse:
             content={"status": "FAILED", "summary": str(exc)}
         )
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 def health_check():
     """Liveness probe endoint for Kubernetes."""
-    return {"status": "ok", "engine": "E"}
+    return {"status": "ok", "engine": "E", "telemetry_misses": emit_misses()}
 
 
 # ---------------------------------------------------------------------------

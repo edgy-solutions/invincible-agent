@@ -141,9 +141,9 @@ def test_c_the_verdict_restates_the_last_period_against_the_reference(double, cl
 
 
 def test_d_registration_carries_the_verb_with_the_rows_cells_as_domains(declared):
-    calls = {c["verb"]: c for c in engine._registration_calls("http://engine")}
+    calls = {c["verb"]: c for c in engine._registration_calls()}
     c = calls["mesh:" + ROW_DOC["verb"]]
-    assert c["endpoint_url"] == "http://engine/measure/fin_vac_cpi"
+    assert c["fn"] == "fin_vac_cpi"
     assert c["output_uri"] == measures.FIN + "DeclaredMeasureSeries"
     assert list(declared["fin_vac_cpi"].cells) == ROW_DOC["policy"]["cells"]  # the registration call carries no cells key
 

@@ -67,7 +67,7 @@ TRIPLES = [  # (bac, bcwp, acwp)
 
 
 def _sample_row():
-    return _load([SAMPLE])[0]
+    return next(r for r in _load([SAMPLE]) if r.measure_id == "fin_tcpi")
 
 
 @pytest.mark.parametrize("bac,bcwp,acwp", TRIPLES)
@@ -189,17 +189,22 @@ def test_3_no_overlay_declares_nothing(tmp_path, monkeypatch):
     assert _load([], tmp=tmp_path) == []
 
 
-def test_3_the_sample_overlay_declares_exactly_fin_tcpi_and_fin_vac_cpi(monkeypatch):
+SHIPPED = ["fin_eac_trend", "fin_ev_cumulative", "fin_flow_acwp", "fin_flow_cost_variance", "fin_flow_eac_variance", "fin_tcpi",
+           "fin_vac_cpi"]
+
+
+def test_3_the_sample_overlay_declares_exactly_the_shipped_rows(monkeypatch):
     monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(SAMPLE))
-    assert sorted(engine._load_declared()) == ["fin_tcpi", "fin_vac_cpi"]
+    assert sorted(engine._load_declared()) == SHIPPED
 
 
 def test_3_a_tombstone_in_a_later_overlay_removes_it(tmp_path):
     second = tmp_path / "second"
     second.mkdir()
     (second / "fin_tcpi.yaml").write_text("measure_id: fin_tcpi\ndeleted: true\n", encoding="utf-8")
-    assert sorted(r.measure_id for r in _load([SAMPLE], tmp=tmp_path)) == ["fin_tcpi", "fin_vac_cpi"]
-    assert [r.measure_id for r in _load([SAMPLE, second], tmp=tmp_path)] == ["fin_vac_cpi"]
+    assert sorted(r.measure_id for r in _load([SAMPLE], tmp=tmp_path)) == SHIPPED
+    assert sorted(r.measure_id for r in _load([SAMPLE, second], tmp=tmp_path)) == [
+        fn for fn in SHIPPED if fn != "fin_tcpi"]
 
 
 # ── arm 4: registration ──────────────────────────────────────────────────────────────────────
@@ -215,14 +220,14 @@ def declared(monkeypatch):
 
 def test_4_registers_beside_the_builtins(declared, monkeypatch):
     row = declared["fin_tcpi"]
-    calls = engine._registration_calls("http://engine")
+    calls = engine._registration_calls()
     by_verb = {c["verb"]: c for c in calls}
     monkeypatch.setattr(engine, "DECLARED", {})
-    n_builtin = len(engine._registration_calls("http://engine"))
+    n_builtin = len(engine._registration_calls())
     monkeypatch.setattr(engine, "DECLARED", declared)
-    assert len(calls) == n_builtin + 2   # the sample ships fin_tcpi and fin_vac_cpi
+    assert len(calls) == n_builtin + len(SHIPPED)   # one registration per shipped sample row
     c = by_verb["mesh:finToCompletePerformanceIndex"]
-    assert c["endpoint_url"] == "http://engine/measure/fin_tcpi"
+    assert c["fn"] == "fin_tcpi"
     assert c["output_uri"] == measures.FIN + "DeclaredMeasureSeries"
     assert list(c["verb_synonyms"]) == list(row.synonyms)
     assert row.synonyms, "the sample row carries no synonyms"
@@ -234,7 +239,7 @@ def test_4_registers_beside_the_builtins(declared, monkeypatch):
 
 def test_4_nothing_declared_registers_only_the_builtins(monkeypatch):
     monkeypatch.setattr(engine, "DECLARED", {})
-    verbs = {c["verb"] for c in engine._registration_calls("http://engine")}
+    verbs = {c["verb"] for c in engine._registration_calls()}
     assert verbs == {v["verb"] for v in engine.VERBS}
     assert "mesh:finToCompletePerformanceIndex" not in verbs
 

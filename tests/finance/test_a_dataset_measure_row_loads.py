@@ -16,7 +16,7 @@ import yaml
 from agent_fleet.finance_agent import measure_verbs
 
 REPO = Path(__file__).resolve().parents[2]
-TEST_ROW = Path(__file__).parent / "overlays" / "variance_decomposition" / "fin_flow_acwp.yaml"
+TEST_ROW = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs" / "fin_flow_acwp.yaml"
 STATE_ROW = REPO / "policy" / "overlays" / "sample" / "measure_verbs" / "fin_vac.yaml"
 RAW = yaml.safe_load(TEST_ROW.read_text(encoding="utf-8"))
 FILE = "bad_row.yaml"
@@ -97,8 +97,22 @@ REFUSED = {
     "threshold_nan": (set_("inputs.other_threshold", "NaN"), "other_threshold"),
     "window_refused": (set_("inputs.params", {"program_id": {"required": True}, "window": {}}), "window"),
     "state_beside_dataset": (set_("inputs.state", {"bac": "program.bac"}), "state"),
-    "shape_is_the_state_shape": (set_("render.shape", "MULTI_SERIES"), "does not match"),
+    # MULTI_SERIES is a dataset shape too (the series form, test_a_dataset_series_row_draws_from_the_asset.py);
+    # a FLOW's dataset block drawn as one is refused, not read as a series.
+    "flow_form_drawn_as_series": (set_("render.shape", "MULTI_SERIES"), "drawn as MULTI_SERIES"),
     "dataset_key_unknown": (set_("inputs.dataset.formula", "acwp * 2"), "formula"),
+    # The contract the row is read under, and the row's columns held to it (ruled 2026-11-10).
+    "contract_missing": (set_("inputs.dataset.contract", DELETE), "inputs.dataset.contract is required"),
+    "contract_blank": (set_("inputs.dataset.contract", "  "), "inputs.dataset.contract is required"),
+    "contract_unknown": (set_("inputs.dataset.contract", "no_such_contract"), "has no file"),
+    "contract_a_path": (set_("inputs.dataset.contract", "../ev_fixture"), "not a path"),
+    "level_undeclared": (set_("inputs.dataset.levels", ["program_id", "control_account", "wp"]), "does not declare"),
+    "value_undeclared": (set_("inputs.dataset.value", "pv"), "does not declare"),
+    "level_a_number": (set_("inputs.dataset.levels", ["program_id", "control_account", "bcws"]), "in a role"),
+    "value_a_string": (set_("inputs.dataset.value", "program_name"), "in a role"),
+    "minus_a_string": (set_("inputs.dataset.value", {"minus": ["eac", "status_period"]}), "in a role"),
+    "filter_not_the_scope": (set_("inputs.dataset.levels", ["work_package", "control_account", "program_id"]),
+                             "scopes a read by"),
     "inputs_key_unknown": (set_("inputs.query", "select 1"), "query"),
 }
 

@@ -82,8 +82,10 @@ def FIN_EXPORT_PROFILE_OVERLAY_DIRS() -> list[Path]:  # noqa: N802
 
 
 #: What a title-block cell may carry. CLOSED: a name outside it is a refusal.
+#: `as_of` is the DATA's as-of, from the source's own receipt; `generated_on` is when the export
+#: was generated. A profile row chooses which to show (ruling 2026-11-21: a row, not code).
 CELL_FACTS = frozenset({
-    "program.name", "program.id", "as_of",
+    "program.name", "program.id", "as_of", "generated_on",
     "cdrl.item", "cdrl.title", "cdrl.data_item", "cdrl.frequency",
 })
 

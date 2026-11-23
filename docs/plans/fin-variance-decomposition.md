@@ -2,7 +2,8 @@
 
 **Status:** built behind the forks below, off-cluster only. Lane: `invincible-agent/lane/fin`.
 **Brief** (architect, via Chris, 2026-11-04): one measure and one render archetype, both declared.
-fin's measure comes first and proves on the EV fixture, with the levels declared in a test overlay.
+fin's measure comes first and proves on the EV fixture, with the levels declared in an overlay row (a test overlay at first; both rows ship as samples
+from 2026-11-07, see below).
 cortex builds against the served edge table, and not before the finance data path is live on the
 sandbox. This page covers only the measure.
 
@@ -139,12 +140,14 @@ from the row, plus `render.other_label`. Each edge:
 
 - **EAC on the sandbox.** As ruled 2026-11-04, the EV fixture carries `bac` and `eac` (dag-tools
   #11), each repeated on all six of a work package's period rows, and the EAC row declares
-  `value: {minus: [eac, bac]}` with `per_path: once`. That row is the test overlay
-  `tests/finance/overlays/variance_decomposition_eac/`, proved here on a frame carrying #11's
-  figures (three work packages at zero variance). A deployed row follows the data path going live.
+  `value: {minus: [eac, bac]}` with `per_path: once`. Since 2026-11-07 that row, and the ACWP row,
+  ship as samples in `policy/overlays/sample/measure_verbs/`, the overlay the sandbox loads. They are proved
+  here on a frame carrying #11's figures (three work packages at zero variance). The verbs
+  register at engine-fin's next start. No reader row was added: alice already reads `ev_fixture`,
+  erin is the asset-gate control, and bob is the program-gate control.
 - **The archetype.** `FLOW_DECOMPOSITION` has to be in `capability_admission.KNOWN_ARCHETYPES` for
   the row to load (`test_a_measure_row_declares_its_render`). That's Lane 1's file. The ontology,
   binding and cortex contract registries are cortex's build, which comes after this.
-- **Live.** Nothing has run on a cluster. A live leg like
-  `tests/sandbox_e2e/test_variance_set_reads_the_ev_fixture.py` follows once the data path is live
-  and the row is in an overlay the pod reads.
+- **Live.** Nothing of this measure has run on a cluster. Both rows are now in an overlay the pod
+  reads, so a live leg like `tests/sandbox_e2e/test_variance_set_reads_the_ev_fixture.py` can follow
+  the roll that carries them: alice gets the edge table, and erin gets 403 `access_denied`.

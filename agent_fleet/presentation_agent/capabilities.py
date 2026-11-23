@@ -619,6 +619,14 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "expected_fields": ["title", "columns", "rows", "row_identity", "target"],
         "description": "Renders mesh:NoticePartSet as an INSTANCES_BY_PROPERTY table - one row per part a sustainment notice affects, identified by the part's IRI and labelled by its P/N",
     },
+    # mesh:WhereUsedSet (engine-o, mesh:whereIsThisPartUsed, ADR-0065 section 4).
+    {
+        "subject_uri": "mesh:WhereUsedSet",
+        "object_uri": "mesh:InstancesByProperty",
+        "archetype": "INSTANCES_BY_PROPERTY",
+        "expected_fields": ["title", "columns", "rows", "row_identity", "target"],
+        "description": "Renders mesh:WhereUsedSet as an INSTANCES_BY_PROPERTY table - one row per end item and program a part is used in, with its rolled-up quantity per end item and the configuration the row was answered from",
+    },
 ]
 
 

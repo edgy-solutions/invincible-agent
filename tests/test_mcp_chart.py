@@ -4,6 +4,7 @@ Run: uv run --frozen python -m pytest tests/test_mcp_chart.py -v
 """
 from __future__ import annotations
 
+import fnmatch
 import shutil
 import subprocess
 from pathlib import Path
@@ -93,12 +94,56 @@ def test_enabled_deployment_requires_bff_url():
     assert r.returncode != 0 and "bffUrl" in r.stderr
 
 
+def _chart_files(chart: Path) -> list[Path]:
+    """The files helm packages for `chart`: everything under it that its .helmignore keeps.
+
+    The string search is scoped to the CHART, not the directory. CHANGELOG.md is `*.md` in
+    .helmignore, so prose that names this chart is not a reference from the main chart.
+    """
+    ignore = chart / ".helmignore"
+    pats = [ln.strip() for ln in (ignore.read_text(encoding="utf-8").splitlines()
+                                  if ignore.is_file() else [])
+            if ln.strip() and not ln.strip().startswith("#")]
+
+    def ignored(rel: str) -> bool:
+        parts = rel.split("/")
+        for p in pats:
+            if p.endswith("/"):
+                if any(fnmatch.fnmatch(d, p[:-1]) for d in parts[:-1]):
+                    return True
+            elif fnmatch.fnmatch(rel, p) or any(fnmatch.fnmatch(x, p) for x in parts):
+                return True
+        return False
+
+    return [p for p in chart.rglob("*")
+            if p.is_file() and not ignored(p.relative_to(chart).as_posix())]
+
+
+def _referencing(chart: Path) -> list[str]:
+    return [p.relative_to(chart).as_posix() for p in _chart_files(chart)
+            if b"iagent-mesh-mcp" in p.read_bytes()]
+
+
 def test_invincible_agent_chart_is_unchanged_by_this_chart():
     # the main chart must not reference the new one; the byte-identical render is checked by the
     # implementer against a pre-change render
-    hits = [p for p in (_REPO / "helm" / "invincible-agent").rglob("*")
-            if p.is_file() and b"iagent-mesh-mcp" in p.read_bytes()]
-    assert hits == []
+    assert _referencing(_REPO / "helm" / "invincible-agent") == []
+
+
+def test_the_reference_search_covers_the_chart_and_only_the_chart(tmp_path):
+    main = {p.relative_to(_REPO / "helm" / "invincible-agent").as_posix()
+            for p in _chart_files(_REPO / "helm" / "invincible-agent")}
+    assert {"Chart.yaml", "values.yaml"} <= main and any(p.startswith("templates/") for p in main)
+    assert "CHANGELOG.md" not in main
+    # control: a planted reference in a template is found; the same words in prose are not
+    chart = tmp_path / "c"
+    (chart / "templates").mkdir(parents=True)
+    shutil.copy(_REPO / "helm" / "invincible-agent" / ".helmignore", chart / ".helmignore")
+    (chart / "Chart.yaml").write_text("name: c\n", encoding="utf-8")
+    (chart / "CHANGELOG.md").write_text("the iagent-mesh-mcp chart is separate\n", encoding="utf-8")
+    assert _referencing(chart) == []
+    (chart / "templates" / "x.yaml").write_text("dep: iagent-mesh-mcp\n", encoding="utf-8")
+    assert _referencing(chart) == ["templates/x.yaml"]
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="sh not installed")

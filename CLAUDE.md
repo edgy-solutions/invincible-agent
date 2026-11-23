@@ -25,7 +25,7 @@ carries your exact next step. Read inbox packets addressed to you the same way.
 | lane worktrees | `C:\Users\cnogr\git\ia-01` `ia-32` `ia-5f` `ia-74` `ia-91` `ia-eo` (branches `lane/NN`) |
 | frontend (sibling repo) | `C:\Users\cnogr\git\cortex-ui` |
 | infra notes (IPs, kube contexts) — **NOT where lanes hand off** | `C:\Users\cnogr\.claude\projects\c--Users-cnogr-git-invincible-agent\sessions\` — dated `YYYY-MM-DD-<slug>.md`, index in its `README.md`. Deliberately outside git. |
-| lane handoffs and packets | `sessions/` in this repo (and in each lane's own worktree) — tracked and committed. This is the handoff channel; see "Handoffs" above. |
+| lane handoffs and packets | `sessions/` in this repo (and in each lane's own worktree) — **local files, placed, never committed** (ruled 2026-11-12; `sessions/` is gitignored). This is the handoff channel; see "Handoffs" above. |
 | SDK | `C:\Users\cnogr\git\iagent-mesh-sdk` |
 | doc-tools | `C:\Users\cnogr\git\doc-tools` |
 | auto-memory index | `C:\Users\cnogr\.claude\projects\c--Users-cnogr-git-invincible-agent\memory\MEMORY.md` |
@@ -104,9 +104,13 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   refuses the push (R-058). The id is a row of `.githooks/lanes`, **never a worktree path**
   (ruled 2026-10-26): a throwaway worktree commits as its lane, e.g. `Lane: ia-01/lane/01-x`.
   Derive it, don't type it: `.githooks/pre-push --expected`. Add it with `git commit --trailer`.
-- **Only the owning lane commits in this repo; packets are placed, never committed, by anyone
-  else.** Another repo's lane drops its packet into `sessions/` and leaves it untracked (or
-  staged); the owning lane reads it and commits it with its own work.
+- **Session files are placed, never committed — by anyone, in any repo (ruled 2026-11-12).**
+  Packets and handoffs are local files under `sessions/`, which is gitignored. Nobody commits
+  or pushes a session file, and nobody force-adds one (`git add -f`). A sender drops its packet
+  into the recipient's `sessions/` folder, and the recipient reads it there. A lane branch that
+  still tracks session files drops them when it next merges master: run
+  `git rm -r -q --cached sessions` and commit that BEFORE the merge, so that the merge doesn't
+  delete the files from disk.
 - **Print a length and a hash prefix, never a secret value.** To show that a token, password
   or key is present or matches, print `len` and the first 8 hex of its sha256 — never the
   value, and never decode a Secret's data into the transcript.
@@ -129,7 +133,7 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   bare `python`/`py` from PATH, never another worktree's venv — a name on PATH is not the
   program you mean. AGENTS.md:101–102 is the check that the venv imports this tree.
 - `.gitignore` already covers `dist/`, `values-*.local.yaml`, `*.secret.yaml`, `list.md`,
-  `docs/architecture/endpoint-gating-audit.md`, venvs and caches.
+  `docs/architecture/endpoint-gating-audit.md`, `sessions/`, venvs and caches.
 - MCP: none. `.mcp.json` (its only server was `forge_extension` at `localhost:50415`) was removed
   by Chris on 2026-09-20 and the removal is committed (`249fbe0`). Do not re-add it.
 - Working-tree state at survey: 3 untracked `sessions/*.md` lane packets, nothing modified.

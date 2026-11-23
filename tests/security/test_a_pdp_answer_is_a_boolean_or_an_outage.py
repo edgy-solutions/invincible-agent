@@ -37,10 +37,11 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 
-from agent_fleet.utils.pdp_answer import MalformedPdpAnswer, check_answer, decision_answer  # noqa: E402
+from agent_fleet.utils.pdp_answer import (  # noqa: E402
+    MalformedPdpAnswer, check_answer, checks_answer, decision_answer)
 
 ENDPOINTS = ("/api/v3/directory/check", "/api/v2/authz/is")
-STRICT_READERS = {"check_answer", "decision_answer"}
+STRICT_READERS = {"check_answer", "checks_answer", "decision_answer"}
 FIELDS = {"check", "is"}
 SCANNED = ("agent_fleet", "src", "policy", "scripts")
 SKIP_PARTS = {"tests", ".venv", "__pycache__", "baml_client", "node_modules"}
@@ -118,6 +119,55 @@ def test_a_malformed_decision_is_malformed(response):
         decision_answer(response, "allowed")
 
 
+def _checks(*items):
+    return _resp(json={"checks": list(items)})
+
+
+_MISSING = {"reason": "E20025 object not found: capability:zz:beta"}
+
+
+# The good forms are the ones the live directory (Topaz 0.33.13) answered on 2026-11-14; see
+# `checks_answer`'s docstring.
+@pytest.mark.parametrize("response,asked,want", [
+    (_checks({"check": True, "context": {}}, {"check": False, "context": {}}, {"check": True, "context": {}}),
+     3, [True, False, True]),
+    (_checks({"check": True}, {}), 2, [True, False]),
+    (_checks({"check": False, "context": _MISSING}), 1, [False]),
+    (_checks({"check": True, "context": {"reason": ""}}), 1, [True]),
+    (_checks({"check": True, "context": None}), 1, [True]),
+    (_resp(json={"checks": []}), 0, []),
+    (_resp(json={}), 0, []),
+    (_resp(json={"checks": None}), 0, []),
+], ids=["order", "absent-context-and-check", "not-found-is-no", "empty-reason", "null-context",
+        "empty", "absent-checks", "null-checks"])
+def test_a_batched_answer_is_each_boolean_check_in_order(response, asked, want):
+    assert checks_answer(response, asked) == want
+
+
+@pytest.mark.parametrize("response,asked", [
+    (_checks({"check": False, "context": {"reason": "E20036 relation not found"}}), 1),
+    (_checks({"check": False, "context": {"reason": "E20026 object type not found"}}), 1),
+    (_checks({"check": True, "context": _MISSING}), 1),
+    (_checks({"check": True}), 2),
+    (_checks({"check": True}, {"check": True}), 1),
+    (_resp(json={}), 2),
+    (_resp(json={"checks": {"zz:a": True}}), 1),
+    (_checks("true"), 1),
+    (_checks({"check": "false"}), 1),
+    (_checks({"check": None}), 1),
+    (_checks({"check": 1}), 1),
+    (_checks({"check": True, "context": "ok"}), 1),
+    (_checks({"check": False, "context": {"reason": 20025}}), 1),
+    (_resp(json=[]), 0),
+    (_resp(content=b"<html/>"), 0),
+], ids=["another-code", "unknown-type", "not-found-but-true", "too-few", "too-many", "absent-but-asked",
+        "checks-not-list", "item-not-object", "check-string", "check-null", "check-int",
+        "context-not-object", "reason-not-string", "body-list", "not-json"])
+def test_a_malformed_batched_answer_is_malformed(response, asked):
+    with pytest.raises(MalformedPdpAnswer):
+        checks_answer(response, asked)
+
+
 # ---- 2. the class, by form ----------------------------------------------------------------------
 
 def _files() -> list[Path]:
@@ -191,7 +241,7 @@ def _problems(fn: ast.AST) -> list[str]:
         isinstance(n, ast.Constant) and n.value in FIELDS for n in ast.walk(c))]
     out = []
     if not strict:
-        out.append("reads the answer without check_answer/decision_answer or an isinstance(_, bool) guard")
+        out.append("reads the answer without check_answer/checks_answer/decision_answer or an isinstance(_, bool) guard")
     if truthy:
         out.append(f"takes bool(...) of an answer field at line(s) {[c.lineno for c in truthy]}")
     return out
@@ -282,10 +332,13 @@ _BAD = {
                         '    return bool(r.json().get("check"))\n',
     "method": 'class C:\n    def f(self):\n        r = self.c.post("/api/v3/directory/check")\n'
               '        return bool(r.json().get("check", False))\n',
+    "batch-bool": 'def f(c):\n    r = c.post("/api/v3/directory/checks")\n'
+                  '    return [bool(i.get("check")) for i in r.json()["checks"]]\n',
 }
 _GOOD = {
     "helper": 'def f(r):\n    r = c.post("/api/v3/directory/check")\n    return check_answer(r)\n',
     "decision": 'def f(r):\n    r = c.post(f"{U}/api/v2/authz/is")\n    return decision_answer(r, "allowed")\n',
+    "batch": 'def f(c, n):\n    r = c.post("/api/v3/directory/checks")\n    return checks_answer(r, n)\n',
     "inline": 'def f(r):\n    r = c.post("/api/v3/directory/check")\n    v = r.json().get("check", False)\n'
               '    if not isinstance(v, bool):\n        raise ValueError(v)\n    return v\n',
     "docstring-only": 'def f():\n    """Calls `/api/v3/directory/check`."""\n    return bool(x.get("check"))\n',

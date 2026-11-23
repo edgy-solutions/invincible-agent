@@ -2,6 +2,64 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.10.1 — 2026-11-20
+
+Declaration, narrowing a response (architect, item 4). The shape hash moves.
+
+- **`HumanTask.task_id` is a required string, no longer nullable.** Every queue row has one: the column is `TEXT NOT NULL` (`sql/create_human_task_projection.sql`), `register_task` and the register request body both require it, and each of the ten producers supplies it (census: `docs/measurements/2026-11-16-humantask-task-id-census.md`). A client that read `task_id` as nullable still reads every body; a client generated from the old shape may drop its null branch. Numbering: this was drafted as 1.9.2; master took 1.10.0 in the meantime and the lock is append-only, so it ships as 1.10.1.
+
+## 1.10.0 — 2026-11-17
+
+Behaviour and declaration, additive (architect, 2026-11-17). The shape hash moves.
+
+- **A promotion can start its kind's review workflow.** A content kind may declare, in the policy overlay that declares it, the review workflow its promotion starts. That workflow declares its start mode in its own yaml. When such a kind is promoted, the act starts that review once. The start is keyed on the promoted record and the workflow, so a second start returns the existing review and starts nothing. No kind declares one yet, so every act behaves as in 1.9.1 until those policy rows land.
+- **New optional `review` on a promotion's act response** (`PromotionReviewStart`). It is present only when the decision is `promoted` and the kind declares a review workflow. `status` is one of:
+  - `started` or `retried`, with `workflow`, `request_key` and `outcome` (the start's own status);
+  - `not_restarted`, with `reason`: a replayed act by someone other than the promoter re-sends nothing;
+  - `failed`, with `reason`: the promotion stands, and the start is reported, not raised.
+- Every body that validated against 1.9.1 still validates.
+
+## 1.9.1 — 2026-11-10
+
+Declaration, additive (architect, 2026-11-09). The shape hash moves.
+
+- **`HumanTask.payload` is declared as `TaskPayload`** (or null). Before, it was untyped. `TaskPayload` is an open object: every kind's keys still validate. It declares one key, `attestation`, an `Attestation` `{mode: "self" | "second_party", excluded: string[]}`. The key is absent on tasks of other kinds and on promotion tasks filed before 1.9.0. Every payload the server stores is an object, so every body that validated against 1.9.0 still validates.
+- **The act reads the served `excluded`.** Under `second_party`, the act refuses with 403 `dropper_cannot_attest_origin` exactly the ids in the task's `attestation.excluded`. It no longer recomputes that set from `dropped_by`, so the card and the server decide on the same list. A block whose `excluded` is not a list of strings is 503 `attestation_undeclarable`. A task with no block is decided on the block filing would stamp at the time of the act.
+
+## 1.9.0 — 2026-11-10
+
+Behaviour, additive for a reader. The shape hash does not move (the task payload is free-form), so the lock row repeats 1.8.1's.
+
+- **The dropper may promote under `self`** (ruled 2026-11-09). `dropper_cannot_attest_origin` used to be refused on every promotion by the dropper. It is now refused only when the task's `attestation.mode` is `second_party`. The default is `self`.
+- **New on a promotion task's payload** (`GET /me/human_tasks` and the live stream alike): `attestation: {mode, excluded}`, stamped when the task is filed. `excluded` lists the `authz_id`s that may not promote, and is empty under `self`. A client holds Promote when the viewer is in `excluded`. Tasks filed before 1.9.0 carry no `attestation`; for them the server decides at the act.
+- **New 503 `attestation_undeclarable`** on the act and on the filing of a promotion task: the declared mode is neither `self` nor `second_party`. Nothing is written.
+- **The decision record** of a promotion carries `attestation: {mode, attested_by, self_attested}` on its human_review check. The origin it writes carries `origin_attested_by` and `origin_self_attested`.
+
+## 1.8.1 — 2026-11-07
+
+Declaration only, no wire change: the structural 403s are their own member (ruled 2026-11-07, G5).
+
+- `PolicyRefusalBody.detail` is one of three members:
+  - `PolicyRefusalDetail`, as in 1.8.0. `refusal` is still optional, and it becomes required once no debt row is left in `tests/security/test_every_mcp_route_declares_401_and_403.py`. The two structural refusals no longer count against that.
+  - `StructuralRefusalDetail`, new: a 403 that no grant lifts, so it never carries `refusal`. `error` is `dropper_cannot_attest_origin` or `service_token_refused` (where no delegate entry applies), with optional `message`, `authz_id` and `task_id`. No other keys are allowed.
+  - a string.
+- Every body that validated against 1.8.0 still validates.
+
+## 1.8.0 — 2026-11-07
+
+Declarations made to match the wire, ruled 2026-11-06 (G5). One body gains a field.
+
+- `GET /me/human_tasks`, `POST /human_tasks/{task_id}/act`, `POST /ingest` (and every other `mcp`-tagged route): declare 401 `UnauthenticatedBody` (`detail` is a string, with `WWW-Authenticate: Bearer`) and 403 `PolicyRefusalBody`.
+- `PolicyRefusalBody.detail` is an object or a string. The object has optional `error`, `message` and `refusal` (a `RefusalEnvelope`) and may carry other keys. `refusal` is optional because some 403s these routes can send carry none yet; `tests/security/test_every_mcp_route_declares_401_and_403.py` lists them, and `refusal` becomes required when that list is empty.
+- `POST /ingest`: the 403 was declared `NotEntitledToDrop`. That body is still sent and still validates as `PolicyRefusalBody`, but the route's door also sends `service_token_refused`, which the old declaration did not describe. A reader that typed the 403 as `NotEntitledToDrop` must now handle `refusal` absent.
+- `service_token_refused` on a route whose body takes `on_behalf_of` (`POST /ingest`, `POST /human_tasks/{task_id}/act`) now carries `refusal` (`policy_id` `config:DELEGATE_ON_BEHALF_OF`). Elsewhere it is unchanged.
+
+## 1.7.0 — 2026-11-06
+
+Additive for a reader.
+
+- `GET /me/entitlements`: new required `capabilities` (strings), every capability key in the authorization directory the caller holds `can_invoke` on, sorted (e.g. `ingest:exportBatch`, `can_export:<profile>`); a directory that cannot be read is 503, never a partial list.
+
 ## 1.6.0 — 2026-10-31
 
 Tightening of one request check, ruled 2026-10-31 (the SDK's `EvidenceRef` rule wins).

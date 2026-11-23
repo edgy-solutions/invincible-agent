@@ -102,3 +102,25 @@ ALTER TABLE human_task_projection
 -- ADR-0052 s5). '' = service-origin finding.
 ALTER TABLE human_task_projection
     ADD COLUMN IF NOT EXISTS on_behalf_of TEXT NOT NULL DEFAULT '';
+
+-- excludes: the authz_ids the definition bars from deciding THIS task, as a JSON array of
+-- casefolded ids, written at registration (ADR-0068 s6). It lets a READ-TIME capability match
+-- honour the bar without re-resolving it. NULL = a row registered before this column existed:
+-- its bar is unknown, so only its recipient rows (the authz_id match) ever admit a viewer.
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS excludes TEXT;
+-- routing_fault: a task withheld from a viewer its audience reached, because the viewer is not
+-- entitled to every label of the task's object (ADR-0068 s6). One row per (task, addressee,
+-- label); a repeat read bumps seen_count and last_seen_at. A record of the fault in the routing,
+-- never of the task's content.
+CREATE TABLE IF NOT EXISTS routing_fault (
+    task_id TEXT NOT NULL,
+    addressee TEXT NOT NULL,
+    dimension TEXT NOT NULL,
+    label TEXT NOT NULL,
+    route TEXT NOT NULL,
+    on_behalf_of TEXT NOT NULL DEFAULT '',
+    first_seen_at BIGINT NOT NULL,
+    last_seen_at BIGINT NOT NULL,
+    seen_count BIGINT NOT NULL DEFAULT 1,
+    PRIMARY KEY (task_id, addressee, dimension, label)
+);

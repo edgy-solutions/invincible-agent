@@ -731,7 +731,11 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
         except ValidationError as exc:
             for e in exc.errors():
                 loc = e["loc"]
-                if e["type"] == "missing" or (loc == ("steps",) and e["type"] == "too_short"):
+                # A stage whose steps are present and empty is the same question as one with none.
+                # Decided on the raw shape: the SDK refuses it at the model, not the field, and a
+                # message is not a contract.
+                empty = loc in ((), ("steps",)) and raw.get("steps") == []
+                if e["type"] == "missing" or empty:
                     if loc and loc[0] == "steps" and len(loc) >= 4 and isinstance(loc[1], int):
                         st = _steps(raw)
                         sid = st[loc[1]].get("id") if loc[1] < len(st) else None
@@ -742,7 +746,7 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
                         else:
                             q = f"What is the {_words(fld)} of {_words(sid)} in {_words(wid)}?"
                         out.append(Gap(f"steps.{wid}.{sid}.{fld}", facet, "missing", q))
-                    elif loc == ("steps",):
+                    elif loc == ("steps",) or empty:
                         # a stage, in the person's words, under the key a stage is asked by: nobody
                         # answers a path (architect, 2026-11-04, on run 57's `steps.<stage>.steps`)
                         out.append(Gap(f"steps.{wid}", "steps", "missing",

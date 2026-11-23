@@ -271,3 +271,12 @@ def test_the_scoped_menu_bind_follows_the_declaration(eo, monkeypatch, binds, wa
     r = _fill_many(eo, monkeypatch, {"lot": "L1", "part_number": "5530-184"},
                    [_decl("lot"), _decl("part_number", referent=COMPONENT, narrowed_by=["lot"], **binds)])
     assert r.slots == {"lot": "L1", "part_number": want}, r
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name alice@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "alice@example.com", ["SUSTAINMENT"])

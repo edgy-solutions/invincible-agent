@@ -18,11 +18,16 @@ import os
 import datetime
 import functools  # noqa: F401 — kept: services may import it transitively via this module
 import secrets
-import uuid
 from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
 LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_SECRET_KEY") and os.getenv("LANGFUSE_PUBLIC_KEY"))
+
+# No model or retrieval text in any span (perf ruling 2026-11-15, "dropped"). Langfuse's
+# decorator captures arguments and return values unless this is "false". Plain assignment,
+# not setdefault: nothing in the environment may turn it back on. Backstop for a direct
+# ``observe``; ``safe_observe`` below also passes the capture flags explicitly.
+os.environ["LANGFUSE_OBSERVE_DECORATOR_IO_CAPTURE_ENABLED"] = "false"
 
 # --- The leaf: the real implementation (optional per service venv) ------------
 try:
@@ -34,13 +39,22 @@ try:
         litellm_metadata,
         redact,
         load_mapping,
+        emit_misses,
+        flush,
+        mint_boundary_ids,
+        boundary_parent,
+        emit_boundary,
+        trace_id_for,
+        parse_traceparent,
+        parse_tracestate,
+        format_traceparent,
     )
 
     _LEAF_AVAILABLE = True
 except Exception:  # leaf not installed here -> pure no-ops, old surface still works
     _LEAF_AVAILABLE = False
 
-    def traced(name=None, as_type=None):  # type: ignore[misc]
+    def traced(name=None, as_type=None, **_k):  # type: ignore[misc]
         def _deco(fn):
             return fn
         return _deco
@@ -64,6 +78,41 @@ except Exception:  # leaf not installed here -> pure no-ops, old surface still w
 
     def load_mapping(_source):  # type: ignore[misc]
         return None
+
+    def emit_misses():  # type: ignore[misc]
+        # None = "this process has no telemetry leaf, so it emits nothing and cannot
+        # miss" -- distinct from 0, which means a live leaf that has lost nothing.
+        return None
+
+    def flush():  # type: ignore[misc]
+        return None
+
+    def mint_boundary_ids(trace_seed=None):  # type: ignore[misc]
+        return {"trace_id": None, "span_id": secrets.token_hex(8)}
+
+    @contextmanager
+    def boundary_parent(ids, *, mapping=None, values=None):  # type: ignore[misc]
+        timing = {"started_at": datetime.datetime.now(datetime.timezone.utc),
+                  "ended_at": None}
+        try:
+            yield timing
+        finally:
+            timing["ended_at"] = datetime.datetime.now(datetime.timezone.utc)
+
+    def emit_boundary(mapping, values, *, ids, name, timing):  # type: ignore[misc]
+        return None
+
+    def trace_id_for(seed):  # type: ignore[misc]
+        return None
+
+    def parse_traceparent(value):  # type: ignore[misc]
+        return None
+
+    def parse_tracestate(value):  # type: ignore[misc]
+        return None
+
+    def format_traceparent(trace_id, span_id, flags="01"):  # type: ignore[misc]
+        return f"00-{trace_id}-{span_id}-{flags}"
 
 
 # --- The mesh mapping (doc-tools ships its own; this is iagent's vocabulary) ---
@@ -106,33 +155,37 @@ def build_trace_values(*, trace_id=None, authz_id=None, session_id=None, engine=
 # --- Restate-replay-safe entry boundary (ADR-0038) ---------------------------
 # ``observed_trace`` opens a RECORDING OTel span and mints a fresh span id on every
 # entry. A Restate handler RE-ENTERS the ``with`` on every replay while the memoized
-# ``ctx.run`` body does NOT re-execute — so one execution of the work shows up as N
+# ``ctx.run`` body does NOT re-execute -- so one execution of the work shows up as N
 # boundary spans and the trace becomes the surface that lies (a cost reader sees
 # doubled LLM spans and doubles the bill).
 #
-# WHY HERE AND NOT IN THE LEAF: the hazard is a property of the EXECUTION MODEL, not
-# of the emitter. provenance-telemetry is shared with doc-tools and cortex-*, neither
-# of which is a Restate service. PLACEMENT MARKER: promote these three primitives into
-# the leaf only if a non-mesh consumer acquires a replaying execution model.
+# The primitives (``mint_boundary_ids``, ``boundary_parent``, ``emit_boundary``) now
+# live in the leaf, provenance-telemetry >= 0.2.0, and are re-exported here. The
+# boundary span is exported by the leaf over OTLP; this shim no longer talks to the
+# Langfuse ingestion API.
 #
-# KNOWN FUTURE ADOPTER — Engine D (agent_fleet/data_analyst/main.py). D is a Restate
+# WHAT CHANGED ON LANGFUSE v4 (Cloud is v4-only from 2026-11-16): the 2026-08-05 probe
+# that found "the SAME observation id ingested TWICE collapses to ONE observation
+# (upsert)" described the LEGACY ingestion API, and no longer holds. On v4 a second
+# export of the same span id is a DUPLICATE. So ``emit_boundary`` must run exactly
+# once, inside the journaled step; there is no dedup behind it.
+#
+# The replay-double is still ruled out by construction: ``boundary_parent`` makes the
+# journaled ids a NON-RECORDING ambient parent (adopted by unmodified ``observe_span``
+# / ``traced`` instrumentation, exporting nothing for itself), so re-entering it on a
+# replay exports nothing. Passing ``mapping=`` and ``values=`` to ``boundary_parent``
+# also propagates user / session / tags / metadata to the children, which is what v4
+# filters on.
+#
+# Without the leaf installed, the stubs below emit nothing: ids carry no trace id,
+# ``boundary_parent`` only times the block, ``emit_boundary`` returns None.
+#
+# KNOWN FUTURE ADOPTER -- Engine D (agent_fleet/data_analyst/main.py). D is a Restate
 # handler that runs its agent work OUTSIDE any ctx.run, so replay re-executes the work
 # for real and its boundary span count stays honest by accident: the doubling is absent
-# only because the waste is genuine. Whoever gives D the durability it should have — by
-# wrapping that work in ctx.run — INHERITS this hazard at the same moment, and D's
-# current code is the reference they will copy, which will not show them. That fix must
-# land on these primitives, not on `observed_trace`.
-#
-# Shape probed live against Langfuse cloud (SDK 4.14.2) on 2026-08-05:
-#   * a caller-supplied 16-hex observation id is accepted and stored verbatim;
-#   * the SAME observation id ingested TWICE collapses to ONE observation (upsert,
-#     last write wins) — a re-emit is idempotent, not a duplicate;
-#   * a child emitted BEFORE its parent exists still parents correctly (order-free);
-#   * a NON-RECORDING ambient parent is adopted by unmodified ``observe_span`` /
-#     ``traced`` instrumentation, and exports nothing for itself.
-# Hence: journal the ids inside ctx.run, make them the ambient parent (which emits
-# nothing, so replays cannot double), and emit the boundary observation itself from
-# inside a ctx.run as well.
+# only because the waste is genuine. Whoever gives D the durability it should have -- by
+# wrapping that work in ctx.run -- INHERITS this hazard at the same moment, and D's
+# current code is the reference they will copy, which will not show them.
 #
 # CONVENTION — which pattern applies when:
 #   * a LEAF span (parents nothing) goes INSIDE ``ctx.run`` — see review_starter.py,
@@ -140,164 +193,43 @@ def build_trace_values(*, trace_id=None, authz_id=None, session_id=None, engine=
 #   * a PARENTING BOUNDARY uses these primitives — journaled ids, non-recording
 #     ambient parent, boundary emitted from its own ``ctx.run``.
 
-def _utcnow() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc)
-
-
-def _iso(dt: Optional[datetime.datetime]) -> Optional[str]:
-    return dt.isoformat().replace("+00:00", "Z") if dt else None
-
-
-def mint_boundary_ids(trace_seed: Optional[str] = None) -> dict:
-    """Mint the boundary's identity: ``{"trace_id": 32-hex, "span_id": 16-hex}``.
-
-    **Call inside ``ctx.run``** — that is what makes the pair JOURNALED, so Restate
-    hands back the identical ids on every replay. ``trace_seed`` is the upstream id
-    (X-Trace-Id / the request's ``trace_id``) so the mesh join still holds; with no
-    seed a random trace id is minted once and then replayed from the journal.
-    """
-    ids = {"trace_id": None, "span_id": secrets.token_hex(8)}  # 16 lowercase hex
-    if LANGFUSE_ENABLED:
-        try:
-            from langfuse import get_client
-            ids["trace_id"] = get_client().create_trace_id(
-                seed=str(trace_seed) if trace_seed else None
-            )
-        except Exception:  # noqa: BLE001 — telemetry never breaks the work
-            pass
-    return ids
-
-
-@contextmanager
-def boundary_parent(ids: dict):
-    """Make the journaled ``(trace_id, span_id)`` the AMBIENT OTel parent — emitting
-    NOTHING for the boundary itself.
-
-    Everything opened inside nests under it through the ordinary OTel context, so
-    existing ``observe_span``/``traced`` instrumentation needs no change. Because the
-    span is non-recording, re-entering this block on a Restate replay exports nothing
-    at all: the replay-double cannot occur by construction, not by later dedup.
-
-    Yields a timing dict to hand to :func:`emit_boundary`.
-    """
-    timing: dict = {"started_at": _utcnow(), "ended_at": None}
-    detach = None
-    if LANGFUSE_ENABLED and ids.get("trace_id") and ids.get("span_id"):
-        try:
-            from opentelemetry import context as _octx, trace as _otr
-            from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
-            _tok = _octx.attach(_otr.set_span_in_context(NonRecordingSpan(SpanContext(
-                trace_id=int(ids["trace_id"], 16),
-                span_id=int(ids["span_id"], 16),
-                is_remote=True,
-                trace_flags=TraceFlags(TraceFlags.SAMPLED),
-            ))))
-            detach = lambda: _octx.detach(_tok)  # noqa: E731
-        except Exception:  # noqa: BLE001 — untraced beats broken
-            detach = None
-    try:
-        yield timing
-    finally:
-        timing["ended_at"] = _utcnow()
-        if detach is not None:
-            try:
-                detach()
-            except Exception:  # noqa: BLE001
-                pass
-
-
-def emit_boundary(mapping, values: dict, *, ids: dict, name: str,
-                  timing: dict) -> Optional[str]:
-    """Emit the boundary observation itself, keyed on the JOURNALED span id.
-
-    Returns the emitted span id so the ``ctx.run`` journal entry carries something
-    legible (and serializable) rather than a bare ``None``.
-
-    **Call inside ``ctx.run``** so it happens exactly once. Belt-and-suspenders: the
-    ingestion API upserts on observation id, so even a re-emit lands one observation.
-
-    Also emits the trace-level fields (``trace-create``). ``set_trace_standard`` writes
-    those as attributes on the active RECORDING span; the boundary is deliberately
-    non-recording now, so the trace body is their carrier instead. SCORES are not sent
-    here — unchanged from ``set_trace_standard``, they are emitted from the response.
-
-    If the handler dies between the work and this call the boundary never lands and the
-    children show as roots on the right trace — a missing parent, never a phantom one.
-    """
-    if not LANGFUSE_ENABLED or not ids.get("trace_id") or not ids.get("span_id"):
-        return None
-    try:
-        from langfuse import get_client
-        content_bearing = set(getattr(mapping, "content_bearing", ()) or ())
-
-        def project(field):
-            v = values.get(field)
-            if v is None:
-                return None
-            return redact(v) if field in content_bearing else v
-
-        trace_body: dict = {"id": ids["trace_id"], "name": name}
-        _slot_key = {"user_id": "userId", "session_id": "sessionId",
-                     "release": "release", "version": "version"}
-        for slot, field in (getattr(mapping, "slots", {}) or {}).items():
-            if slot == "trace_id":
-                continue
-            key, val = _slot_key.get(slot), project(field)
-            if key and val is not None:
-                trace_body[key] = str(val)
-        tags = [str(project(f)) for f in (getattr(mapping, "tags", ()) or ())
-                if values.get(f) is not None]
-        if tags:
-            trace_body["tags"] = tags
-        md = {f: project(f) for f in (getattr(mapping, "metadata", ()) or ())
-              if values.get(f) is not None}
-        if md:
-            trace_body["metadata"] = md
-        env = os.getenv("DEPLOY_ENV")
-        if env:
-            trace_body["environment"] = env
-
-        stamp = _iso(_utcnow())
-        span_body = {"id": ids["span_id"], "traceId": ids["trace_id"], "name": name,
-                     "startTime": _iso(timing.get("started_at")),
-                     "endTime": _iso(timing.get("ended_at")) or stamp}
-        if env:
-            span_body["environment"] = env
-
-        get_client().api.ingestion.batch(batch=[
-            {"id": str(uuid.uuid4()), "type": "trace-create",
-             "timestamp": stamp, "body": trace_body},
-            {"id": str(uuid.uuid4()), "type": "span-create",
-             "timestamp": stamp, "body": span_body},
-        ])
-        return ids["span_id"]
-    except Exception:  # noqa: BLE001 — the witness channel never breaks the work
-        return None
-
-
 # --- Backward-compat surface: the mesh's existing `from telemetry import ...` ---
 def safe_observe(**kwargs) -> Callable:
     """DEPRECATED alias for ``traced`` — kept so the mesh's existing decorators keep
-    working during the migration (see REMOVAL MARKER). Passes through when disabled."""
-    return traced(**kwargs)
+    working during the migration (see REMOVAL MARKER). Passes through when disabled.
+
+    Never records the function's arguments or return value: a caller cannot turn capture
+    back on (the capture kwargs are set after, and win over, anything passed)."""
+    kwargs.pop("capture_input", None)
+    kwargs.pop("capture_output", None)
+    return traced(**kwargs, capture_input=False, capture_output=False)
+
+
+def _size_of(value: Any) -> int:
+    try:
+        return len(value)
+    except Exception:  # noqa: BLE001
+        return len(str(value))
 
 
 def safe_update_observation(input_data: Any = None, output_data: Any = None):
+    """Records SIZES only (a character or item count), never the text: no input, no output,
+    no hash of either. ``None`` stays absent."""
     if LANGFUSE_ENABLED:
         try:
+            sizes = {}
+            if input_data is not None:
+                sizes["input_size"] = _size_of(input_data)
+            if output_data is not None:
+                sizes["output_size"] = _size_of(output_data)
             from langfuse import get_client   # v4: update the current OTel span
-            get_client().update_current_span(input=input_data, output=output_data)
+            get_client().update_current_span(metadata=sizes)
         except Exception:  # noqa: BLE001 — telemetry never breaks the work
             pass
 
 
 def get_langgraph_callbacks() -> list:
-    if LANGFUSE_ENABLED:
-        try:
-            from langfuse.langchain import CallbackHandler   # v4 moved it here from langfuse.callback
-            return [CallbackHandler()]
-        except Exception:  # noqa: BLE001
-            pass
+    """Always empty: Langfuse's LangChain handler records messages and tool I/O as text."""
     return []
 
 
@@ -310,3 +242,122 @@ def configure_litellm():
 
 # Auto-configure LiteLLM on import (unchanged from the pre-leaf shim).
 configure_litellm()
+
+
+# --- Model-call generations (analyst) -----------------------------------------
+def _count_miss(reason: str) -> None:
+    try:
+        from provenance_telemetry.emit import _miss
+        _miss(reason)
+    except Exception:  # noqa: BLE001 — leaf absent: nothing to count into
+        import logging
+        logging.getLogger(__name__).debug("telemetry miss: %s", reason)
+
+
+def instrument_model_calls(model, name="analyst.model"):
+    """Wrap ``model.generate`` (and ``generate_stream`` when present) so each call is a
+    Langfuse *generation* observation nested under the AMBIENT OTel context (a call run
+    through ``asyncio.to_thread`` keeps the caller's span as parent, contextvars are copied).
+
+    DELIBERATE: no prompt or completion text is recorded -- no input, no output. The
+    observation carries only the model id, usage (input/output tokens) and error level.
+
+    The model's own exceptions propagate unchanged (the observation is ended, level ERROR).
+    Telemetry never breaks the call: any setup/update/end failure is swallowed, counted as a
+    leaf miss, and the original is called and returned. When telemetry is disabled (both
+    LANGFUSE keys unset) the model is returned untouched. Idempotent: a second call does
+    not wrap again.
+    """
+    if not (os.getenv("LANGFUSE_SECRET_KEY") and os.getenv("LANGFUSE_PUBLIC_KEY")):
+        return model
+    model_id = getattr(model, "model_id", None)
+
+    def _usage(res):
+        tu = getattr(res, "token_usage", None)
+        if tu is None:
+            return None
+        return {"input": tu.input_tokens, "output": tu.output_tokens}
+
+    def _open(current: bool):
+        try:
+            from langfuse import get_client
+            kw = {"name": name, "as_type": "generation"}
+            if model_id:
+                kw["model"] = str(model_id)
+            c = get_client()
+            if current:
+                cm = c.start_as_current_observation(**kw)
+                return cm, cm.__enter__()
+            obs = c.start_observation(**kw)
+            return None, obs
+        except Exception as exc:  # noqa: BLE001
+            _count_miss(f"instrument_model_calls setup failed: {exc!r}")
+            return None, None
+
+    def _safe(fn, what):
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            _count_miss(f"instrument_model_calls {what} failed: {exc!r}")
+
+    def _close(cm, obs, exc_info):
+        if cm is not None:
+            _safe(lambda: cm.__exit__(*exc_info), "end")
+        elif obs is not None:
+            _safe(obs.end, "end")
+
+    def _wrap(orig, stream):
+        if getattr(orig, "_ia_instrumented", False):
+            return orig
+
+        if not stream:
+            @functools.wraps(orig)
+            def wrapper(*a, **k):
+                cm, obs = _open(True)
+                try:
+                    res = orig(*a, **k)
+                except BaseException as exc:
+                    if obs is not None:
+                        _safe(lambda: obs.update(level="ERROR", status_message=type(exc).__name__),
+                              "update")
+                    _close(cm, obs, (type(exc), exc, exc.__traceback__))
+                    raise
+                if obs is not None:
+                    u = _usage(res)
+                    if u is not None:
+                        _safe(lambda: obs.update(usage_details=u), "update")
+                _close(cm, obs, (None, None, None))
+                return res
+        else:
+            @functools.wraps(orig)
+            def wrapper(*a, **k):
+                cm, obs = _open(False)
+                total = {"input": 0, "output": 0}
+                try:
+                    for item in orig(*a, **k):
+                        # Stream deltas each carry their own share of usage (smolagents sums
+                        # them in agglomerate_stream_deltas), so accumulate, never overwrite.
+                        u = _usage(item) if obs is not None else None
+                        if u is not None:
+                            total["input"] += u["input"] or 0
+                            total["output"] += u["output"] or 0
+                            _safe(lambda: obs.update(usage_details=dict(total)), "update")
+                        yield item
+                except BaseException as exc:
+                    if obs is not None:
+                        _safe(lambda: obs.update(level="ERROR", status_message=type(exc).__name__),
+                              "update")
+                    raise
+                finally:
+                    _close(cm, obs, (None, None, None))
+        wrapper._ia_instrumented = True
+        return wrapper
+
+    try:
+        if callable(getattr(model, "generate", None)):
+            model.generate = _wrap(model.generate, False)
+        if callable(getattr(model, "generate_stream", None)):
+            model.generate_stream = _wrap(model.generate_stream, True)
+    except Exception as exc:  # noqa: BLE001
+        _count_miss(f"instrument_model_calls wrap failed: {exc!r}")
+    return model

@@ -239,6 +239,9 @@ def main(argv: list[str]) -> int:
             method = argv[i + 1]; i += 2
         elif a == "-d":
             body = argv[i + 1]; i += 2
+            if body.startswith("@"):  # curl -d @file: the credential-bearing bodies are files now
+                with open(body[1:], encoding="utf-8") as bf:
+                    body = bf.read()
         elif a == "-o":
             outfile = argv[i + 1]; i += 2
         elif a == "-w":

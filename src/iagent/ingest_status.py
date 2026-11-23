@@ -34,7 +34,7 @@ import os
 import re
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import psycopg2
 import psycopg2.extras
@@ -256,6 +256,15 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS hold_reason TEXT;
 -- fallback. TRUE once a steward answered `has_parts` on a `document_empty_confirm`; doc-tools reads it
 -- from GET /ingest/retries. NOT NULL DEFAULT FALSE, IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS force_text_fallback BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- 2026-11-15 (the receipt carries its domain): `domain` -- NULLABLE. The review audience's domain
+-- (`document_promotion:<DOMAIN>`, upper case, as `promotion.domain_of` reads it), written when a
+-- promotion task is filed for the row, so an export range scopes IN THE QUERY. NULL until a task
+-- says one, and for every row written before this column existed: a NULL row is never dropped by
+-- the scope, it is resolved the old way (decision record, then the open task) and its answer
+-- written back. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS domain TEXT;
+CREATE INDEX IF NOT EXISTS idx_isp_domain_created ON ingest_status_projection (domain, created_at, id);
 """
 
 
@@ -758,7 +767,8 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
     return out
 
 
-def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]]:
+def get_status_for(ingest_id: str, *, caller_id: str,
+                   any_caller: bool = False) -> Optional[dict[str, Any]]:
     """The status of an ingest THIS caller submitted or is the on_behalf_of principal for, or
     None otherwise.
 
@@ -770,8 +780,13 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
     `origin_suggestion` is parsed back from its stored JSON text to a dict, or left `None` when
     the column is NULL (no suggestion was ever recorded for this row).
     """
-    if not ingest_id or not caller_id:
+    if not ingest_id or (not caller_id and not any_caller):
         return None
+    # `any_caller` drops the submitter scoping (ADR-0068 s6: the status read answers anyone who may
+    # read the notice). It is for a route that has ALREADY decided the caller may read this row.
+    where, args = (("id = %s", (ingest_id,)) if any_caller else
+                   ("id = %s AND (submitted_by = %s OR on_behalf_of = %s)",
+                    (ingest_id, caller_id, caller_id)))
     with _pg_connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
@@ -782,8 +797,8 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
                           leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation,
                           hold_reason
                      FROM ingest_status_projection
-                    WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
-                (ingest_id, caller_id, caller_id),
+                    WHERE """ + where,
+                args,
             )
             row = cur.fetchone()
     if not row:
@@ -836,6 +851,97 @@ def list_mine(*, caller_id: str, limit: int,
         d["leaf_candidates"] = _parse_candidates(d.get("leaf_candidates"))
         out.append(d)
     return out
+
+
+# "Resolved, and no domain": a receipt that no decision record and no task names (a kind that
+# skips promotion). It is written so the row leaves every range scan. It is not a domain:
+# `set_domain` refuses it and `list_by_created` strips it from the caller's domains, so no cell
+# can match it however it is spelled. A filed task overwrites it (`set_domain`).
+NO_DOMAIN = "<none>"
+
+
+def list_by_created(start_ms: int, end_ms: int, limit: int, *,
+                    after: Optional[tuple[int, str]] = None,
+                    domains: Optional[Iterable[str]] = None) -> list[dict]:
+    """The DOCUMENT rows received in `[start_ms, end_ms)` (`created_at`, receipt time, set once and
+    never moved), oldest first, one page of at most `limit`: `{id, review_generation, created_at,
+    domain}` only. `after` is the `(created_at, id)` of the last row already seen (keyset paging, as
+    `list_mine`). EVENT rows are excluded. Not scoped to a caller.
+
+    `domains`, when given, puts the domain scope IN THE QUERY: a row is returned when its `domain`
+    is one of them OR its `domain` is NULL. A row whose domain is another domain's never leaves the
+    database. A NULL row is returned on purpose: NULL means "no task has said", not "no domain"
+    (a row written before the column, or one whose review task is not filed yet), so the caller
+    resolves it the old way and `set_domain`s the answer. The scope must never drop a notice that
+    later gains a domain. `domains=None` is the unscoped read; an empty set matches only NULL."""
+    sql = """SELECT id, review_generation, created_at, domain
+               FROM ingest_status_projection
+              WHERE created_at >= %s AND created_at < %s AND kind <> 'event'"""
+    params: list[Any] = [start_ms, end_ms]
+    if domains is not None:
+        sql += " AND (domain IS NULL OR domain = ANY(%s))"
+        params.append(sorted({d for d in domains if d != NO_DOMAIN}))
+    if after is not None:
+        sql += " AND (created_at, id) > (%s, %s)"
+        params += [after[0], after[1]]
+    sql += """
+              ORDER BY created_at, id
+              LIMIT %s"""
+    params.append(limit)
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, tuple(params))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def set_domain(ingest_id: str, domain: str) -> bool:
+    """Write the row's review domain (the audience's, as `promotion.domain_of` reads it). The ONE
+    writer of `domain`. A blank domain is refused (ValueError): "no domain" is NULL, never ''. Re-
+    assignable: a re-class that files a task under another audience moves it. True when a row
+    changed. EVENT rows are never given one."""
+    domain = str(domain or "").strip()
+    if not domain:
+        raise ValueError("set_domain: a blank domain is not a domain (NULL means none)")
+    if domain == NO_DOMAIN:
+        raise ValueError("set_domain: NO_DOMAIN is a marker, not a domain; use set_no_domain")
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection SET domain = %s
+                    WHERE id = %s AND kind <> 'event' AND domain IS DISTINCT FROM %s""",
+                (domain, ingest_id, domain))
+            changed = cur.rowcount
+        conn.commit()
+    return changed > 0
+
+
+def set_no_domain(ingest_id: str) -> bool:
+    """Mark a receipt "resolved, no domain" (`NO_DOMAIN`), only while its domain is NULL: it never
+    overwrites a real domain. A later `set_domain` (a task filed) replaces it. True when changed."""
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection SET domain = %s
+                    WHERE id = %s AND kind <> 'event' AND domain IS NULL""",
+                (NO_DOMAIN, ingest_id))
+            changed = cur.rowcount
+        conn.commit()
+    return changed > 0
+
+
+def clear_domain(ingest_id: str) -> bool:
+    """Put the row back to "no task has said" (NULL). The REPAIR for a `set_domain` that could not
+    be written: NULL is never excluded by the range's query, so a stale domain cannot hide a notice
+    from the caller it now belongs to. True when a row changed. EVENT rows are untouched."""
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection SET domain = NULL
+                    WHERE id = %s AND kind <> 'event' AND domain IS NOT NULL""",
+                (ingest_id,))
+            changed = cur.rowcount
+        conn.commit()
+    return changed > 0
 
 
 def fail_stalled(*, stage: str, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:

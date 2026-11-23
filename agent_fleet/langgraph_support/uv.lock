@@ -538,8 +538,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.12"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.13#d8165f3323e63ee20983c4d3db382134e9428503" }
+version = "0.9.26"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.26#b9560dcf3965b8620f0cc342986cb5df5488f06b" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -547,7 +547,7 @@ dependencies = [
     { name = "nest-asyncio" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyjwt" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pyyaml" },
 ]
 
@@ -834,10 +834,10 @@ dependencies = [
 requires-dist = [
     { name = "baml-py", specifier = "==0.219.0" },
     { name = "fastapi" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.13" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.26" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
-    { name = "langfuse" },
+    { name = "langfuse", specifier = "<5" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
     { name = "psycopg", extras = ["binary"] },

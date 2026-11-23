@@ -33,6 +33,7 @@ from tests.test_an_origin_suggestion_runs_as_a_case import _real_policy, writer 
 from tests.test_cases_route import (  # noqa: E402
     _CASE_ONE_INSTANCE, _SPEC1, _FakeRestate, _definition, _user,
 )
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location("iagent_human_tasks_f2", _ROOT / "src/iagent/human_tasks.py")
@@ -187,6 +188,7 @@ def client_for(monkeypatch):
                             lambda wf_id: _definition(wf_id, classification="SAFETY"))
         monkeypatch.setattr(human_tasks, "list_tasks_for_workflows", lambda ids: [])
         monkeypatch.setattr(human_tasks, "holds_task_on_case", _holds_stub)
+        route_viewer_tasks_through(monkeypatch)
         gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
         return TestClient(gateway.app)
     yield _make
@@ -197,8 +199,28 @@ def _present():
     return _FakeRestate(case=_CASE_ONE_INSTANCE, spec1=_SPEC1)
 
 
-def test_a_task_holder_who_cannot_otherwise_view_reads_the_case(client_for):
+def test_a_task_holder_outside_the_cases_labels_gets_the_404(client_for):
+    """ADR-0068 s6 (per-viewer tasks) CLOSED this: holding a task on a case no longer admits a
+    viewer who lacks a label of that case. A holder reads it only when entitled to its labels, as
+    any viewer is. It used to be 200 for a holder with no cell at all."""
     r = client_for(_user("bob"), _present(), holds={("c-1", "bob")}).get("/cases/c-1")
+    assert r.status_code == 404 and r.json()["detail"] == "case not found"
+
+
+def test_a_task_holder_entitled_to_the_cases_labels_reads_the_case(client_for):
+    """Holding the task adds nothing for an entitled viewer: the label entitlement alone admits
+    (see the control below, the same viewer with NO task, also 200). The rule that admits is the
+    viewer's own label match, not the hold."""
+    r = client_for(_user("bob", ("SAFETY",)), _present(), holds={("c-1", "bob")}).get("/cases/c-1")
+    assert r.status_code == 200, r.text
+
+
+def test_CONTROL_the_same_entitled_viewer_without_a_task_also_reads_the_case(client_for):
+    """The control for the test above: the same SAFETY-entitled viewer, no task. The code answers
+    200, by the label rule alone (ADR-0068 s6: a case is read by a viewer entitled to its labels).
+    So the hold is not what admits an entitled viewer; it matters only where the labels fail, and
+    there ADR-0068 s6 makes it 404 (the holder-outside-the-labels test)."""
+    r = client_for(_user("bob", ("SAFETY",)), _present()).get("/cases/c-1")
     assert r.status_code == 200, r.text
 
 
@@ -219,13 +241,17 @@ def test_an_unreadable_task_store_is_the_same_404(client_for, monkeypatch):
         raise human_tasks.HumanTaskConfigError("no store")
     c = client_for(_user("bob"), _present())
     monkeypatch.setattr(human_tasks, "holds_task_on_case", _boom)
+    route_viewer_tasks_through(monkeypatch)
     r = c.get("/cases/c-1")
     assert r.status_code == 404 and r.json()["detail"] == "case not found"
 
 
 def test_the_holder_reads_the_action_record_too(client_for):
-    c = client_for(_user("bob"), _present(), holds={("c-1", "bob")})
+    # a holder entitled to the case's labels; one lacking them is refused (the per-viewer rule)
+    c = client_for(_user("bob", ("SAFETY",)), _present(), holds={("c-1", "bob")})
     assert c.get("/cases/c-1/action").status_code != 404
+    c1 = client_for(_user("bob"), _present(), holds={("c-1", "bob")})
+    assert c1.get("/cases/c-1/action").status_code == 404
     c2 = client_for(_user("bob"), _present())
     assert c2.get("/cases/c-1/action").status_code == 404
 
@@ -235,6 +261,7 @@ def test_the_viewer_who_already_reads_the_case_never_asks_the_store(client_for, 
     asked = []
     c = client_for(_user("alice"), _present())
     monkeypatch.setattr(human_tasks, "holds_task_on_case", lambda *a: asked.append(a) or False)
+    route_viewer_tasks_through(monkeypatch)
     assert c.get("/cases/c-1").status_code == 200
     assert asked == []
 

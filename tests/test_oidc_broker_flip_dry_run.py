@@ -98,15 +98,18 @@ def test_arm2_the_committed_flip_carries_no_secret_value(flipped):
 def test_arm2_an_inline_secret_value_is_only_in_the_secret_object(inline):
     flipped = inline
     env = {e["name"]: e for e in _job(flipped)["spec"]["template"]["spec"]["containers"][0]["env"]}
+    # The Job reads it from the realm-reconcile bodies Secret (a hook object of the same phase), not the
+    # release's own -secrets: pre-upgrade -secrets is still the OLD object and would lack a new key.
     assert env["BROKER_OPENDDIL_CLIENT_SECRET"]["valueFrom"]["secretKeyRef"] == {
-        "name": "t-secrets", "key": _SECRET_KEY}
+        "name": "t-realm-reconcile-bodies", "key": _SECRET_KEY}
     b64 = base64.b64encode(_FAKE_SECRET.encode()).decode()
     hits = []
     for d in _docs(flipped):
         txt = json.dumps(d)
         if _FAKE_SECRET in txt or b64 in txt:
             hits.append((d["kind"], d["metadata"]["name"]))
-    assert hits == [("Secret", "t-secrets")], hits
+    # the value is in Secret objects only: the release -secrets and the realm-reconcile bodies Secret
+    assert sorted(hits) == [("Secret", "t-realm-reconcile-bodies"), ("Secret", "t-secrets")], hits
     (sec,) = [d for d in _by_kind(flipped, "Secret") if d["metadata"]["name"] == "t-secrets"]
     got = sec.get("stringData", {}).get(_SECRET_KEY) or base64.b64decode(sec["data"][_SECRET_KEY]).decode()
     assert got == _FAKE_SECRET

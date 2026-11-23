@@ -177,6 +177,9 @@ def call(eo, monkeypatch):
     from fastapi.testclient import TestClient
 
     def _go(identifier, *, jena, driver, user_email="", domains=("SUSTAINMENT",)):
+        # The caller is the VERIFIED token (lane 74): who the case names, holding `domains`.
+        from tests._helpers.verified_caller import install
+        install(monkeypatch, eo, user_email, list(domains))
         monkeypatch.setattr(eo, "execute_sparql", jena)
         monkeypatch.setattr(eo, "_NEO4J_DRIVER", driver)
         return TestClient(eo.app).post("/resolve_instance", json={
@@ -371,3 +374,4 @@ def test_a_disconnected_graph_answers_503_only_when_a_notice_is_involved(call):
                  driver=None)
     assert notice.status_code == 503
     assert other.status_code == 200
+

@@ -6,6 +6,7 @@
 # (doc-tools #86's domainless split).
 kind: engineering-document
 domain: null
+label: Engineering document
 passes:
   - identity.document_identity
 outputs:

@@ -25,9 +25,11 @@ in starlette.run_in_threadpool.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -41,7 +43,8 @@ import psycopg2.extras
 # so a raise here and a catch at the BFF are the same module object.
 from iagent.authz import AuthorizationUnavailable  # noqa: F401 -- raised and re-exported
 from iagent.authz import AuthorizationUnconfigured  # noqa: F401 -- raised and re-exported
-from agent_fleet.utils.pdp_answer import check_answer
+from iagent.authz import directory_http_client
+from agent_fleet.utils.pdp_answer import check_answer, checks_answer
 
 try:
     from agent_fleet.utils import program_membership as _program_membership
@@ -59,6 +62,15 @@ logger = logging.getLogger(__name__)
 _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
 # Topaz Directory (relations + check). Same URL cortex-bff uses for entitlements.
 _TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "").strip()
+
+
+def _directory() -> "contextlib.AbstractContextManager[httpx.Client]":
+    """The process's ONE directory client (`iagent.authz.directory_http_client`), wrapped for a
+    `with` block that must NOT close it. Every directory call in this module goes through here.
+
+    A client built per call cost about 70 ms of CPU, and one `GET /me/entitlements` built about 37
+    of them."""
+    return contextlib.nullcontext(directory_http_client(_TOPAZ_DIRECTORY_URL))
 
 # Authoritative migration (cortex-bff applies at startup; mirrors
 # sql/create_human_task_projection.sql, kept in-module so the container has no
@@ -103,6 +115,27 @@ ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
 -- on_behalf_of: who the task acts for, recorded apart from who requested it (ADR-0063 /
 -- OpenDDIL ADR-0052 s5). '' = service-origin finding; never NULL.
 ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS on_behalf_of TEXT NOT NULL DEFAULT '';
+-- excludes: the authz_ids the definition bars from deciding THIS task, as a JSON array of
+-- casefolded ids, written at registration (ADR-0068 s6). It lets a READ-TIME capability match
+-- honour the bar without re-resolving it. NULL = a row registered before this column existed:
+-- its bar is unknown, so only its recipient rows (the authz_id match) ever admit a viewer.
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS excludes TEXT;
+-- routing_fault: a task withheld from a viewer its audience reached, because the viewer is not
+-- entitled to every label of the task's object (ADR-0068 s6). One row per (task, addressee,
+-- label); a repeat read bumps seen_count and last_seen_at. A record of the fault in the routing,
+-- never of the task's content.
+CREATE TABLE IF NOT EXISTS routing_fault (
+    task_id TEXT NOT NULL,
+    addressee TEXT NOT NULL,
+    dimension TEXT NOT NULL,
+    label TEXT NOT NULL,
+    route TEXT NOT NULL,
+    on_behalf_of TEXT NOT NULL DEFAULT '',
+    first_seen_at BIGINT NOT NULL,
+    last_seen_at BIGINT NOT NULL,
+    seen_count BIGINT NOT NULL DEFAULT 1,
+    PRIMARY KEY (task_id, addressee, dimension, label)
+);
 """
 
 
@@ -160,6 +193,8 @@ def apply_migration() -> None:
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(_MIGRATION_SQL)
+            cur.execute(_GRANT_LEDGER_SQL)
+            cur.execute(_GRANT_LEDGER_SEQ_SQL)
         conn.commit()
 
 
@@ -187,7 +222,7 @@ def _resolve_audience_actors(audience: str) -> list[str]:
         if authz_id and authz_id not in actors:
             actors.append(authz_id)
 
-    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+    with _directory() as c:
         rels = _list(c, {"object_type": "task_audience", "object_id": audience,
                          "relation": "actor"})
         for rel in rels:
@@ -230,7 +265,7 @@ def can_act_or_unavailable(audience: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             r.raise_for_status()
             return check_answer(r)
@@ -264,7 +299,9 @@ def can_invoke_or_unavailable(capability: str, caller_id: str) -> bool:
 
     An ungranted capability is a DENY, not an outage: `check_can_invoke` documents that Topaz
     answers "object not found" for it, so a 404 from the check is False and every other non-2xx
-    is unavailable. The 404 mapping is asserted against a double, NOT measured live."""
+    is unavailable. Measured live on 2026-11-14, the sandbox's Topaz (0.33.13) answers a check on a
+    capability it does not have 200 `check: false`, not 404; the 404 mapping stays for a directory
+    that answers so, and is asserted against a double only."""
     if not capability or not caller_id:
         return False
     if not _TOPAZ_DIRECTORY_URL:
@@ -277,7 +314,7 @@ def can_invoke_or_unavailable(capability: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             if r.status_code == 404:
                 return False
@@ -311,7 +348,7 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             if r.status_code == 404:
                 return False
@@ -335,7 +372,7 @@ def capability_object_exists(capability: str) -> bool:
     from urllib.parse import quote
 
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.get(f"/api/v3/directory/object/capability/{quote(capability, safe='')}")
     except httpx.HTTPError as exc:
         raise AuthorizationUnavailable(type(exc).__name__) from exc
@@ -346,13 +383,116 @@ def capability_object_exists(capability: str) -> bool:
     return True
 
 
+def capability_keys() -> list[str]:
+    """The id of every Topaz directory object of type `capability`, read from the SERVER (the
+    paginated `GET /api/v3/directory/objects`, walked as `policy/sync/topaz_sync.py`'s `list_objects`
+    walks it), never from `policy/capability_grants.yaml`. An unset TOPAZ_DIRECTORY_URL RAISES
+    `AuthorizationUnconfigured`. A transport error, any non-2xx, a body that is not JSON, a body or
+    entry of the wrong shape, or a page token seen twice RAISES `AuthorizationUnavailable`: a failure
+    is never a partial list."""
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
+    out: list[str] = []
+    seen: set[str] = set()
+    token = ""
+    try:
+        with _directory() as c:
+            while True:
+                params = {"object_type": "capability"}
+                if token:
+                    params["page.token"] = token
+                r = c.get("/api/v3/directory/objects", params=params)
+                if not r.is_success:
+                    raise AuthorizationUnavailable(f"HTTP {r.status_code}")
+                body = r.json()
+                if not isinstance(body, dict):
+                    raise AuthorizationUnavailable("directory list body is not an object")
+                rows = body.get("results") or body.get("objects") or []
+                if not isinstance(rows, list):
+                    raise AuthorizationUnavailable("directory list entries are not a list")
+                for row in rows:
+                    key = row.get("id") if isinstance(row, dict) else None
+                    if not isinstance(key, str) or not key:
+                        raise AuthorizationUnavailable("a directory entry has no id")
+                    out.append(key)
+                page = body.get("page") or {}
+                if not isinstance(page, dict):
+                    raise AuthorizationUnavailable("directory page is not an object")
+                token = page.get("next_token") or ""
+                if not token:
+                    return out
+                if not isinstance(token, str) or token in seen:
+                    raise AuthorizationUnavailable("directory page token repeated or malformed")
+                seen.add(token)
+    except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+
+
+def can_invoke_each(capabilities: "list[str]", caller_id: str) -> list[bool]:
+    """`can_invoke(caller, capability)` for each capability, in the order given, in ONE
+    `POST /api/v3/directory/checks`. Each answer is the one `can_invoke_or_unavailable` gives:
+    - a no is False, and so is a capability the directory does not have (`checks_answer` reads
+      Topaz's not-found code as a no, as the single check answers it 200 false);
+    - an empty capability is False and is not asked;
+    - an empty caller, or no capability, is all False with no directory call;
+    - an unset TOPAZ_DIRECTORY_URL RAISES `AuthorizationUnconfigured`.
+    A transport error, any non-2xx (a 404 here means no batch endpoint, never "not granted"), a
+    malformed answer, an item that is an error and not a decision, or a count other than the count
+    asked RAISES `AuthorizationUnavailable`: a failure is never a partial list."""
+    asked = [k for k in capabilities if k]
+    if not caller_id or not asked:
+        return [False] * len(capabilities)
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
+    payload = {
+        "default": {"object_type": "capability", "relation": "can_invoke",
+                    "subject_type": "user", "subject_id": caller_id},
+        "checks": [{"object_id": k} for k in asked],
+    }
+    try:
+        with _directory() as c:
+            r = c.post("/api/v3/directory/checks", json=payload)
+            r.raise_for_status()
+            answers = iter(checks_answer(r, len(asked)))
+    except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+    return [next(answers) if k else False for k in capabilities]
+
+
+def capabilities_and_held(caller_id: str) -> "tuple[list[str], list[str]]":
+    """Every capability key the directory SERVER has (:func:`capability_keys`), and the sorted,
+    de-duplicated ones the caller holds `can_invoke` on: one list read and ONE batched check
+    (:func:`can_invoke_each`), where asking key by key took one request per key. Empty `caller_id`
+    -> the keys and no held key, with no check. A raise from either propagates (503 for the
+    caller), so a failure is never a partial list."""
+    keys = capability_keys()
+    if not caller_id:
+        return keys, []
+    unique = sorted(set(keys))
+    return keys, [k for k, held in zip(unique, can_invoke_each(unique, caller_id), strict=True) if held]
+
+
+def drop_capability(kind: str) -> str:
+    """The capability that gates dropping a `kind` document: `can_drop:<kind>`."""
+    return f"can_drop:{kind}"
+
+
+def may_drop(kind: str, keys: "set[str]", held: "set[str]") -> bool:
+    """:func:`can_drop_refusal`'s decision, from a capability list and a held set already read
+    (:func:`capabilities_and_held`): a kind is open iff its `can_drop:<kind>` is not a capability
+    object, or the caller holds it. `/me/entitlements` lists the kinds this way; the drop door
+    itself asks `can_drop_refusal`."""
+    capability = drop_capability(kind)
+    return capability not in keys or capability in held
+
+
 def can_drop_refusal(kind: str, dropper_id: str) -> "dict | None":
     """The `can_drop:<kind>` gate. None = the dropper may drop this kind; otherwise the fields of
     the refusal, for the gateway to raise through `policy_refusal`. A kind is gated iff
     `capability:can_drop:<kind>` exists; an absent object is OPEN. A raise from
     `capability_object_exists` or `can_invoke_or_unavailable` propagates (never open, and a Topaz
     failure is never a refusal: a 404 or `check: false` is the only "no")."""
-    capability = f"can_drop:{kind}"
+    capability = drop_capability(kind)
     if not capability_object_exists(capability):
         return None
     if can_invoke_or_unavailable(capability, dropper_id):
@@ -505,19 +645,35 @@ def inbox_where_literal(escaped_caller_id: str) -> str:
     return f"{INBOX_RECIPIENT_COLUMN} = '{escaped_caller_id}' AND status = '{PENDING}'"
 
 
-def supersede_open_task(task_id: str) -> int:
-    """Mark every `pending` row of a logical task `superseded` (`updated_at` set); returns the
-    rowcount. Touches only `pending` rows -- a resolved row keeps its resolution. Not a resolution:
-    `decision`/`acted_by` are left as they were, and :func:`mark_task_resolved` refuses the status."""
-    now = int(time.time() * 1000)
+def task_row_statuses(task_id: str) -> list[str]:
+    """The `status` of every row of a logical task (empty when it has none). Read-only."""
     with _pg_connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """UPDATE human_task_projection
+            cur.execute("SELECT status FROM human_task_projection WHERE task_id = %s", (task_id,))
+            rows = cur.fetchall()
+    return [r[0] for r in rows]
+
+
+def supersede_open_task(task_id: str, superseded_by: Optional[str] = None) -> int:
+    """Mark every `pending` row of a logical task `superseded` (`updated_at` set); returns the
+    rowcount. Touches only `pending` rows -- a resolved row keeps its resolution. Not a resolution:
+    `decision`/`acted_by` are left as they were, and :func:`mark_task_resolved` refuses the status.
+    When `superseded_by` is given the same UPDATE records it on the row's `payload`."""
+    now = int(time.time() * 1000)
+    if superseded_by is None:
+        sql = """UPDATE human_task_projection
                       SET status = 'superseded', updated_at = %s
-                    WHERE task_id = %s AND status = 'pending'""",
-                (now, task_id),
-            )
+                    WHERE task_id = %s AND status = 'pending'"""
+        params: tuple = (now, task_id)
+    else:
+        sql = """UPDATE human_task_projection
+                      SET status = 'superseded', updated_at = %s,
+                          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('superseded_by', %s::text)
+                    WHERE task_id = %s AND status = 'pending'"""
+        params = (now, superseded_by, task_id)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
             n = cur.rowcount
         conn.commit()
     return n
@@ -641,12 +797,14 @@ def register_task(
     now = int(time.time() * 1000)
     on_behalf_of = str(on_behalf_of or "").strip()
     payload_json = json.dumps(payload or {})
+    excludes_json = json.dumps(sorted(barred))
     rows = []
     for actor_id in actors:
         rows.append((
             str(uuid.uuid4()), kind, task_id, workflow_id, audience, actor_id,
             "pending", title, summary, requested_by, subject_ref, payload_json,
             None, None, None, None, now, now, workflow_service, promise_name, case_id, on_behalf_of,
+            excludes_json,
         ))
     if rows:
         with _pg_connect() as conn:
@@ -657,7 +815,7 @@ def register_task(
                        (id, kind, task_id, workflow_id, audience, recipient_id,
                         status, title, summary, requested_by, subject_ref, payload,
                         acted_by, acted_at, decision, comment, created_at, updated_at,
-                        workflow_service, promise_name, case_id, on_behalf_of)
+                        workflow_service, promise_name, case_id, on_behalf_of, excludes)
                        VALUES %s""",
                     rows,
                 )
@@ -713,55 +871,533 @@ _grant_audit_log = logging.getLogger("iagent.audit.grant_write")
 _ensure_the_audit_line_actually_ARRIVES(_grant_audit_log)
 
 
-def write_grant_and_sync(*, subject: str, asset: str, granted_by: str,
-                         reason: str) -> dict[str, Any]:
-    """Case-1 fulfillment: append a git-asserted reader grant to asset_grants.yaml
-    (subject may READ asset, granted_by a named human) and flow it to Topaz via
-    the SEALED grant_sync (reused VERBATIM — same validate/prove-the-negative/
-    readback). Returns {ok, exit_code, output}.
+# ── The per-viewer read (ADR-0068 s6): the recipient match is made WHEN THE VIEWER READS ──────
 
-    AUDIT NOTE (load-bearing, not hardening): the git-blame audit the grant core
-    guarantees requires this asset_grants.yaml change to be COMMITTED TO GIT with
-    the APPROVER as the author. This sandbox path writes the file + syncs to prove
-    the deny->grant->allow loop; a grant that enforces WITHOUT a git commit is not
-    git-blame-auditable = the unauditable grant the core forbids at classification.
-    Committing (approver-attributed) is an AUDIT-COMPLETING REQUIREMENT before
-    classification use, filed with real-grant-seeding-before-the-flip."""
-    import yaml as _yaml
-    import subprocess
+MATCH_AUTHZ_ID = "authz_id"
+MATCH_CAPABILITY = "capability"
 
-    with open(_ASSET_GRANTS_FILE) as f:
-        data = _yaml.safe_load(f) or {}
-    grants = data.get("grants") or []
-    # Idempotent: a duplicate (subject, asset) is a no-op, not a second grant.
-    if not any(g.get("subject") == subject and g.get("asset") == asset for g in grants):
-        grants.append({
-            "subject": subject, "asset": asset,
-            "granted_by": granted_by, "reason": reason,
-        })
-        data["grants"] = grants
-        with open(_ASSET_GRANTS_FILE, "w") as f:
-            # block style, no default_style — avoids the safe_dump block-scalar
-            # flattening gotcha; the single-line reason needs no block scalar.
-            _yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+_VIEW_COLUMNS = """id, kind, task_id, workflow_id, audience, recipient_id, status, title, summary,
+                          requested_by, subject_ref, payload, created_at, workflow_service,
+                          promise_name, case_id, decision, acted_by, acted_at, comment, excludes"""
+
+
+def _barred(raw: Any) -> "set[str] | None":
+    """The `excludes` column as a casefolded set; None when the row predates the column (the bar
+    is UNKNOWN, which is not the same as 'nobody is barred')."""
+    if raw is None:
+        return None
+    try:
+        v = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+    except ValueError:
+        return None
+    return {str(x).casefold() for x in v} if isinstance(v, list) else None
+
+
+def viewer_tasks(viewer_id: str, *, status: Optional[str] = PENDING, case_id: Optional[str] = None,
+                 workflow_ids: "Optional[list[str]]" = None,
+                 kinds: "Optional[list[str]]" = None,
+                 audiences: "Optional[list[str]]" = None) -> list[dict[str, Any]]:
+    """The tasks `viewer_id` is a recipient of, matched NOW, one row per task, newest first. Each
+    row carries `matched_by`: `authz_id` (a recipient row names the viewer AND policy still lets
+    them act on its audience: a revoked grant drops the row on the next read) or `capability` (the
+    viewer holds `can_act` on the task's audience in policy at THIS read, so a grant made after
+    the task was registered shows on the next read with no re-registration).
+
+    `status=None` reads every status (a decided task still shows the person the case it was about);
+    only an open task can be matched by capability.
+
+    The capability match covers OPEN tasks only, and only rows that recorded their `excludes` (a
+    row that predates the column keeps its recipient rows as its only match, so a barred actor is
+    never re-admitted by a check that cannot see the bar). A barred actor is never matched by
+    capability. A directory failure RAISES (`AuthorizationUnavailable` / `AuthorizationUnconfigured`):
+    a partial list would hide a task from someone entitled to it.
+
+    LABELS ARE NOT CHECKED HERE; this is the recipient half of the rule. The caller applies the
+    label half (gateway `_scope_to_viewer`), because a task's labels live on its object."""
+    if not viewer_id:
+        return []
+    filters, params = [], []
+    if case_id is not None:
+        filters.append("case_id = %s"); params.append(case_id)
+    if workflow_ids is not None:
+        filters.append("workflow_id = ANY(%s)"); params.append(list(workflow_ids))
+    if kinds is not None:
+        filters.append("kind = ANY(%s)"); params.append(list(kinds))
+    if audiences is not None:
+        filters.append("audience = ANY(%s)"); params.append(list(audiences))
+    extra = "".join(f" AND {f}" for f in filters)
+    own_status, own_params = ("", ()) if status is None else (" AND status = %s", (status,))
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"SELECT {_VIEW_COLUMNS} FROM human_task_projection "
+                f"WHERE {INBOX_RECIPIENT_COLUMN} = %s{own_status}{extra} "
+                "ORDER BY created_at DESC", (viewer_id, *own_params, *params))
+            own = [dict(r) for r in cur.fetchall()]
+            cands: list[dict[str, Any]] = []
+            if status in (None, PENDING):
+                cur.execute(
+                    f"SELECT DISTINCT ON (task_id) {_VIEW_COLUMNS} FROM human_task_projection "
+                    f"WHERE status = %s AND excludes IS NOT NULL{extra} "
+                    "ORDER BY task_id, created_at DESC", (PENDING, *params))
+                cands = [dict(r) for r in cur.fetchall()]
+    out: dict[str, dict[str, Any]] = {}
+    held: dict[str, bool] = {}
+    me = viewer_id.casefold()
+    # A recipient row is a CANDIDATE, not a grant: every row was expanded from its audience when
+    # the task registered (no row names a person outside policy), so it is confirmed against the
+    # policy as it stands NOW, one `can_act` per audience. A person who has lost the grant since
+    # registration drops out on this read; a person who still holds it keeps the row. Rows
+    # written before this rule are treated the same (there is no "direct" bit to trust).
+    for r in own:
+        aud = r["audience"]
+        if aud not in held:
+            held[aud] = bool(can_act_or_unavailable(aud, viewer_id))
+        if not held[aud]:
+            continue
+        r["matched_by"] = MATCH_AUTHZ_ID
+        out.setdefault(r["task_id"], r)
+    for r in cands:
+        if r["task_id"] in out:
+            continue
+        if me in (_barred(r.get("excludes")) or set()):
+            continue
+        aud = r["audience"]
+        if aud not in held:
+            held[aud] = bool(can_act_or_unavailable(aud, viewer_id))
+        if held[aud]:
+            r["recipient_id"] = viewer_id
+            r["matched_by"] = MATCH_CAPABILITY
+            out[r["task_id"]] = r
+    for r in out.values():
+        r.pop("excludes", None)
+    return sorted(out.values(), key=lambda r: r["created_at"], reverse=True)
+
+
+_routing_fault_log = logging.getLogger("iagent.audit.routing_fault")
+_ensure_the_audit_line_actually_ARRIVES(_routing_fault_log)
+
+
+def record_routing_fault(*, task_id: str, addressee: str, dimension: str, label: str,
+                         route: str, on_behalf_of: str = "") -> None:
+    """A task withheld from a viewer its audience reached: the viewer is not entitled to the label
+    `label` of the task's object (ADR-0068 s6). Writes the decision line, then the record. The task
+    stays withheld whatever happens here: a record that cannot be written is logged at ERROR and
+    never turns the withhold into a serve."""
+    _routing_fault_log.warning(
+        "routing_fault decision=withheld task=%s addressee=%s dimension=%s label=%s route=%s"
+        " on_behalf_of=%s", task_id, addressee, dimension, label, route, on_behalf_of or "-")
+    now = int(time.time() * 1000)
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO routing_fault (task_id, addressee, dimension, label, route,
+                                                  on_behalf_of, first_seen_at, last_seen_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (task_id, addressee, dimension, label) DO UPDATE
+                         SET last_seen_at = EXCLUDED.last_seen_at, route = EXCLUDED.route,
+                             on_behalf_of = EXCLUDED.on_behalf_of,
+                             seen_count = routing_fault.seen_count + 1""",
+                    (task_id, addressee, dimension, label, route, on_behalf_of or "", now, now))
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001 -- the withhold stands; the record's loss is loud
+        logger.error("routing_fault record not written for task %s: %s", task_id, type(exc).__name__)
+
+
+# The DECISION LEDGER for access grants (ruled 2026-11-15): an approved access request is a row
+# here, not a line in a file in the pod. APPEND-ONLY: a row is never updated or deleted. `entry`
+# says what the row is: 'grant' (an approval) or 'revoke' (a revocation, which names the grant it
+# revokes by the same (subject, asset, kind), and records who revoked it, when and why). Effective
+# access = committed policy + ledger grants - ledger revocations. Append-only by key within an
+# entry: a second approval of the same grant is a no-op that keeps the first approver on record,
+# and a second revocation keeps the first revoker. The directory is written FROM this record and
+# re-written from it at startup, so a restart keeps an approved grant (and a revoked one stays
+# revoked: the seed, the one pruner, reads the same rows).
+#
+# A 'revoke' row carries the revoker in `granted_by` and `requested_by` (one person), and the
+# why in `reason`; `task_id` is empty.
+_GRANT_LEDGER_SQL = """
+CREATE TABLE IF NOT EXISTS access_grant_ledger (
+    seq          BIGSERIAL PRIMARY KEY,
+    subject      TEXT   NOT NULL,
+    asset        TEXT   NOT NULL,
+    kind         TEXT   NOT NULL DEFAULT 'dataset',
+    entry        TEXT   NOT NULL DEFAULT 'grant',
+    requested_by TEXT   NOT NULL,
+    granted_by   TEXT   NOT NULL,
+    reason       TEXT   NOT NULL DEFAULT '',
+    task_id      TEXT   NOT NULL DEFAULT '',
+    granted_at   BIGINT NOT NULL
+);
+"""
+
+# A ledger made before `seq` had PRIMARY KEY (subject, asset, kind, entry): one act of each kind per
+# grant, so a re-grant could not be a row. Upgrade in place, idempotent, on the first BFF start:
+# every row gets a seq, grants BEFORE revokes (then by clock), so the old "a revocation is
+# permanent" reading is exactly the latest-act reading of the migrated rows; the old key is dropped.
+_GRANT_LEDGER_SEQ_SQL = """
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = 'access_grant_ledger' AND column_name = 'seq') THEN
+    ALTER TABLE access_grant_ledger ADD COLUMN seq BIGINT;
+    UPDATE access_grant_ledger l SET seq = o.n
+      FROM (SELECT ctid AS c, row_number() OVER (ORDER BY (entry = 'revoke'), granted_at, subject,
+                                                 asset) AS n FROM access_grant_ledger) o
+     WHERE l.ctid = o.c;
+    CREATE SEQUENCE IF NOT EXISTS access_grant_ledger_seq_seq OWNED BY access_grant_ledger.seq;
+    PERFORM setval('access_grant_ledger_seq_seq',
+                   COALESCE((SELECT max(seq) FROM access_grant_ledger), 0) + 1, false);
+    ALTER TABLE access_grant_ledger
+      ALTER COLUMN seq SET DEFAULT nextval('access_grant_ledger_seq_seq'),
+      ALTER COLUMN seq SET NOT NULL;
+    ALTER TABLE access_grant_ledger DROP CONSTRAINT IF EXISTS access_grant_ledger_pkey;
+    ALTER TABLE access_grant_ledger ADD PRIMARY KEY (seq);
+  END IF;
+END $$;
+"""
+
+_GRANT_INSERT_SQL = """
+INSERT INTO access_grant_ledger (subject, asset, kind, entry, requested_by, granted_by, reason,
+                                 task_id, granted_at)
+SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s
+ WHERE COALESCE((SELECT entry FROM access_grant_ledger
+                  WHERE subject = %s AND asset = %s AND kind = %s
+                  ORDER BY seq DESC LIMIT 1), '') <> %s
+"""
+# One row per ACT. An act is appended only when it CHANGES the grant's latest state: a second grant
+# of a granted key, or a second revoke of a revoked one, adds nothing (the first approver stays).
+# Order is the server's `seq`, never `granted_at` (a clock; a skewed pod cannot reorder the acts).
+
+_GRANT_SELECT_SQL = """
+SELECT seq, subject, asset, kind, entry, requested_by, granted_by, reason, task_id, granted_at
+  FROM access_grant_ledger ORDER BY seq
+"""
+
+_GRANT_FIELDS = ("seq", "subject", "asset", "kind", "entry", "requested_by", "granted_by", "reason",
+                 "task_id", "granted_at")
+
+
+def _append_entry(entry: str, *, subject: str, asset: str, requested_by: str, granted_by: str,
+                  reason: str, task_id: str, kind: str, now_ms: Optional[int]) -> bool:
+    at = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_GRANT_INSERT_SQL, (subject, asset, kind, entry, requested_by, granted_by,
+                                            reason or "", task_id or "", at,
+                                            subject, asset, kind, entry))
+            added = cur.rowcount > 0
+        conn.commit()
+    if added:
         _grant_audit_log.info(
-            "grant_written granted_by=%s subject=%s asset=%s at=%s",
-            granted_by, subject, asset, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        )
+            "grant_%s granted_by=%s requested_by=%s subject=%s asset=%s at=%s",
+            "recorded" if entry == "grant" else "revoked", granted_by, requested_by, subject, asset,
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at / 1000)))
+    return added
 
-    env = dict(os.environ)
-    env["ASSET_GRANTS_FILE"] = _ASSET_GRANTS_FILE
-    env["PYTHONPATH"] = "/app/policy/sync:" + env.get("PYTHONPATH", "")
-    if _TOPAZ_DIRECTORY_URL:
-        env["TOPAZ_DIRECTORY_URL"] = _TOPAZ_DIRECTORY_URL
-    proc = subprocess.run(
-        ["python", _GRANT_SYNC], env=env, capture_output=True, text=True, timeout=60,
-    )
-    return {
-        "ok": proc.returncode == 0,
-        "exit_code": proc.returncode,  # 0 ok · 2 malformed · 3 dangling · 4 readback
-        "output": (proc.stdout or "")[-800:] + (proc.stderr or "")[-400:],
-    }
+
+def record_grant(*, subject: str, asset: str, requested_by: str, granted_by: str, reason: str,
+                 task_id: str = "", kind: str = "dataset", now_ms: Optional[int] = None) -> bool:
+    """Append one approved grant to the ledger: who asked, who approved, when, why. True when a
+    row was added; False when the same grant was already on record (the first approver stays).
+    Both people are required: a grant that names no requester or no approver is not recorded."""
+    for name, value in (("subject", subject), ("asset", asset), ("requested_by", requested_by),
+                        ("granted_by", granted_by)):
+        if not str(value or "").strip():
+            raise ValueError(f"record_grant: {name} is required")
+    return _append_entry("grant", subject=subject, asset=asset, requested_by=requested_by,
+                         granted_by=granted_by, reason=reason, task_id=task_id, kind=kind,
+                         now_ms=now_ms)
+
+
+def _latest_acts(entries: list) -> dict:
+    """The latest act per grant key, in the ledger's order (`seq`): the one state that counts."""
+    latest: dict = {}
+    for r in entries:
+        latest[_grant_key(r)] = r
+    return latest
+
+
+class NoSuchGrant(ValueError):
+    """A revocation names a grant that is not in effect (not in committed policy, not in the ledger)."""
+
+
+def record_revocation(*, subject: str, asset: str, revoked_by: str, reason: str,
+                      kind: str = "dataset", now_ms: Optional[int] = None) -> bool:
+    """Append one REVOCATION to the ledger: which grant, who revoked it, when, why. Nothing is
+    deleted: the grant row (if the grant was approved at runtime) and this row both stay. True when
+    a row was added; False when the grant was already revoked (the first revoker stays). A
+    revocation names a grant that is in effect, or raises `NoSuchGrant` and writes nothing; the
+    revoker and a reason are required (a revocation that cannot say who and why is not recorded).
+
+    This records the act. The directory loses the reader at the seed's next sync (the one pruner);
+    the BFF never prunes."""
+    for name, value in (("subject", subject), ("asset", asset), ("revoked_by", revoked_by),
+                        ("reason", reason)):
+        if not str(value or "").strip():
+            raise ValueError(f"record_revocation: {name} is required")
+    entries = ledger_entries()
+    key = (subject, asset, kind or "dataset")
+    latest = _latest_acts(entries).get(key)
+    if latest is not None and latest["entry"] == "revoke":
+        return False
+    if key not in {_grant_key(g) for g in desired_grants(entries)}:
+        raise NoSuchGrant(f"no grant of {asset} to {subject} is in effect")
+    return _append_entry("revoke", subject=subject, asset=asset, requested_by=revoked_by,
+                         granted_by=revoked_by, reason=reason, task_id="", kind=kind or "dataset",
+                         now_ms=now_ms)
+
+
+def ledger_entries() -> list[dict[str, Any]]:
+    """Every row on record, oldest first: grants and revocations."""
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_GRANT_SELECT_SQL)
+            return [dict(zip(_GRANT_FIELDS, row)) for row in cur.fetchall()]
+
+
+def ledger_grants() -> list[dict[str, Any]]:
+    """Every approved grant on record, oldest first (the revocation rows are `ledger_entries`)."""
+    return [r for r in ledger_entries() if r["entry"] == "grant"]
+
+
+def committed_grants() -> list[dict[str, Any]]:
+    """The grants in COMMITTED policy (`asset_grants.yaml` as the image ships it). Read only:
+    nothing in this module writes it. A missing file is no grants."""
+    import yaml as _yaml
+
+    try:
+        with open(_ASSET_GRANTS_FILE, encoding="utf-8") as f:
+            data = _yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return []
+    return [dict(g) for g in (data.get("grants") or []) if isinstance(g, dict)]
+
+
+def _grant_key(g: dict) -> tuple:
+    return (g.get("subject"), g.get("asset"), g.get("kind") or "dataset")
+
+
+def _grant_sync_module():
+    """`policy/sync/grant_sync.py` loaded from its file: the ONE place the union, the dangling
+    rule and the apply live (the seed CLI runs the same module)."""
+    import importlib.util
+
+    sync_dir = os.path.dirname(_GRANT_SYNC)
+    if sync_dir not in sys.path:
+        sys.path.insert(0, sync_dir)
+    spec = importlib.util.spec_from_file_location("_iagent_grant_sync", _GRANT_SYNC)
+    mod = importlib.util.module_from_spec(spec)
+    # registered BEFORE it runs: the module defines a dataclass, and `dataclasses` looks its own
+    # module up in sys.modules while the class is being made (an unregistered load fails there)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def desired_grants(ledger: Optional[list] = None) -> list[dict[str, Any]]:
+    """Committed policy plus the ledger's grants, resolved by the latest act on each key: what the
+    directory's readers must be (`grant_sync.union_grants`, the function the seed also calls).
+    Committed policy wins a duplicate grant; a key whose latest act is a revocation is out whatever
+    its source, and a later re-grant puts it back.
+    The sync PRUNES reader relations outside this set, so a ledger grant must always travel with
+    the committed ones."""
+    entries = ledger_entries() if ledger is None else ledger
+    return _grant_sync_module().union_grants(committed_grants(), entries)
+
+
+def _grant_sync_run(raw: dict, *, prune: bool = False, ledger_keys: frozenset = frozenset(),
+                    skipped: Optional[list] = None, out: Any = None, err: Any = None) -> int:
+    """The sealed `grant_sync.run` (validate, prove the negative, sync, readback), called in
+    process with a grants dict. ADD-ONLY by default: the BFF never prunes (one pruner, the seed).
+    The report goes to `out` / `err` (never the process streams, which are shared by every thread).
+    The ONE seam a test replaces: no directory write in a unit test."""
+    return _grant_sync_module().run(
+        raw, _TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393", prune=prune,
+        ledger_keys=ledger_keys, skipped=skipped, out=out, err=err)
+
+
+class DirectoryUnavailable(Exception):
+    """The directory could not be asked whether an asset exists (fail closed: nothing is recorded)."""
+
+
+class UnknownAsset(ValueError):
+    """An approval names an asset that is not in the directory: refused, nothing recorded."""
+
+
+def asset_exists(asset: str, kind: str = "dataset") -> bool:
+    """Is `asset` in the directory? The same point lookup the sync's dangling rule makes
+    (`TopazClient.object_exists`). A `document` is attested by the corpus, not the directory, so it
+    is not asked about (the same rule as `grant_sync.find_dangling`). The seam a test replaces."""
+    if (kind or "dataset") == "document":
+        return True
+    _grant_sync_module()
+    from topaz_sync import TopazClient
+    try:
+        with TopazClient(_TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393") as client:
+            return bool(client.object_exists("dataset", asset))
+    except Exception as exc:  # noqa: BLE001 -- unreachable or unreadable: say so, never "absent"
+        raise DirectoryUnavailable(type(exc).__name__) from exc
+
+
+def apply_ledger_to_directory() -> dict[str, Any]:
+    """Apply committed policy plus the ledger to the directory, ADD-ONLY (`prune=False`): the BFF
+    is never the pruner (one pruner, the seed), so it can never revoke a grant it did not see.
+    A ledger grant whose asset has since disappeared is skipped ALONE and reported in `skipped`;
+    every other grant applies. `{ok, exit_code, output, grants, skipped}`; 0 ok, 2 malformed,
+    3 dangling (a COMMITTED grant), 4 readback.
+
+    The report is collected in this call's own buffers: nothing here redirects the process
+    streams, so two approvals at once each keep their own output."""
+    import io as _io
+
+    entries = ledger_entries()
+    grants = desired_grants(entries)
+    keys = _grant_sync_module().ledger_grant_keys(entries)
+    out, err, skipped = _io.StringIO(), _io.StringIO(), []
+    code = _grant_sync_run({"grants": grants}, prune=False, ledger_keys=keys, skipped=skipped,
+                           out=out, err=err)
+    for g in skipped:
+        logger.warning("ledger grant skipped, asset not in directory: subject=%s asset=%s",
+                       g.subject, g.asset)
+    return {"ok": code == 0, "exit_code": code, "grants": len(grants),
+            "skipped": [{"subject": g.subject, "asset": g.asset} for g in skipped],
+            "output": out.getvalue()[-800:] + err.getvalue()[-400:]}
+
+
+def write_grant_and_sync(*, subject: str, asset: str, granted_by: str, reason: str,
+                         requested_by: str = "", task_id: str = "") -> dict[str, Any]:
+    """Case-1 fulfilment: record the approved grant in the decision ledger (requester, approver,
+    time, reason), then apply the ledger to the directory through the sealed grant sync. No file
+    is written in the pod. Returns {ok, exit_code, output}.
+
+    The record is made FIRST and stands whatever the apply does: a failed apply is repaired by
+    the startup re-apply, never by asking the approver again. A store that cannot record the grant
+    raises, and nothing is applied: a grant with no record is not a grant. An asset that is not
+    in the directory raises `UnknownAsset` (or `DirectoryUnavailable` when the directory cannot be
+    asked) and nothing is recorded. `recorded` is True once the row stands, so a caller can tell
+    "recorded, apply failed (repaired at startup)" from "not recorded".
+
+    AUDIT: the git-blame audit the grant core wants is ADR-0062 section 7's engine-r commit, not
+    built yet. Until then the ledger row (and its audit line) is the record of who approved what."""
+    if not asset_exists(asset):
+        raise UnknownAsset(f"{asset} is not in the directory: no grant is recorded")
+    record_grant(subject=subject, asset=asset, granted_by=granted_by, reason=reason,
+                 requested_by=requested_by or subject, task_id=task_id)
+    return {**apply_ledger_to_directory(), "recorded": True}
+
+
+def reapply_ledger_grants() -> dict[str, Any]:
+    """Startup: re-apply the ledger so a restarted pod keeps every approved grant. Nothing to do
+    (and nothing pruned) when the ledger is empty or no directory is configured."""
+    if not _TOPAZ_DIRECTORY_URL:
+        return {"ok": True, "skipped": "no directory"}
+    if not ledger_entries():
+        return {"ok": True, "skipped": "empty ledger"}
+    return apply_ledger_to_directory()
+
+
+#: Seconds before attempt n+1 of a reader removal (n * this). A seam: tests set it to 0.
+_REMOVE_BACKOFF = 0.5
+
+
+def _delete_reader(subject: str, asset: str, kind: str) -> None:
+    """Delete the ONE `reader` relation of one revoked grant from the directory (a 404 is already
+    gone). It lists nothing and prunes nothing: the seed stays the one pruner of everything else.
+    The seam a test replaces: no directory write in a unit test."""
+    _grant_sync_module()
+    from topaz_sync import DirRelation, TopazClient
+    with TopazClient(_TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393") as client:
+        client.delete_relation(DirRelation(kind, asset, "reader", "user", subject))
+
+
+def _restore_reader(subject: str, asset: str, kind: str) -> None:
+    """Put ONE reader relation back (a re-grant that landed while the removal was in flight).
+    The seam a test replaces; like `_delete_reader` it lists nothing and prunes nothing."""
+    _grant_sync_module()
+    from topaz_sync import DirRelation, TopazClient
+    with TopazClient(_TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393") as client:
+        client.set_relation(DirRelation(kind, asset, "reader", "user", subject))
+
+
+def remove_revoked_reader(subject: str, asset: str, kind: str = "dataset", *,
+                          attempts: int = 3) -> dict[str, Any]:
+    """The revocation, made effective now: remove the one reader a revocation names.
+
+    Called AFTER the revocation is recorded; the record stands whatever this does. The ledger is
+    re-read before every attempt, and the reader is removed only while the grant's LATEST act is
+    still a revocation, and AFTER the delete once more: a re-grant that landed between the read and the
+    delete has its reader put back (`restored`; if that fails the answer says `restored: False`, and the
+    startup re-apply and the seed's next sync restore it). Retries `attempts`
+    times; returns `{"removed": True}`, `{"removed": False, "superseded": True}` (a later grant
+    stands), or `{"removed": False, "error": <exception type>}` when every attempt failed: the
+    caller must say "not yet", never "done". The failed ones are retried by
+    `retry_pending_revocations` (startup) and by repeating the revoke request; the seed's next
+    sync removes it regardless."""
+    key = (subject, asset, kind or "dataset")
+    last = "unknown"
+    for n in range(max(1, attempts)):
+        if n:
+            time.sleep(_REMOVE_BACKOFF * n)
+        try:
+            latest = _latest_acts(ledger_entries()).get(key)
+            if latest is None or latest["entry"] != "revoke":
+                return {"removed": False, "superseded": True}
+            _delete_reader(subject, asset, key[2])
+        except Exception as exc:  # noqa: BLE001 -- recorded already; report, never claim done
+            last = type(exc).__name__
+            logger.warning("revoked reader not removed (attempt %d/%d): subject=%s asset=%s %s",
+                           n + 1, attempts, subject, asset, last)
+            continue
+        # A re-grant can land between the read above and the delete. Re-read AFTER the delete: if the
+        # key's latest act is now a grant, its reader was just removed, so put it back.
+        try:
+            after = _latest_acts(ledger_entries()).get(key)
+        except Exception as exc:  # noqa: BLE001 -- cannot tell whether a grant landed: never say done
+            return {"removed": False, "error": type(exc).__name__}
+        if after is None or after["entry"] != "grant":
+            return {"removed": True}
+        try:
+            _restore_reader(subject, asset, key[2])
+        except Exception as exc:  # noqa: BLE001 -- the reader is gone and a grant stands: say so
+            logger.warning("re-granted reader not restored: subject=%s asset=%s %s",
+                           subject, asset, type(exc).__name__)
+            return {"removed": False, "superseded": True, "restored": False,
+                    "error": type(exc).__name__}
+        return {"removed": False, "superseded": True, "restored": True}
+    return {"removed": False, "error": last}
+
+
+def retry_pending_revocations() -> dict[str, Any]:
+    """Startup: remove the reader of every grant whose latest act is a revocation (idempotent: a
+    reader already gone is a no-op), so a revocation whose removal failed is retried without
+    anyone asking. Only keys the ledger itself revokes; nothing else is listed or pruned."""
+    if not _TOPAZ_DIRECTORY_URL:
+        return {"skipped": "no directory"}
+    pending = [k for k, r in _latest_acts(ledger_entries()).items() if r["entry"] == "revoke"]
+    results = [remove_revoked_reader(*k, attempts=1) for k in pending]
+    return {"revoked": len(pending), "removed": sum(1 for r in results if r.get("removed")),
+            "failed": sum(1 for r in results if r.get("error"))}
+
+
+def grants_absent_from_policy(live: Optional[Any] = None) -> dict[str, list]:
+    """The report: grants that enforce but are not in committed policy. `ledger`: approved and
+    recorded, awaiting the commit (ADR-0062 section 7). `directory`: reader relations live in the
+    directory that neither committed policy nor the ledger names (a hand write), when `live`
+    (an iterable of `(subject, asset, kind)`) is given."""
+    committed = {_grant_key(g) for g in committed_grants()}
+    entries = ledger_entries()
+    latest = _latest_acts(entries)
+    rows = [r for r in entries if r["entry"] == "grant"]
+    # a grant whose latest act is a revocation no longer enforces, so it is not "enforcing but
+    # absent from policy"; a re-granted one does again
+    report = {"ledger": [r for k, r in latest.items() if r["entry"] == "grant"
+                         and k not in committed], "directory": []}
+    if live is not None:
+        known = committed | {_grant_key(r) for r in rows}
+        report["directory"] = sorted(k for k in set(live) if k not in known)
+    return report
 
 
 def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, Any]]:
@@ -783,7 +1419,7 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
     with _pg_connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience, payload
+                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience, payload, case_id
                      FROM human_task_projection
                     WHERE task_id = %s AND recipient_id = %s
                     ORDER BY updated_at DESC

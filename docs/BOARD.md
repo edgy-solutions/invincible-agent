@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **155 of 167 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **156 of 169 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 11 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -161,7 +161,7 @@ _Coverage: **155 of 167 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   → [docs/plans/board-migration.md](plans/board-migration.md)
 
 - **broker-advertises-unminted-credential** — HIGH — the mesh-publishing protocol path advertises the PRODUCER'S WRITING CREDENTIAL verbatim, bypassing the scoped-STS minting the broker's own fallback already performs. An authorized reader of one asset receives a long-lived, write-capable key to the whole store. Sibling finding: the same path relays namespace-local hostnames. Both are one missing constraint. [[jupyter-user-token-data-access]] ships behind this, per backend.
-  status: open · owner: agent · repo: dag-tools
+  status: open · owner: agent · repo: dag-tools · blocked-on: step 2 (a namespace-local host is reported, not yet rewritten), step 5, Snowflake and Superset in step 6, and the hard-break gate. The HIGH finding is fixed for S3, ClickHouse and Postgres: steps 1, 3 and 4, and step 6 for Postgres (Order of work).
   → [docs/plans/broker-advertises-unminted-credential.md](plans/broker-advertises-unminted-credential.md)
 
 - **broker-endpoint-env-divergence** — A domain broker re-loads the code location's Definitions in its OWN pod, so every env var that shapes an asset key must match between the two — and three did not, each producing an identical-looking 404. The asset key is assembled from env nobody owns, and identity silently follows any of it.
@@ -259,6 +259,10 @@ _Coverage: **155 of 167 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **enumerate-is-not-resolve** — PROVIDER DONE (3516103), CALLER MISSING — now the single item gating both live ask cases. Engine P is a registered `mesh:enumerateInstances` provider: minted, ontology-classed, three-outcome (members | too_many | unsupported), correct. NOTHING IN ENGINE O DISPATCHES AN ENUMERATE the way /resolve fans out a resolve, so the supervisor cannot reach it — A REGISTRATION IS NOT A REACHABLE CALL ([[a-registration-is-not-a-reachable-call]], instance 2). The disposition ships wired to `ENUMERATE_INSTANCES_URL`, unset, reporting free_text_reason `no_provider` rather than silence, so the gap is visible in logs and assertable in tests and ONE ENV VAR CLOSES IT. REMAINING DELTA IS THE FAN-OUT ONLY — cardinality is ruled (three outcomes, bound 8), the class-vocabulary join is closed (`referent` carries the class URI), lifetime is settled (live from the store, no registry). What is left is a provider-agnostic dispatch in Engine O, copying /resolve. Routed to the option-source lane. MEASURED CONSEQUENCE, and the probe it asked for CORRECTED THE BOUND: ruled at 8 while its own example was "nine capabilities is a menu", now 10, so Capability's 9 IS a menu and H06 gets a real one; Project at 14 still `too_many` — but it DOES give two of the four spoken-mandatory slots real menus (process_id n=2, tech_id n=5), and it converts `no_provider` into a provider-reported reason, which is the difference between a boundary and a fudge.
   status: open · owner: agent
   → [docs/plans/enumerate-is-not-resolve.md](plans/enumerate-is-not-resolve.md)
+
+- **fin-inputs-resolver** — Behind `FIN_DATASET_URN`, a declared finance measure computes over rows read as the caller from one catalogued asset. Unset, the seed answers exactly as today.
+  status: open · owner: lane/fin · blocked-on: nothing. The sandbox sets the flag from 0.4.81 (#277); measured live 3 of 3 on 0.4.80.
+  → [docs/plans/fin-inputs-resolver.md](plans/fin-inputs-resolver.md)
 
 - **first-viewer-critical-path** — TRIAGE — FOUR load-bearing now (a prerequisite the triage missed was found by item 1's live witness: no asset is both granted and fetchable, so the data path serves nothing — inserted ahead of da-collects). Of 27 live board items, originally THREE were load-bearing for "one other person can use this", in a stated order. The other 24 sort into demo-day operational risk (3, now a runbook not board work) and hygiene/posture/architecture (21). The goal is three items away, not thirty-nine, and this packet names which and why the other 24 are not.
   status: open · owner: human · blocked-on: nothing — the scope sentence is ANSWERED (2026-08-15): Tier-3 row 8 IS in scope, so the path is three items in the order stated below. What remains is building them.

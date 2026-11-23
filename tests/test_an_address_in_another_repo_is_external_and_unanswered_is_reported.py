@@ -364,3 +364,51 @@ def test_for_is_not_an_addressee_line(tmp_path):
     assert got.addressee is None and unaddressed([got]) == [got]
     both = parse_packet(_w(tmp_path, "b.md", "# P\n\nfor: ia-74/lane/74\nto: cortex-ui/master\n"))
     assert (both.addressee, both.kind, both.source) == ("cortex-ui/master", "external", "to")
+
+
+# ── ruled 2026-11-12/13: packets are placed, never committed, so they are dated by FILENAME ─────
+
+def test_a_packet_is_dated_by_its_filename():
+    from datetime import datetime, timezone
+
+    from _lane_census import _packet_epoch
+    want = datetime(2026, 11, 12, tzinfo=timezone.utc).timestamp()
+    assert _packet_epoch("sessions/2026-11-12-packet-to-x.md") == want
+    assert _packet_epoch("2026-11-12-packet-to-x.md") == want
+    # controls: no date, and a date that does not exist, are None -- never a guessed time
+    assert _packet_epoch("sessions/packet-to-x.md") is None
+    assert _packet_epoch("sessions/2026-13-40-packet.md") is None
+
+
+def _no_branch_line(out: str, lane: str) -> str:
+    return next(l for l in out.splitlines() if f"NO BRANCH  {lane}" in l)
+
+
+@needs_git
+def test_an_uncommitted_packet_prints_its_filename_age(gitrepo):
+    main, _ = gitrepo
+    (main / "sessions" / "2026-10-02-packet.md").write_text(
+        "# P\n\nfrom: ia-74/lane/74\nto: ia-placed/lane/placed\n", encoding="utf-8")
+    line = _no_branch_line(_census(main), "placed")
+    assert "1 unread (" in line and "?" not in line, line
+    assert line.split("1 unread (", 1)[1].startswith(tuple("123456789")), line
+
+
+@needs_git
+def test_control_an_undated_packet_prints_no_age(gitrepo):
+    main, _ = gitrepo
+    (main / "sessions" / "packet-undated.md").write_text(
+        "# P\n\nfrom: ia-74/lane/74\nto: ia-placed/lane/placed\n", encoding="utf-8")
+    assert "1 unread (?)" in _no_branch_line(_census(main), "placed")
+
+
+@needs_git
+def test_NOT_COMMITTED_counts_a_gitignored_packet(gitrepo):
+    """sessions/ is gitignored since 2026-11-12. The untracked listing alone hid every packet."""
+    main, wt = gitrepo
+    (wt / ".gitignore").write_text("sessions/\n", encoding="utf-8")
+    (wt / "sessions").mkdir(exist_ok=True)
+    (wt / "sessions" / "2026-11-12-placed.md").write_text("# P\n\nto: ia-74/lane/74\n", encoding="utf-8")
+    out = _census(main)
+    assert "NOT COMMITTED" in out, out
+    assert "1 distinct uncommitted packet(s)" in out, out

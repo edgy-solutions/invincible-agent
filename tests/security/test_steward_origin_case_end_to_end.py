@@ -57,6 +57,7 @@ from tests.test_an_origin_suggestion_runs_as_a_case import (  # noqa: F401 -- fi
     CONFIRM, _real_policy, _run, _suggestion, registered, writer, _emitted)
 from tests.test_ingest_status_projection import (
     _SqliteConnCm, _status_columns, ist)
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 ALICE = "alice@example.com"      # the dropper
 BOB = "bob@example.com"          # SUSTAINMENT, member of every program
@@ -413,6 +414,7 @@ async def _accept_through_the_route(g, rec, monkeypatch):
     monkeypatch.setattr(gateway, "_read_accepted_origin", _read_origin)
     # the route admits the named steward on the case; the real holder lookup is Postgres
     monkeypatch.setattr("src.iagent.human_tasks.holds_task_on_case", lambda case_id, who: True)
+    route_viewer_tasks_through(monkeypatch, a_case_with_no_label=True)
     req = gateway.OriginWriteRequest(case_id="C-1", **{k: rec[k] for k in (
         "artifact_id", "dropped_by", "origin", "evidence", "approval_chain")})
     return await gateway.write_origin_route(req, current_user=_case_runner())
@@ -506,7 +508,8 @@ async def test_arm2_ACCEPTED_on_awaiting_origin_files_the_promotion_and_promotio
     got = _assert_visible(g, NOTICE, BOB, ["SUSTAINMENT"], prog)
     assert got["sources"][0]["origin"]["resolved_by"] == "record", got["sources"][0]
     assert prog.calls == [("prog-x", BOB)], prog.calls
-    # The dropper cannot attest the very same filed payload.
+    # The dropper cannot attest the very same filed payload (under `second_party`, ruled 2026-11-09).
+    task["payload"]["attestation"] = {"mode": "second_party", "excluded": [ALICE]}
     with pytest.raises(promotion.PromotionRefused) as ei:
         promotion.act(
             task["payload"], decision="promoted", acted_by=ALICE, audience=task["audience"],
@@ -619,7 +622,8 @@ def test_arm4_a_STEWARD_promoting_a_no_origin_drop_opens_it_to_the_domain():
 
 # ── 5. the dropper cannot attest ──────────────────────────────────────────────────────────────
 
-def test_arm5_the_DROPPER_cannot_attest_and_nothing_opens():
+def test_arm5_the_DROPPER_cannot_attest_and_nothing_opens(monkeypatch):
+    monkeypatch.setattr(promotion, "_declared_attestation", lambda ck: "second_party")
     g = _world()
     ledger = _Ledger()
     with pytest.raises(promotion.PromotionRefused) as ei:

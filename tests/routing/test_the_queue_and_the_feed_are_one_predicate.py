@@ -5,9 +5,9 @@ vanish. Two defects met: the REST WHERE and the feed WHERE were the same predica
 with no seal joining them, and a timeout wrote nothing to `human_task_projection`, so the row
 stayed `pending` for ever and both surfaces offered a task nobody could act on.
 
-  a. REST (`list_tasks_for`'s real SQL) and the feed (the WHERE the proxy really injects), run on
-     the same one-case table, return the same ids -- and exactly {pending -> viewer}.
-  b. The proxy's injected WHERE is `human_tasks.inbox_where_literal(<escaped viewer>)`.
+  a. REST (`list_tasks_for`'s real SQL) returns exactly {pending -> viewer}. (There was a feed; the
+     proxy no longer streams the inbox, ADR-0068 s8, so there is one reader.)
+  b. The proxy refuses the task table and makes no upstream call.
   c. An expired human_await POSTs `/internal/human_tasks/expire` with the step's task_id and
      workflow_id; its result still reads TIMED_OUT / timed_out; a 403 changes neither.
   d. `expire_open_task` touches only pending rows, and honours the workflow_id scope.
@@ -31,7 +31,6 @@ for _p in (str(_RA), str(_REPO)):
 
 httpx = pytest.importorskip("httpx")
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway  # noqa: E402
 from src.iagent import human_tasks as ht  # noqa: E402
@@ -110,47 +109,45 @@ def db(monkeypatch):
     return d
 
 
-@pytest.fixture
-def feed(monkeypatch):
-    """Call the REAL proxy as VIEWER with only the upstream httpx client faked; yield the WHERE it sent."""
-    sent: dict = {}
+def test_a_REST_offers_exactly_the_viewers_open_task(db):
+    """There is no feed to agree with any more (ADR-0068 s8: the proxy no longer streams the inbox);
+    the REST list is the one reader, and it offers exactly {pending -> viewer}."""
+    rest = {r["id"] for r in ht.list_tasks_for(VIEWER)}
+    assert rest == {"pending-viewer"}, f"the viewer's open tasks are {sorted(rest)}"
 
-    class _Resp:
-        status_code = 200
-        headers = {"electric-handle": "h", "electric-offset": "o", "electric-up-to-date": "true"}
-        content = b"[]"
+
+def test_b_the_proxy_no_longer_streams_the_inbox(monkeypatch):
+    """The proxy REFUSES the task table: no upstream call is made. The seals of the refusal are in
+    tests/test_the_shape_proxy_serves_only_its_allow_list.py."""
+    monkeypatch.setenv("ELECTRIC_SHAPES_FILE", str(_REPO / "policy" / "electric_shapes.yaml"))
+    import asyncio
+
+    from fastapi import HTTPException
+
+    called = []
 
     class _Client:
         def __init__(self, *a, **k): ...
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
         async def get(self, url, params=None, **k):
-            sent["params"] = params
-            return _Resp()
+            called.append(params)
+            raise AssertionError("the proxy reached upstream for the task table")
 
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
-    user = type("U", (), {"authz_id": VIEWER, "id": VIEWER, "sub": VIEWER, "email": VIEWER,
-                          "persona": None, "entitled_domains": [], "is_authenticated": True})()
-    gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
-    try:
-        with TestClient(gateway.app) as c:
-            r = c.get("/electric/shape", params={"table": "human_task_projection"})
-            assert r.status_code == 200
-        yield sent["params"]["where"]
-    finally:
-        gateway.app.dependency_overrides.clear()
 
+    class _Req:
+        class query_params:
+            @staticmethod
+            def multi_items():
+                return [("table", "human_task_projection")]
 
-def test_a_REST_and_the_feed_agree_on_one_cases_tasks(db, feed):
-    rest = {r["id"] for r in ht.list_tasks_for(VIEWER)}
-    streamed = {r["id"] for r in db.execute(
-        f"SELECT id FROM human_task_projection WHERE {feed}")}
-    assert rest == streamed, f"REST offers {sorted(rest)}, the feed streams {sorted(streamed)}"
-    assert rest == {"pending-viewer"}, f"the viewer's open tasks are {sorted(rest)}"
-
-
-def test_b_the_proxy_injects_the_shared_definition(feed):
-    assert feed == ht.inbox_where_literal(gateway._escape_identity_literal(VIEWER))
+    user = type("U", (), {"authz_id": VIEWER, "id": VIEWER, "email": VIEWER})()
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(gateway.electric_shape_proxy(_Req(), user))
+    assert e.value.status_code == 403
+    assert e.value.detail["refusal"]["policy_id"] == "electric_shapes"
+    assert called == []
 
 
 def test_d_expire_touches_only_pending_rows_and_honours_the_workflow_scope(db):

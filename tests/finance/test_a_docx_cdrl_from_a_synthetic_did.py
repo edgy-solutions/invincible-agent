@@ -27,6 +27,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import docx
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
@@ -47,6 +48,8 @@ NAME = "cdrl_a002_cost_performance_docx"
 ROW = SAMPLE / f"{NAME}.yaml"
 TEMPLATE = SAMPLE / "cdrl_a002_cost_performance.docx"
 AS_OF = "2026-10-28"
+DATA_AS_OF = "2026-09-30"  # the source's own as-of, distinct from the generation date
+NO_SOURCE_AS_OF = "sample data (notional seed): no as-of"  # via the route: a seed export
 MEDIA = dict(EXPECT.values())["docx"]
 IDX = "fin_performance_indices"
 FILE = f"fin-cdrl-{NAME}-{PROGRAM}.docx"
@@ -62,9 +65,15 @@ def _run_gen(script: str, out: Path) -> str:
     return r.stdout.strip()
 
 
+@pytest.fixture(autouse=True)
+def _server_clock(monkeypatch):
+    """The generation date is the server's clock (ruling 2026-11-21): pin it, never send it."""
+    monkeypatch.setattr(engine, "_request_date", lambda: AS_OF)
+
+
 def _post(c, user=ALICE):
     return c.post("/cdrl_export", json={
-        "profile": NAME, "program_id": PROGRAM, "user_email": user, "as_of": AS_OF})
+        "profile": NAME, "program_id": PROGRAM, "user_email": user})
 
 
 def _render(value, fmt):
@@ -129,7 +138,7 @@ def test_3_the_delivered_file_holds_each_fact_the_header_row_and_one_row_per_per
     program = next(p for p in engine.STATE.programs if p.program_id == PROGRAM)
     raw = _raw()
     t1 = _cells(doc.tables[0])
-    assert [row[1] for row in t1] == [program.name, PROGRAM, AS_OF, raw["cdrl"]["item"],
+    assert [row[1] for row in t1] == [program.name, PROGRAM, NO_SOURCE_AS_OF, raw["cdrl"]["item"],
                                       raw["cdrl"]["data_item"]]
     assert [row[0] for row in t1] == ["Program", "Program id", "As of", "CDRL item", "Data item"]
 
@@ -148,7 +157,7 @@ def test_3_the_delivered_file_holds_each_fact_the_header_row_and_one_row_per_per
 def test_3_an_undefined_period_shows_the_reason_string(profiles, tmp_path, monkeypatch):
     state = _spent_state(monkeypatch)
     path, _ = cdrl.build_cdrl(
-        state, profiles[NAME], program_id=PROGRAM, as_of=AS_OF, out_dir=tmp_path,
+        state, profiles[NAME], program_id=PROGRAM, data_as_of=DATA_AS_OF, generated_on=AS_OF, out_dir=tmp_path,
         run_source=lambda fn, params: engine._cdrl_source(fn, params, caller="alice@example.com"))
     t2 = _cells(docx.Document(str(path)).tables[1])
     assert t2[1:] and {row[4] for row in t2[1:]} == {"undefined: budget_spent"}
@@ -163,7 +172,7 @@ def test_3_an_absent_value_is_an_empty_cell_and_no_template_text_survives(profil
             env = {**env, "rows": list(env["rows"])[1:]}
         return env, method
 
-    path, _ = cdrl.build_cdrl(engine.STATE, profiles[NAME], program_id=PROGRAM, as_of=AS_OF,
+    path, _ = cdrl.build_cdrl(engine.STATE, profiles[NAME], program_id=PROGRAM, data_as_of=DATA_AS_OF, generated_on=AS_OF,
                               out_dir=tmp_path, run_source=source)
     t2 = _cells(docx.Document(str(path)).tables[1])
     tpl2 = _cells(docx.Document(str(TEMPLATE)).tables[1])
@@ -214,12 +223,12 @@ def test_5_the_bff_picker_lists_what_engine_fin_serves(served, monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-        async def get(self, url, headers=None):
+        async def get(self, url, params=None, headers=None):
             assert url.startswith(gw._ENGINE_FIN_URL)
-            return c.get(url[len(gw._ENGINE_FIN_URL):], headers=headers)
+            return c.get(url[len(gw._ENGINE_FIN_URL):], params=params, headers=headers)
 
     monkeypatch.setattr(gw.httpx, "AsyncClient", _Client)
     got = asyncio.run(gw.export_cdrl_profiles(_Req(), _User()))
-    assert got == c.get("/cdrl_profiles").json()
+    assert got == c.get("/cdrl_profiles", params={"user_email": _User.authz_id}).json()
     row = next(p for p in got if p["name"] == NAME)
     assert row["label"] == _raw()["label"] and row["format"] == "docx"

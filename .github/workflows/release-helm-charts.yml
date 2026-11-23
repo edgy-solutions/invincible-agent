@@ -78,18 +78,17 @@ jobs:
       # A version number that does not move while its contents do is unfalsifiable from
       # the outside — the same class as a `:latest` image tag. So the drift FAILS here,
       # at the only point that can still see both halves.
+      #
+      # A PENDING BUMP IS NOT DRIFT (the architect, via Chris, 2026-11-08). A CHANGELOG entry
+      # `## <next> — not yet cut` says the bump is owed and names a version that does not exist
+      # yet. The run then publishes NOTHING and stays green; every step below is gated on
+      # `pending`. Without it, every helm/** PR between cuts turned master red (#277, #262,
+      # #300, #294). Neither a bump nor that entry is still refused. The logic and its verdicts
+      # are in scripts/chart_version_seal.py, sealed by tests/test_chart_version_seal.py.
       - name: Refuse to publish a chart whose version did not move
+        id: version_seal
         if: github.event_name != 'workflow_dispatch'
-        run: |
-          version="$(helm show chart helm/invincible-agent | awk '/^version:/ {print $2}')"
-          tag="invincible-agent-${version}"
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "::error::helm/** changed but Chart.yaml is still at ${version}, which is already published as ${tag}."
-            echo "::error::Bump helm/invincible-agent/Chart.yaml. Publishing nothing here means a deployment installing"
-            echo "::error::'the latest chart' silently gets the OLD contents — the failure mode that left engines unregistered."
-            exit 1
-          fi
-          echo "Chart version ${version} is unpublished — proceeding to release."
+        run: python scripts/chart_version_seal.py helm/invincible-agent
 
       # ── RETAG EVERY IMAGE TO THE CHART VERSION, BY DIGEST ────────────────────────────────
       #
@@ -106,6 +105,7 @@ jobs:
       # in this file would be right the day it was written and silently short the day a service
       # was added.
       - name: Log in to GHCR
+        if: steps.version_seal.outputs.pending != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -113,6 +113,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Retag images to the chart version, by digest
+        if: steps.version_seal.outputs.pending != 'true'
         id: retag
         run: |
           version="${{ inputs.chart_version }}"
@@ -154,6 +155,7 @@ jobs:
       # names, and the controls (fake digest, short commit, unpushed tag, wrong digest) must fail.
       # Any non-zero, 3 included, fails the release.
       - name: Verify the release tags resolve to the manifest digests
+        if: steps.version_seal.outputs.pending != 'true'
         run: |
           rc=0
           python scripts/retag_images_by_digest.py --verify \
@@ -178,6 +180,7 @@ jobs:
       # last command's exit and a refusal would read as 0. The renders hold Secrets and stay in
       # RUNNER_TEMP, never printed.
       - name: Write the release values (every image by digest) and seal the render
+        if: steps.version_seal.outputs.pending != 'true'
         run: |
           version="${{ steps.retag.outputs.version }}"
           out="values-release-${version}.yaml"
@@ -210,7 +213,7 @@ jobs:
       # PUBLISHED ONLY NOW, after every image is tagged and read back. chart-releaser used to run
       # first, which is how a release came to exist over images that did not.
       - name: Run chart-releaser
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && steps.version_seal.outputs.pending != 'true'
         uses: helm/chart-releaser-action@v1.6.0
         with:
           charts_dir: helm
@@ -224,6 +227,7 @@ jobs:
       # MISSING and what FAILED — a manifest listing only successes is a claim that its list is
       # everything. Anyone can verify it against the registry without trusting this run.
       - name: Attach the digest manifest to the chart release
+        if: steps.version_seal.outputs.pending != 'true'
         run: |
           gh release upload "invincible-agent-${{ steps.retag.outputs.version }}" \
             image-digests.json "values-release-${{ steps.retag.outputs.version }}.yaml" --clobber

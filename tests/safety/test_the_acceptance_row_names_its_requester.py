@@ -108,7 +108,9 @@ class _Client:
         return {}
 
     def runner_posts(self):
-        return [p for p in self.posts if "/WorkflowRunner/" in p["url"]]
+        # the `opened_task` question to the case is not a dispatch; only `run/send` opens one
+        return [p for p in self.posts if "/WorkflowRunner/" in p["url"]
+                and not p["url"].endswith("/opened_task")]
 
 
 @pytest.mark.asyncio

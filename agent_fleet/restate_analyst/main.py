@@ -49,8 +49,9 @@ except IndexError:
 try:
     from telemetry import (safe_observe, safe_update_observation,
                            set_trace_standard, observed_trace, build_trace_values, MAPPING,
-                           litellm_metadata,
-                           mint_boundary_ids, boundary_parent, emit_boundary)
+                           litellm_metadata, trace_id_for,
+                           mint_boundary_ids, boundary_parent, emit_boundary, emit_misses,
+                           instrument_model_calls)
 except ImportError:
     def safe_observe(**kwargs):
         def decorator(func):
@@ -68,13 +69,19 @@ except ImportError:
         return {}
     def litellm_metadata(operation, **_k):
         return {}
+    def trace_id_for(seed):
+        return None
     def mint_boundary_ids(_seed=None):
         return {"trace_id": None, "span_id": None}
     @_cm
-    def boundary_parent(_ids):
+    def boundary_parent(_ids, *, mapping=None, values=None):
         yield {"started_at": None, "ended_at": None}
     def emit_boundary(*_a, **_k):
         pass
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
+    def instrument_model_calls(model, **_k):
+        return model
     MAPPING = None
 
 from fastapi import FastAPI, Request
@@ -602,12 +609,38 @@ def _supplied_resolution(request: dict) -> dict | None:
     return None
 
 
+#: A provider refusing the person's own relayed token, in Engine O's `instance_match` vocabulary
+#: (Engine O holds the same tuple, `_PERSON_TOKEN_REFUSALS`; a seal keeps them equal). Both are
+#: terminal here.
+_PERSON_TOKEN_REFUSALS = ("session_expired", "caller_refused")
+
+
+def _person_token_refusal(reason: str) -> "restate.TerminalError":
+    """The terminal error for a refused person token. FIXED text: never the token, never a body."""
+    if reason == "session_expired":
+        return restate.TerminalError(
+            "session_expired: the person's session has expired; sign in again",
+            status_code=401,
+        )
+    return restate.TerminalError(
+        "caller_refused: Engine O refused the person's token; sign in again",
+        status_code=403,
+    )
+
+
 def _resolve_ontology(
     task_description: str,
     user_email: str = "",
     entitled_domains: list | None = None,
+    *,
+    user_jwt: str = "",
 ) -> dict:
     """Call Engine O to resolve the task description into semantic context.
+
+    THE PERSON'S OWN BEARER TRAVELS (ruled 2026-11-19, Q2, part 3): when the task carries its
+    ``user_jwt`` it is relayed as the Authorization header, so Engine O binds the person from a
+    verified token; without one the call carries this engine's service token, as before. The
+    token is never printed and is in no error text.
 
     This function is executed inside ``ctx.run()`` for durable execution —
     if the pod crashes mid-flight, Restate will replay and skip this step
@@ -633,6 +666,12 @@ def _resolve_ontology(
     A TIMED-OUT CALL REFUSES, IT IS NOT RETRIED. A read timeout raises a terminal 504
     ``resolution_timeout`` (see the comment at the post): inside ``ctx.run`` an ordinary
     exception is retried by Restate, and each retry is another full model call.
+
+    A REFUSED PERSON TOKEN IS TERMINAL, NEVER RETRIED (ruled 2026-11-19, Q2 condition 3). On a
+    relayed token a 401, or a 403 naming ``ExpiredSignatureError``, is a terminal 401
+    ``session_expired``; any other 403 is a terminal 403 ``caller_refused``. An Engine O answer
+    whose ``provenance.instance_match`` names either reason is raised the same way, on both
+    paths. The service-token path keeps ``raise_for_status`` (retryable), as before.
     """
     if not str(user_email or "").strip():
         raise restate.TerminalError(
@@ -677,6 +716,12 @@ def _resolve_ontology(
     # ordinary exception is retried by Restate on every read timeout; one prompt was
     # re-resolved 4 and 8 times, each a full model call that Engine O completed. A ReadTimeout
     # therefore becomes a TERMINAL 504. ConnectionError and HTTPError stay retryable.
+    _token = str(user_jwt or "").strip()
+    if _token.lower() == "bearer":
+        _token = ""
+    elif _token.lower().startswith("bearer "):  # the gateway may store the header form
+        _token = _token[7:].strip()
+    _relay_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
     try:
         resp = requests.post(
             ONTOLOGY_RESOLVE_URL,
@@ -686,7 +731,7 @@ def _resolve_ontology(
             # `user_email` in the payload above: this is the call whose dropped identity
             # [[identity-reaches-enforcement-point]] was written for, and the credential must not
             # be mistaken for the fix to that. Two identities, one request, on purpose.
-            headers=outbound_auth_headers(
+            headers=_relay_headers or outbound_auth_headers(
                 client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
             ),
         )
@@ -697,8 +742,16 @@ def _resolve_ontology(
             f"the supervisor decides",
             status_code=504,
         ) from exc
+    if _relay_headers and resp.status_code in (401, 403):
+        if resp.status_code == 401 or "ExpiredSignatureError" in (resp.text or ""):
+            raise _person_token_refusal("session_expired")
+        raise _person_token_refusal("caller_refused")
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    _refusal = ((data or {}).get("provenance") or {}).get("instance_match")
+    if _refusal in _PERSON_TOKEN_REFUSALS:
+        raise _person_token_refusal(_refusal)
+    return data
 
 
 from orchestrator.auth import current_user_token, current_trace_id
@@ -784,6 +837,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 task.task_description,
                 resolve_caller_email,
                 request.get("entitled_domains") or [],
+                user_jwt=auth_header or "",
             ),
         )
 
@@ -799,7 +853,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
         from smolagents import tool
 
-        @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
+        @safe_observe(as_type="retriever", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
             # ADR-0016 r2 Open Items: agent_id partition.
             # Engine A and Engine E share the Mem0 collection. Without
@@ -1220,20 +1274,21 @@ to decide the next call. Use only what the tools return — never invent data.
                 agent_prompt += f"\n\n{tool_reminder}"
 
                 model = get_smolagent_model()
+                model = instrument_model_calls(model, name="analyst.model")
                 
                 # Generation->trace linking (ADR-0038, v4): the replay-safe boundary at the
                 # run-smolagent call below opens + JOINS + enriches the analyst trace on a
                 # JOURNALED trace id (same seed, so the join is unchanged). Here, stamp the SAME
-                # joined id (create_trace_id(seed=request trace id)) onto the model's LiteLLM
+                # joined id (trace_id_for(request trace id): a 32-hex id is used verbatim, anything else is
+                # hashed) onto the model's LiteLLM
                 # metadata so smolagents' generations attach to that trace — they also nest via
                 # the active OTel span. Per-request model -> request-scoped; fail-soft.
                 try:
                     _tid = current_trace_id.get()
                     if _tid and isinstance(getattr(model, "kwargs", None), dict):
-                        from langfuse import get_client as _get_client
                         model.kwargs.setdefault("metadata", litellm_metadata(
                             "analyst generation",
-                            trace_id=_get_client().create_trace_id(seed=_tid),
+                            trace_id=trace_id_for(_tid),
                             user_id=user_id,
                             session_id=request.get("session_id"),
                             tags=[t for t in ("restate_analyst", routed_verb_iri) if t],
@@ -1434,7 +1489,8 @@ to decide the next call. Use only what the tools return — never invent data.
                 )
         else:
             # v4 analyst-trace JOIN (ADR-0038): open the trace on the request's id
-            # (create_trace_id(seed=X-Trace-Id)) + enrich, so cortex-ui's trace id unifies the
+            # (X-Trace-Id seeds trace_id_for: a 32-hex id is used verbatim, anything else is hashed)
+            # + enrich, so cortex-ui's trace id unifies the
             # analyst trace, its run_smolagent child span, and the LLM generations. Fail-soft.
             # REPLAY-SAFE boundary (ADR-0038). The previous shape wrapped this ctx.run in
             # `observed_trace`, which opens a RECORDING span with a fresh id on every entry
@@ -1456,7 +1512,7 @@ to decide the next call. Use only what the tools return — never invent data.
                 subject_class=(semantic_ctx.get("resolved_uri") or None),
                 resolved_via=("supervisor" if semantic_ctx.get("from_supervisor") else "engine_o"),
             )
-            with boundary_parent(_boundary_ids) as _boundary_timing:
+            with boundary_parent(_boundary_ids, mapping=MAPPING, values=_boundary_values) as _boundary_timing:
                 raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
             await ctx.run(
                 "emit-analyst-boundary",
@@ -2139,6 +2195,11 @@ async def _run_grouped_human_await(
     ctx.set("doc_type", doc_type)
     ctx.set("pipeline_version", request.get("pipeline_version") or "")
     ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
+    # REPLAY-SAFE: a review suspended before this key existed has no journaled write for it, and
+    # Restate replays the pre-await commands in order. Its journaled input lacks the key, so the
+    # write is skipped for it; the reader treats the absent state as "" (grouped_review_workflow.py).
+    if "artifact_uri" in request:
+        ctx.set("artifact_uri", str(request.get("artifact_uri") or ""))
     # AUTHORITY GATE INPUT — the audience that may settle this review, journalled at the
     # site that derived it from the definition. `submit_decision` reads it back to ask
     # Topaz `can_act`; see `_audience_key` for why it cannot come from the submission.
@@ -2523,6 +2584,11 @@ async def _run_definition(
                 lambda t=task, k=step_kind, c=(case or {}).get("case_id"): _register_human_task(
                     workflow_id, t, k, c),
             )
+            # Tell the case the id it just minted, so the door can ask the case for it (the first
+            # task wins) instead of deriving the format.
+            if workflow_service == "WorkflowRunner" and (case or {}).get("case_id"):
+                await ctx.workflow_call(
+                    task_opened, key=case["case_id"], arg={"task_id": task["id"]})
             # ── THE DEADLINE RACE, AND IT IS DURABLE ON BOTH ARMS ──────────────────────────────
             #
             # No `deadline_seconds` means wait forever — today's behaviour, and the default stays
@@ -2892,6 +2958,11 @@ async def _run_definition(
             # it disposes nothing.
             if step.disposes is not None:
                 results[-1]["disposition"] = step.disposes
+                # A DISPOSING EMIT ENDS THE DEFINITION (ruled 2026-11-10): the decision is made
+                # and sent, so the instance returns its outcome now. A step after it would keep
+                # a decided case's workflow alive -- October's maint_release emitted `released`
+                # and then waited on a `tier_ack` nobody sends, which held its episode open.
+                break
 
     # ── THE TERMINAL OUTCOME, AND WHY IT IS NOT `status` ──────────────────────────────────────
     #
@@ -4268,10 +4339,11 @@ except ImportError:
 # every definition its own instance. Generic: what it runs is entirely triggers, decision tables
 # and definitions under policy/. Registered unconditionally, for the reason SafetyAcceptance is.
 try:
-    from workflow_runner import case_episode, workflow_runner  # noqa: E402  — container path
+    from workflow_runner import case_episode, task_opened, workflow_runner  # noqa: E402  — container path
 except ImportError:
     from agent_fleet.restate_analyst.workflow_runner import (  # noqa: E402
         case_episode,
+        task_opened,
         workflow_runner,
     )
 
@@ -4547,7 +4619,7 @@ async def approve_task(
 @app.get("/health")
 async def health() -> dict:
     """Simple liveness probe."""
-    return {"status": "ok", "engine": "restate_analyst"}
+    return {"status": "ok", "engine": "restate_analyst", "telemetry_misses": emit_misses()}
 
 
 # ---------------------------------------------------------------------------

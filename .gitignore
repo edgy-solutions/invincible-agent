@@ -223,3 +223,7 @@ values-*.local.yaml
 list.md
 dist/
 .pyodide-cache/
+
+# Session files (lane packets and handoffs) are PLACED, NEVER COMMITTED -- ruled 2026-11-12,
+# all repos. They stay local files under sessions/; see CLAUDE.md and AGENTS.md.
+sessions/

@@ -24,8 +24,10 @@ is drafted under a name the person used. Both are built (§10). Runs 62 to 64, o
 and approval with the contradiction caught, and run 62 reads `no`, as it should. The architect ruled the bar met on run 63
 and the ADR Proposed (2026-11-05). That reading is instrument v4's. The same ruling makes an outcome word that differs
 from the person's own word a slot fault. Run 63 has one: the person said "If it is escalated", and the draft kept
-`escalate`. The check is built (instrument v5) and reads run 63 `no` on slot, so under v5 no stored run meets the
-bar. The grammar line on answer words is in, and no run has used it (§10).
+`escalate`. The check is built (instrument v5) and reads run 63 `no` on slot, so under v5 no run from 41 to 64 meets
+the bar. The architect accepted the grammar line on answer words as merged (2026-11-07). Runs 65 to 67, on it, write no
+answer word in another form. Run 67 reads `yes` on route, slot and approval under v5 with the contradiction caught, and
+runs 65 and 66 read `no` (§10). Whether that meets the bar is the architect's.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2888,6 +2890,60 @@ other run already read `no` under v4.
 **For the architect.** The second group is a question the check decides one way. The word is the person's, said of
 something else. v5 reads it as a fault, as the expected bundle does. If a word the person says anywhere should count, that
 is a ruling, and the check would then read the transcript rather than the bundle.
+
+#### 2026-11-07: the ruling on the answer-word line
+
+The architect reviewed the line and accepted it as merged (2026-11-07, relayed by Chris):
+
+> #271's answer-word line reviewed and accepted as merged: "an answer word is the user's word for the outcome once it
+> has happened, not the verb for the act." It settles the open question: `filed` is the person's outcome word,
+> `recorded` is the model's word for reaching the stage; the slot check charges it. No new line. Runs 65–67 go when the
+> gate is clear.
+
+So the second group above is read as v5 reads it, a slot fault. The line and the check are unchanged.
+
+#### 2026-11-07: runs 65 to 67, on the answer-word line
+
+Three runs at `c2f828aa`, #271's head, one at a time. Master holds the elicitation module and `tests/socratic` unchanged
+since. The runs started once the release read deployed, worker6 read Ready and Dagster listed no active run, on two
+checks in a row. Each is read under v5.
+
+| run | status | route | slot | approval | contradiction | what it reads |
+| --- | --- | --- | --- | --- | --- | --- |
+| 65 | runnable | no | yes | no | caught | the impact review is a wait alone; the acknowledgement's role is `record_keeper` and the disposition's is `engineer` |
+| 66 | runnable | yes | no | yes | missed | the engineering disposition excludes no one |
+| 67 | runnable | **yes** | **yes** | **yes** | caught | nothing in any bar, and no semantic difference from the expected bundle |
+
+- **No run writes an answer word in another form.** `wrong_outcomes` is empty in all three. Of the 24 stored runs read
+  under v5 above, 18 hold at least one. Three runs are a sample, not a rate.
+- **Run 67 reads `yes` on all three bars, with the planted contradiction caught.** No step or route is dropped, and no
+  approval, `excludes` or `requires` reads wrong. No slot is rewritten, and the planted deadline deferral is recorded.
+  It differs from the expected bundle in names only. The line's form shows once inside the run: at turn 11 the draft
+  routed the impact review on `more_information`, where the stage's answers are `approved`, `rejected` and
+  `needs_info`. The loop asked it as a contradiction, and the person answered "No, it cannot end 'more_information'".
+  The loop then asked where `needs_info` leads, and the draft routes it. Run 67 made no model error.
+- **Run 66 reads `no`, and misses the planted contradiction.** The opening says "Any component engineer may take that
+  disposition, including whoever logged the notice". Asked about the program approval's `excludes`, the person says
+  "The person who logged the notice may never sign off either review" (turn 14 in runs 65 and 66, turn 17 in run 67).
+  Runs 65 and 67 then ask the impact review's `excludes` as a contradiction (turns 15 and 18), and the person answers
+  "The submitter is barred from both reviews". Run 66 asks no contradiction on it, and its engineering disposition
+  excludes no one. The one fault is read twice, as the slot bar's `excludes` and as the contradiction missed.
+- **Run 65 reads `no` on route and approval.** The person describes the impact review as an engineer who "looks at the
+  part, the maker and the change class and gives a disposition". The draft holds the wait and drops the render. The
+  acknowledgement's role is `record_keeper`, where the person says "A minor change goes to a component engineer to
+  acknowledge" (turn 20). The disposition's role is `engineer`, where the opening says "Any component engineer may take
+  that disposition". Runs 66 and 67 ask both roles as contradictions, and the person answers `component_engineer`.
+  Run 65 asks neither. Why it does not is not read here. Run 65 made three model errors. Two of its refused patches were
+  positional paths, each refused with the id form to write.
+
+| run | questions | model errors | seconds |
+| --- | --- | --- | --- |
+| 65 | 26 | 3 | 1018 |
+| 66 | 28 | 2 | 858 |
+| 67 | 30 | 0 | 795 |
+
+Under v5, run 67 is the only run from 41 to 67 that meets the bar, and runs 65 and 66 read `no` on faults in their
+drafts. Nothing is flipped. That is for the architect.
 
 ## Consequences
 

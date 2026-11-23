@@ -40,6 +40,7 @@ from src.iagent import origin_writer  # noqa: E402
 # tests/test_a_case_runs_from_trigger_to_terminal.py's own import for why (sys.path, not a
 # package import: `agent_fleet/restate_analyst` is not itself a package).
 from tests.test_a_case_runs_from_trigger_to_terminal import wd  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 BODY = {
     "case_id": "case-9",
@@ -108,6 +109,7 @@ def steward_holds_a_task_on_the_case(monkeypatch):
     refusal of a non-holder is tests/identity/test_the_internal_routes_bound_who_they_name.py."""
     from src.iagent import human_tasks
     monkeypatch.setattr(human_tasks, "holds_task_on_case", lambda case_id, person: True)
+    route_viewer_tasks_through(monkeypatch, a_case_with_no_label=True)
 
 
 @pytest.fixture(autouse=True)

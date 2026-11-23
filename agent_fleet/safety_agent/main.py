@@ -647,6 +647,15 @@ class EnumerateRequest(BaseModel):
     limit: int = 25
 
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health", tags=["ops"])
 async def health() -> Dict[str, Any]:
     """Liveness only.
@@ -660,6 +669,7 @@ async def health() -> Dict[str, Any]:
         "verbs_declared": len(VERBS),
         "registration_incomplete": getattr(app.state, "registration_incomplete", None),
         "note": "verbs_declared is what this image CARRIES, not what the mesh has registered",
+        "telemetry_misses": emit_misses(),
     }
 
 

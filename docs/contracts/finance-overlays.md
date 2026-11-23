@@ -39,6 +39,7 @@ The rules, the same for every kind:
 | measure row | `policy/measure_verbs/` (ships none) | `MEASURE_VERB_OVERLAY_DIRS` | `measure_id` |
 | method row | `policy/measures/` (three EAC rows) | `MEASURE_OVERLAY_DIRS` | `method_id` |
 | export profile | `policy/fin_export_profiles/` (ships none) | `FIN_EXPORT_PROFILE_OVERLAY_DIRS` | `name` |
+| declared instance | none (the seed holds one program) | `FIN_INSTANCE_OVERLAY_DIRS` | `class` and `instance_id` (section 7) |
 
 **Two variables with "measure" in the name.** `MEASURE_VERB_OVERLAY_DIRS` carries measure rows: the
 measures people can ask for and see charted (section 2). `MEASURE_OVERLAY_DIRS` carries method rows:
@@ -57,7 +58,7 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 
 | key | what it holds |
 |---|---|
-| `measure_id` | The row's key. Must be `fin_` then lower-case letters, digits or `_`. Cannot be a built-in measure's id. |
+| `measure_id` | The row's key. Must be `fin_` then lower-case letters, digits or `_`. Cannot be a built-in measure's id, except in a source-only row (below). |
 | `verb` | The name the question is routed by. Cannot be a built-in verb's name. |
 | `name` | The title shown above the figure. |
 | `description` | Optional. Plain words telling the router when this measure is the right one, and when it is not (name the neighbours). |
@@ -68,29 +69,60 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `outputs` | What "undefined" means. It names no result type: every declared measure is a `fin:DeclaredMeasureSeries`. |
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
+| `menu` | Optional. Where the card sits on the menu: what it places, the card it draws as, and who it fits. |
+| `source` | Optional. Where the measure reads when `FIN_DATASET_URN` is set (section 5a): `asset` (the default) or `seed`, the notional model. A dataset row reads its own asset and is refused if it carries one. |
+| `reason` | Required with `source: seed`, refused otherwise. Why the measure stays on the seed under the flag. |
+| `ratified_by` | Required with `source: seed`, refused otherwise. Who ratified that. |
+
+**A source-only row for a built-in measure.** A row whose `measure_id` is a built-in's may carry
+`measure_id`, `source`, `reason` and `ratified_by`, and nothing else; any other key is refused at
+load, so a row can say where a built-in reads but cannot replace it. The platform seeds one, in
+`policy/measure_verbs/fin_funding_status.yaml`:
+
+```yaml
+measure_id: fin_funding_status
+source: seed
+reason: contract carries no funding lines yet
+ratified_by: owner
+```
+
+A deployment whose asset carries funding lines replaces it with an overlay row of the same id
+saying `source: asset`.
 
 **A second kind of row: a dataset row.** A row whose `inputs` holds `dataset` instead of `state` is
-a flow decomposition: it reads named columns of one asset and answers once, with an edge table.
+drawn one of two ways. Drawn as `FLOW_DECOMPOSITION`, it reads named columns of one asset and answers once,
+with an edge table (below); drawn as `MULTI_SERIES`, it answers with a row per period (the next part).
 Design: `docs/plans/fin-variance-decomposition.md`. It uses the same top-level keys, with these
 differences under `inputs` and `render`:
 
 - `inputs.params` is `program_id` only (`window` is refused: this kind has no period axis).
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
-  not consulted), `banner` (required, shown beside every answer), `levels` (at least two distinct
-  column names, root first; the root column is selected by `program_id`), `value` and optionally
-  `per_path`. `value` is a numeric column that is not one of the levels, or exactly
+  not consulted), `banner` (required, shown beside every answer), `contract` (required, below),
+  `levels` (at least two distinct column names, root first; the root column is selected by
+  `program_id`), `value` and optionally `per_path`. `value` is a numeric column that is not one of the levels, or exactly
   `{minus: [a, b]}`: two distinct numeric columns, neither a level, whose difference `a - b` is the
   row's amount (computed per row in exact Decimal). `per_path` is `sum` (the default: every row of
   the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
   group, and a group whose rows disagree is a 502 `asset_contract_violation` with rule
   `varies_within_path`, naming the column(s) and never a value). Anything else is refused at load.
   The row cap counts rows read, before any reduction.
+- `contract` names the dataset contract the asset is read under: `contracts/<contract>.yaml`
+  (`contracts/ev_fixture.yaml` is the worked example; the engine reads that directory, or
+  `DATASET_CONTRACT_DIR`). At load, every column the row names must be one the contract declares,
+  a level a string column and a value column a numeric one, and the root level must be the
+  contract's `scope`; anything else is refused naming the file. On every read the WHOLE contract is
+  enforced, not only the columns the row names, each as a 502 `asset_contract_violation` whose
+  message names the column(s) and never a value: a required column, or one the row names, absent is
+  `missing_column`; a column not of its declared type is `wrong_type`; two rows for one value of the
+  contract's `grain` is `duplicate_key`; and a `dependencies` entry (`by` determines each of
+  `determines`) broken by one `by` value carrying two values of such a column is
+  `not_determined_by`, naming both columns.
 - `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
   `paths` and `other_threshold`.
-- `render.shape` is `FLOW_DECOMPOSITION` (a state row is `MULTI_SERIES`, and a mismatch is refused
-  either way); `render.series` is not required.
+- `render.shape` is `FLOW_DECOMPOSITION` (a state row is always `MULTI_SERIES`, and a state row drawn
+  as a flow is refused); `render.series` is not required.
 - Each edge carries `sign`, one of `"positive"`, `"negative"` or `"zero"` (the sign of the child's
   signed net), and `value`, its absolute value. A child that nets to exactly zero IS emitted
   (`value` 0, `sign` `"zero"`, `node_kind` `"item"`) and its subtree is walked, so every level
@@ -106,6 +138,43 @@ differences under `inputs` and `render`:
   by matching the label.
 - A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
   with rule `refused_by_module`; the message names no row value.
+
+**A dataset row drawn as series.** A dataset row whose `render.shape` is `MULTI_SERIES` reads its
+asset the same way (as the caller, its own URN, `program_id` only, `window` refused) but answers
+with one row per period instead of an edge table. The samples
+`policy/overlays/sample/measure_verbs/fin_ev_cumulative.yaml` and `fin_eac_trend.yaml` are the
+worked examples. The differences from a flow row:
+
+- `inputs.dataset` holds `urn`, `banner`, `contract` (as for a flow row), `scope` (the column the
+  read filters to `program_id`, and the contract's `scope`),
+  `period` (the x axis), optionally `status` (the column naming the period the program is reported
+  through), `per_period` and `per_program`. `levels`, `value`, `per_path` and
+  `inputs.other_threshold` are refused.
+- `per_period` maps a function keyword to a numeric column, summed exactly over the program's rows
+  at each period. It must have at least one entry. `per_program` maps a keyword to a numeric column
+  that holds one value across the program's rows. A keyword is a lower-case identifier other than
+  `period`, it appears in one map only, and no column is named twice.
+- The contract is joined and enforced as for a flow row (`period` and `status` are string columns,
+  the `per_period` and `per_program` ones numeric). A `per_program` column, and the `status`
+  column, must be declared determined by the scope in the contract's `dependencies` (else the row
+  is refused at load), so one that differs between the program's rows is a 502
+  `asset_contract_violation` with rule `not_determined_by`. A period or a status outside the
+  fiscal calendar is `period_outside_calendar`. A message names the rule and the column, never a
+  value.
+- The function takes exactly the keyword-only `periods`: a list, in calendar order, of one mapping
+  per period holding `period` and each keyword's Decimal. It returns one mapping per period whose
+  keys are exactly the series keys, each a Decimal. The module declares `READS[function]` (the
+  keywords it reads) and `SERIES[function]` (the keys it returns). The row's keywords must equal
+  `READS`, and its `render.series` keys must equal `SERIES`, or the row is refused at load. A
+  running sum is the module's: the reader sums only within a period.
+- `render.series` is required, and each entry is the SDK's `MeasureSeries` (`key`, `label`,
+  optional `unit`, `cumulative`). The series share one unit. `cumulative: true` says the module
+  served a running total, so a renderer must not sum it again. `render.target` is the SDK's
+  `MeasureSeriesReference`: a constant `value`, or `series` naming a declared key (a state row's
+  target is always a value).
+- Each served row carries `period`, each series key (money as a cent float with `<key>_exact`
+  beside it when the series has a unit, a ratio when it has none) and `inputs`. The envelope adds
+  `series`, `reference` and, when the row names a status column, `status_period` from the data.
 
 The worked example, copied from the sample file. TCPI (to-complete performance index) is the
 efficiency the remaining work must achieve to finish on budget.
@@ -193,6 +262,18 @@ is refused at load; a result that is served with none is shown to the viewer as 
 `outputs.archetype`, `outputs.series` and `outputs.reference` were the old layout and are refused,
 with a message naming `render.shape`, `render.series` and `render.target`.
 
+**Menu.** Optional. A row with a `menu:` block declares its own menu placement, which the BFF serves
+and the board reads; no menu entry is written anywhere else. It holds exactly four keys:
+
+| key | what it holds |
+|---|---|
+| `subject` | `fin:DeclaredMeasureSeries`, the class the row produces. Any other value is refused. |
+| `archetype` | The mesh class of `render.shape`: `mesh:FlowDecomposition` for `FLOW_DECOMPOSITION`, `mesh:MultiSeries` for `MULTI_SERIES`. Any other value is refused. |
+| `persona_fit` | A non-empty list of personas the card suits. It ranks; it grants nothing. |
+| `domain_fit` | A non-empty list of domains the card suits, each one of `policy.cells` (a domain outside them is refused: its callers cannot open the measure). |
+
+The two sample flow rows declare one, for `PROGRAM_FINANCE_ANALYST` in `PROGRAM_FINANCE`.
+
 **Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list of access
 DOMAINS (the entitlement matrix is persona by domain; the sample uses `PROGRAM_FINANCE`), and it is
 enforced: it is what the verb registers under, and the engine refuses, 403 `measure_not_in_cell`, a
@@ -207,7 +288,8 @@ There is no visibility key: a measure is only ever shown for a program the user 
 and nothing in a row can widen that.
 
 A second example, a cost amount, shows what changes when the measure is money. This row is in
-the sample overlay too: the sample ships TCPI and VAC. It is shown for its shape, and this doc's own
+the sample overlay too: the sample ships TCPI, VAC and two dataset rows (`fin_flow_acwp`,
+`fin_flow_eac_variance`). It is shown for its shape, and this doc's own
 test loads it through the real loader. VAC (variance at completion) is the budget less the
 estimate at completion, with the estimate worked out by the CPI method.
 
@@ -304,7 +386,7 @@ Top-level keys. The first four are the shared header.
 | `cdrl` | `item` (required), and optional `title`, `data_item`, `frequency`. These are the facts a title-block cell can show. |
 | `template` | `file` (a file beside this row, no path) and `sha256`. xlsx and docx only. |
 | `sheet` | The template sheet to fill. xlsx only. |
-| `cells` | Title block: coordinate to fact. Facts: `program.name`, `program.id`, `as_of`, `cdrl.item`, `cdrl.title`, `cdrl.data_item`, `cdrl.frequency`. Not for csv. |
+| `cells` | Title block: coordinate to fact. Facts: `program.name`, `program.id`, `as_of` (the DATA's as-of, from the source's own receipt; `as-of unavailable` with the reason when the source has none), `generated_on` (the server's clock; a request carrying `as_of` is refused with a 422); a seed-sourced export reads `sample data (notional seed): no as-of` for the as-of, `cdrl.item`, `cdrl.title`, `cdrl.data_item`, `cdrl.frequency`. Not for csv. |
 | `sources` | List of `{fn: <measure>}`, built-in measures (for example `fin_performance_indices`) or your own `measure_id`s. |
 | `table` | `key` (the field rows are joined on, usually `period`), `columns`, and `start` or `at` (below). |
 | `methods_sheet` | Optional name for the methods sheet. Default `Methods`. xlsx only. |
@@ -568,10 +650,19 @@ Answers carry `data_source: {kind: "asset", urn}` and the banner in place of the
 A CDRL sourcing a declared measure reads it the same way, as the caller who asks for the CDRL. A
 caller without the grant gets 403 `access_denied` before anything is written. Each source in the
 envelope carries its `data_provenance` and `data_source`. Fetching the file checks the fetcher's
-grant too. A package export naming a declared measure returns 409 `asset_export_unsupported` while
-the URN is set; built-in measures still export. A dataset-kind measure (section 2) always reads its
-own asset, so a package naming one is refused the same way whether or not the URN is set, and a
-CDRL sourcing one reads it.
+grant too. A package export runs the same way, as the caller, with the grant on each asset checked
+before anything is measured, and its manifest and page name the asset. `recipient_readers` governs
+who may fetch the package, not who reads the asset, so fetching one asks no asset grant. A package's
+page recomputes every panel with its embedded `measures.py`, so a package naming a declared or
+dataset-kind measure (section 2) is a 503 from the builder, naming the panel, with nothing written.
+A CDRL sourcing one reads it.
+
+**A row can keep a measure on the seed.** The flag moves every measure to the asset except one whose
+row says `source: seed` (section 2). That measure answers from the notional model as it did before,
+with the notional text and `data_source: {kind: "seed", reason, ratified_by}`, and no grant is asked
+for it. Funding is seeded this way, because the contract above carries no funding lines. An export
+mixing the two reads the asset for its program and the seed only for what the asset does not carry.
+A package page names each seed-sourced panel, with its reason, beside the asset.
 
 ## 6. Not covered yet
 
@@ -581,3 +672,44 @@ CDRL sourcing one reads it.
 - **Answer exports** (plan and review exports under `policy/exports/`). They are a separate kind of
   row, with their own variable, and are not documented here.
 - **Boards.** A measure can also be a panel on a board; boards are a separate overlay kind.
+
+## 7. Declared instances: a name the question can use
+
+The finance service resolves a spoken name to an instance, and only knows the invented seed
+(`NP-MERIDIAN` and its accounts). A deployment adds a name the seed lacks as a row, and the service
+needs no code change to answer it. A declared instance is a NAME ONLY: it is listed and resolved, it
+is never added to the seed's figures, and no measure computes over it.
+
+The variable is `FIN_INSTANCE_OVERLAY_DIRS` (unset means none). A file holds one top key,
+`instances`, a list of rows. Unlike the other kinds, a file may hold several rows and there is no
+tombstone: delete the row.
+
+```yaml
+# loads-as: instance
+instances:
+  - class: Program
+    instance_id: NP-EXAMPLE-ONE
+    label: "Example program one"
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Invented example showing the row shape. Not a real program.
+```
+
+| key | what it holds |
+|---|---|
+| `class` | The local name of a class the service resolves, for example `Program`. |
+| `instance_id` | The id a question can name. |
+| `label` | The name shown in a menu. |
+| `granted_by` | Who declared the row (`seed` for a platform-shipped one). |
+| `ratified_by` | The seat that ratified it. |
+| `reason` | One or two sentences saying why the row exists. |
+
+Every key is required, none may be empty, and a key not in this table is refused. The service refuses
+to start, naming the file, when: a key is missing, unknown or empty; `class` is not one the service
+resolves; the same `class` and `instance_id` appear twice; or an `instance_id` or `label` equals,
+ignoring case, the id or label of a seed entity or of another declared row. The last rule is because
+the resolver scores an exact match 1.0 across every class and the router abstains on a tie.
+
+A declared `Program` is visible only to the callers its `program_id` lists in
+`policy/program_members.yaml` (`grant_to`). A program with no row there is listed to no one.

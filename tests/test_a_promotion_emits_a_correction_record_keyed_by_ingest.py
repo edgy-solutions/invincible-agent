@@ -70,7 +70,7 @@ class Graph:
     def write_fact(self, iid, fact):
         pass
 
-    def attest_origin(self, iid, *, owner_domain, record_id):
+    def attest_origin(self, iid, *, owner_domain, record_id, **_kw):
         return "written"
 
     def delete_carrying(self, iid):

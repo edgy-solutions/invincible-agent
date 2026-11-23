@@ -45,6 +45,9 @@ def auth_mod(monkeypatch):
     )
     auth_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(auth_mod)
+    # verified_claims refuses before decoding when either served list is empty.
+    monkeypatch.setenv(auth_mod.ACCEPTED_ISSUERS_ENV, "https://realm.test/realms/r")
+    monkeypatch.setenv(auth_mod.ACCEPTED_AUDIENCES_ENV, "bff.test")
     return auth_mod
 
 

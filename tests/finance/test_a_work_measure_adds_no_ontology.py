@@ -83,10 +83,10 @@ def test_a_a_new_measure_registers_with_the_shared_class_and_no_ttl_edit(tmp_pat
     declared = engine._load_declared()
     assert list(declared) == [raw["measure_id"]]
     monkeypatch.setattr(engine, "DECLARED", declared)
-    call = next(c for c in engine._registration_calls("http://engine")
+    call = next(c for c in engine._registration_calls()
                 if c["verb"] == "mesh:" + raw["verb"])
     assert call["output_uri"] == SHARED
-    assert call["endpoint_url"] == "http://engine/measure/" + raw["measure_id"]
+    assert call["fn"] == raw["measure_id"]
     declared_classes = _classes(TTL, MESH_TTL)
     # Contract D: BOTH ends of the edge are declared owl:Class in a seeded ttl
     assert SHARED in declared_classes, "the shared class is declared in the ttl, read from the parse"
@@ -119,7 +119,10 @@ def test_b_the_control_is_the_same_row_without_the_key(tmp_path):
 @pytest.fixture
 def two_declared(monkeypatch):
     monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(SAMPLE))
-    declared = engine._load_declared()
+    # State-kind rows, answered by name. A dataset row is served only to a bearer holding the asset
+    # grant; its class is asserted where it is served (test_variance_decomposition_over_the_ev_fixture).
+    declared = {fn: r for fn, r in engine._load_declared().items()
+                if r.kind != measure_verbs.KIND_DATASET}
     assert len(declared) >= 2
     monkeypatch.setattr(engine, "DECLARED", declared)
     monkeypatch.setattr(engine, "can_view_program", lambda *a, **k: True)
@@ -144,16 +147,16 @@ def test_c_two_rows_answer_with_one_class_and_two_measure_ids(two_declared):
 
 
 def test_c_each_registration_keeps_its_own_verb_and_endpoint(two_declared):
-    calls = [c for c in engine._registration_calls("http://engine")
-             if c["endpoint_url"].rsplit("/", 1)[-1] in two_declared]
+    calls = [c for c in engine._registration_calls()
+             if c["fn"] in two_declared]
     assert len(calls) == len(two_declared)
     assert {c["output_uri"] for c in calls} == {SHARED}
     for c in calls:
-        row = two_declared[c["endpoint_url"].rsplit("/", 1)[-1]]
+        row = two_declared[c["fn"]]
         assert c["verb"] == "mesh:" + row.verb
-        assert c["endpoint_url"] == "http://engine/measure/" + row.measure_id
+        assert c["fn"] == row.measure_id
     assert len({c["verb"] for c in calls}) == len(calls)
-    assert len({c["endpoint_url"] for c in calls}) == len(calls)
+    assert len({c["fn"] for c in calls}) == len(calls)
 
 
 # -- d / e ------------------------------------------------------------------------------------

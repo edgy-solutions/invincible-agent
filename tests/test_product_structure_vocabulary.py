@@ -13,6 +13,10 @@ ADR-0035 data plane, packet 2 steps 1 + 4.
      can NAME ITS OWN CONFLICTS. A model that cannot express its disagreements looks identical
      to one whose sources happen to agree.
 
+  3. THE OBSOLESCENCE SLICE (ADR-0065 C). Every IOF Core name was read in IOF Core; there is one
+     Part node; the configuration is the three ruled views; the lifecycle-status menu is the
+     registry's, not an enum here.
+
 Run:  uv run --frozen --extra agent-fleet python -m pytest tests/test_product_structure_vocabulary.py -q
 """
 from __future__ import annotations
@@ -135,6 +139,117 @@ def test_staleness_by_consumer_handles_the_unknown_sentinel():
     q = _QUERIES.read_text(encoding="utf-8")
     assert "STALENESS" in q and "asOf" in q
     assert "undateable" in q, "the undateable bucket is missing — those claims would be dropped"
+
+
+# ── ADR-0065 C: the obsolescence slice, over IOF Core ──────────────────────
+# Read in IOF Core as the prime fetches it (iofoundry/ontology master, core/Core.rdf, 2026-11-08,
+# sha256 7e44642681de…). The terms live under .../ontology/construct/. The prime pulls master
+# UNPINNED, so this is a reading on a date: a name that leaves upstream is not caught here.
+_IOF_VERIFIED = {
+    "DesignSpecification", "Assembly", "MaterialProduct", "MaterialArtifact",
+    "DescriptiveInformationContentEntity", "PlanSpecification",
+    "componentPartOfAtSomeTime", "prescribes",
+}
+_IOF = "https://spec.industrialontologies.org/ontology/construct/"
+
+
+def _graph():
+    import rdflib
+    g = rdflib.Graph()
+    g.parse(data=_TTL, format="turtle")
+    return g
+
+
+def _ps(name):
+    import rdflib
+    return rdflib.URIRef("http://internal/sustainment/product#" + name)
+
+
+def test_every_iof_name_used_was_read_in_iof_core():
+    """The S3000L seal's twin. An IOF IRI nobody read is a citation that looks grounded."""
+    used = {str(o)[len(_IOF):] for o in _graph().objects() if str(o).startswith(_IOF)}
+    assert used, "the slice lost its IOF Core alignment"
+    assert not used - _IOF_VERIFIED, sorted(used - _IOF_VERIFIED)
+    assert not any("ontology/core/Core/" in str(o) for o in _graph().objects()), (
+        "IOF Core declares its terms under .../construct/; .../core/Core/ is only their isDefinedBy")
+
+
+def test_there_is_one_part_node_and_assembly_and_end_item_are_roles_of_it():
+    """ADR-0065 ruling 1: one Part node. A second Part-like class would be a second identity."""
+    import rdflib
+    from rdflib import OWL, RDF, RDFS
+    g = _graph()
+    labelled_part = [s for s in g.subjects(RDF.type, OWL.Class) if str(g.value(s, RDFS.label)) == "Part"]
+    assert labelled_part == [_ps("Part")]
+    for role in ("Assembly", "EndItem"):
+        assert (_ps(role), RDFS.subClassOf, _ps("Part")) in g, role
+    # A part number + revision is a design; the material artifact is what it prescribes.
+    assert (_ps("Part"), RDFS.subClassOf, rdflib.URIRef(_IOF + "DesignSpecification")) in g
+
+
+def test_the_configuration_is_exactly_the_three_ruled_views():
+    """ADR-0065 ruling 2 names three; a fourth would be a view no verb argument can ask for."""
+    from rdflib import OWL
+    from rdflib.collection import Collection
+    g = _graph()
+    members = Collection(g, g.value(_ps("Configuration"), OWL.oneOf))
+    assert {str(m).rsplit("#", 1)[1] for m in members} == {"as_designed", "as_built", "as_maintained"}
+
+
+def test_the_lifecycle_status_menu_is_the_registry_not_an_enum_here():
+    """The status values are data a deployment extends (ADR-0065 §3); an enum here is a copy."""
+    # Asked of the GRAPH, not the text: the comment that explains why there is no oneOf names it.
+    from rdflib import OWL, RDFS, XSD
+    g = _graph()
+    status = _ps("status")
+    assert g.value(status, RDFS.range) == XSD.string
+    assert (status, OWL.oneOf, None) not in g
+    assert (_ps("LifecycleStatus"), OWL.oneOf, None) not in g
+    assert "policy/registry/lifecycle_status.yaml" in str(g.value(status, RDFS.comment))
+
+
+def test_absent_and_null_lifecycle_status_are_written_apart():
+    assert "NOT BEEN ASSESSED" in _TTL and "AND NONE IS KNOWN" in _TTL
+
+
+def test_the_ltb_decision_carries_the_four_named_fields():
+    from rdflib import RDFS
+    g = _graph()
+    for f in ("ltbQuantity", "ltbBy", "ltbRationale", "ltbApprovedBy", "ltbFor"):
+        assert (_ps(f), RDFS.domain, _ps("LtbDecision")) in g, f
+
+
+# The vocabulary's LTB fields and the SDK's shipped `LtbDecision`, read from v0.9.16 on 2026-11-08.
+# `by` is the deciding seat, not a date: the first draft here said a date, and the shipped
+# contract (and ADR-0065 §5's two rails) said otherwise.
+_LTB_SDK = {"quantity": ("ltbQuantity", "integer"), "by": ("ltbBy", "string"),
+            "rationale": ("ltbRationale", "string"), "approved_by": ("ltbApprovedBy", "string")}
+
+
+def test_the_ltb_fields_agree_with_the_shipped_contract():
+    from rdflib import RDFS, XSD
+    g = _graph()
+    for wire, (prop, xsd) in _LTB_SDK.items():
+        assert g.value(_ps(prop), RDFS.range) == XSD[xsd], (wire, prop)
+
+
+def test_the_shipped_contract_is_the_one_read_here():
+    """Skips on a pin before v0.9.16, which has no lifecycle_status module. Once the pin moves,
+    a field the SDK adds or renames turns this red, so the vocabulary is re-read with it."""
+    import pytest
+    mod = pytest.importorskip("iagent_mesh.lifecycle_status")
+    fields = mod.LtbDecision.model_fields
+    assert set(fields) == set(_LTB_SDK)
+    assert fields["quantity"].annotation is int
+    assert all(fields[f].annotation is str for f in ("by", "rationale", "approved_by"))
+
+
+def test_the_configurations_writability_claim_matches_the_writer():
+    """The file says ps:configuration is NOT YET WRITABLE because the writer's canonical set lacks
+    it. When the BOM contract adds it there, this goes red until the comment says so too."""
+    from src.iagent.product_writer import CANONICAL_FIELDS
+    writable = "configuration" in CANONICAL_FIELDS["PartUsage"]
+    assert writable == ("NOT YET WRITABLE" not in _TTL)
 
 
 if __name__ == "__main__":

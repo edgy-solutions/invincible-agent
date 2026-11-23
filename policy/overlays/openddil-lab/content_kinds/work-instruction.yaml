@@ -5,6 +5,8 @@
 # the real fix is" the door reading doc-tools' processable kinds, so the registry never drifts).
 kind: work-instruction
 domain: manufacturing
+arrives_as: [pdf]
+label: Work instruction
 passes:
   - manufacturing.baml::ExtractWorkInstructions
 outputs:

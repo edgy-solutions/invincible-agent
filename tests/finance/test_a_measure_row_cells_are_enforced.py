@@ -147,15 +147,15 @@ def _client():
 
 def test_a_a_declared_verb_registers_under_exactly_its_rows_cells(tmp_path, monkeypatch):
     _rows(tmp_path, monkeypatch, tcpi_cells=[OTHER])
-    by_ep = {c["endpoint_url"].rsplit("/", 1)[-1]: c for c in engine._registration_calls("http://e")}
+    by_ep = {c["fn"]: c for c in engine._registration_calls()}
     assert list(by_ep["fin_tcpi"]["domains"]) == [OTHER]          # the row's, not this engine's
     assert list(by_ep["fin_vac_cpi"]["domains"]) == [CELL]        # the control: its row says CELL
 
 
 def test_a_built_ins_keep_the_engines_domains(tmp_path, monkeypatch):
     _rows(tmp_path, monkeypatch, tcpi_cells=[OTHER])
-    built_in = [c for c in engine._registration_calls("http://e")
-                if c["endpoint_url"].rsplit("/", 1)[-1] not in engine.DECLARED]
+    built_in = [c for c in engine._registration_calls()
+                if c["fn"] not in engine.DECLARED]
     assert built_in
     assert all(list(c["domains"]) == engine.DOMAINS for c in built_in)
 
@@ -233,7 +233,7 @@ def package_stubs(monkeypatch):
         @staticmethod
         def build(**kw):
             built.append(kw)
-            return {"manifest": {"panels": kw["panels"], "as_of": "2026-01-01",
+            return {"manifest": {"panels": kw["panels"], "generated_on": "2026-01-01",
                                  "recipient_scope": kw["recipient_scope"],
                                  "algorithm_sha": kw["sha"], "template_id": kw["template_id"],
                                  "template_hash": kw["template_hash"]},
