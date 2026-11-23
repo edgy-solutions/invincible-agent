@@ -235,3 +235,36 @@ def test_the_template_names_no_fiscal_year_constant():
     assert raw["period"]["vocabulary"] == "fin_calendar"
     assert "FISCAL_PERIODS" not in TEXT
     assert "FY27" not in TEXT
+
+
+GUIDE = ROOT / "docs" / "contracts" / "adding-a-measure-by-declaration.md"
+
+
+def _guide_table() -> dict[str, set[str]]:
+    """The three rows of the rule-id table in the guide, each row's ids from its backticks."""
+    section = GUIDE.read_text(encoding="utf-8").split("### Which rule ids are general", 1)[1]
+    section = section.split("\n## ", 1)[0]
+    rows = {}
+    for line in section.split("\n"):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.startswith("|") and len(cells) == 3 and cells[0].startswith("**"):
+            rows[cells[0].strip("*")] = set(re.findall(r"`([a-z_]+)`", cells[1]))
+    return rows
+
+
+def test_the_guide_s_rule_table_is_the_template_s_and_the_reader_s():
+    rows = _guide_table()
+    assert set(rows) == {"every contract", "every finance read", "the earned-value shape only"}
+    tagged = _rules_tagged()
+    # the shared row lists every id the shared reader raises, so it holds the template's
+    # [shared] ids and may hold more (personal_data is raised by the reader, named by no template rule)
+    assert rows["every contract"] == set(dataset_contracts.RULES)
+    assert tagged["shared"] <= rows["every contract"]
+    assert rows["every finance read"] == tagged["engine-fin"]
+    assert rows["the earned-value shape only"] == tagged["ev_fixture"]
+
+
+def test_the_guide_names_the_producer_checked_ids_the_reader_names():
+    assert dataset_contracts.PRODUCER_CHECKED == {"interval_overlap", "orphan_reference"}
+    text = GUIDE.read_text(encoding="utf-8")
+    assert "`interval_overlap` and `orphan_reference` are checked by the producer" in text
