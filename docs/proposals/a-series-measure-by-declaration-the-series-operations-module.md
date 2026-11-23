@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: proposed; decision 1 ruled yes (architect, 2026-11-23); decisions 2 and 3 open
 owner: invincible-agent/lane/fin
 date: 2026-11-22
 directive: >-
@@ -145,7 +145,7 @@ and cortex need nothing for phase 1.
   `composition`: the canonical JSON of the row's `series`, and its sha256. That is the
   `composition` half of ADR-0053 §4's manifest, and it lets a recipient reproduce the figure.
 
-## Why this is selection, not a formula language (needs the architect's ruling)
+## Why this is selection, not a formula language (ruled yes, 2026-11-23)
 
 ADR-0053 §3 refuses "a verb that accepts a formula, expression or code as a slot", and lists "not a
 formula language, in any form" among its non-goals. The case that `series_ops` is on the right side
@@ -167,6 +167,10 @@ op added later moves the line. The pressure will come from TCPI, weighted sums, 
 literals. The proposal's answer is that the line is the vocabulary: a new op is a reviewed module
 version, never a row. **That is a policy judgement, and it is the architect's call.** Fin will not
 build any of this before that ruling.
+
+**Ruled 2026-11-23 (architect, via Chris):** "yes, a closed set of operations chosen by a row
+satisfies the ADR." So the line is the vocabulary. A new op is a reviewed module version with its
+clause and seal, never a row. A row that asks for anything outside the closed set is refused at boot.
 
 ## What it still cannot express
 
@@ -227,8 +231,9 @@ exactly as the existing sample series rows do today.
 
 ## Decisions asked for
 
-1. **Does a closed op vocabulary selected by a row satisfy ADR-0053 §3?** (Architect.) Fin builds
-   nothing until this is answered.
-2. **If yes: phase 1 alone first?** Fin recommends it.
+1. **Does a closed op vocabulary selected by a row satisfy ADR-0053 §3?** (Architect.)
+   **Ruled yes, 2026-11-23.**
+2. **Phase 1 alone first?** Fin recommends it, and it is fin's next build once this is answered:
+   `period`, `running`, `constant` and `minus`, with the seals above and one sample row.
 3. **For phase 2: null point, refusal, or truncation?** Fin recommends a null point, once cortex
    confirms it draws a gap.
