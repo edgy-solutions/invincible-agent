@@ -203,7 +203,9 @@ spec:
 {{- /* The source types the PINNED broker image registers an as-of reader for. Empty at the
      current pin, because `dag_tools.domain_broker.ticket_identity.AS_OF_READERS` ships empty.
      It moves only in the commit that moves the broker image pin, copied from the set dag-tools
-     exports. Deliberately not a values key, so a deployment cannot widen it. */}}
+     exports (`AVAILABLE_AS_OF_READERS`: the one table that the broker's start-time check and its
+     /health also read; a second list here would let the three disagree silently).
+     Deliberately not a values key, so a deployment cannot widen it. */}}
 {{- $asOfRegistered := list }}
 ---
 # ---------------------------------------------------------------------------
