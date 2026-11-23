@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ["tests.flat_engine_modules"]
+
 # Loggers configured by ensure_stdout_logger that tests assert against. Adding a
 # name here is cheaper than rediscovering why caplog is empty.
 _NON_PROPAGATING = ("mesh_registration",)
