@@ -152,10 +152,10 @@ def test_an_unknown_prefix_names_the_field(monkeypatch, tmp_path):
     assert "subject must be a compact CURIE with a registered prefix" in got["invalid"][0]["reason"]
 
 
-def test_two_rows_with_the_same_subject_and_archetype_are_both_invalid(monkeypatch, tmp_path):
+def test_two_rows_declaring_the_same_verb_are_both_invalid(monkeypatch, tmp_path):
     _write(tmp_path, "a", _row())
     _write(tmp_path, "b", _row())
-    _write(tmp_path, "c", _row(subject="mesh:Other"))
+    _write(tmp_path, "c", {**_row(subject="mesh:Other"), "declared_by": "mesh:otherVerb"})
     got = _serve(monkeypatch, tmp_path)
     assert [i["source"] for i in got["invalid"]] == ["a", "b"]
     assert all(i["reason"].startswith("ambiguous: ") for i in got["invalid"])
