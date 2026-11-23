@@ -1517,15 +1517,8 @@
             "title": "Summary"
           },
           "task_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Id"
+            "title": "Task Id",
+            "type": "string"
           },
           "title": {
             "anyOf": [
@@ -3641,7 +3634,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.10.0"
+    "version": "1.10.1"
   },
   "openapi": "3.1.0",
   "paths": {
