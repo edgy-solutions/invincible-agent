@@ -983,3 +983,11 @@ Keycloak already, and the reconcile must land BEFORE any workload changes (pre-u
 {{- define "invincible-agent.realmReconcileHookPhase" -}}
 {{- if .Release.IsInstall }}post-install{{- else }}pre-upgrade{{- end }}
 {{- end }}
+
+{{/*
+The component labels of the two pods the Electric network policy names: Electric's own (the policy's
+target) and the cortex-bff (the one caller). frontend.yaml and electric.yaml label their pods with these,
+so the policy cannot name a component the chart does not create.
+*/}}
+{{- define "invincible-agent.electricComponent" -}}electric{{- end }}
+{{- define "invincible-agent.cortexBffComponent" -}}cortex-bff{{- end }}

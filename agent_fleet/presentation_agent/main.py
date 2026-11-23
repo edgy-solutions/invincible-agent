@@ -1053,6 +1053,21 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # producer's words in a null cell instead of "-". Ruled by Chris 11-19; never a 0.
     "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
                                        "state_vocabulary", "group_by", "absent_reason")),
+
+    # ── FLOW_DECOMPOSITION (Lane 1; held from 0.4.81, opened 2026-11-23). Runbook site 2. ──
+    #
+    # Bound for a dataset-kind measure row (#255): `rows` is the edge table, root edge first,
+    # passed through verbatim. Cortex proposed the tuple and Chris accepted it (2026-11-05:
+    # "Projector row accepted as proposed"). It was ruled for 0.4.80 and missed that cut; it
+    # was held until a menu carried the shape (#513: each dataset row declares its own `menu:`).
+    #
+    # `render` travels WHOLE because `unit` and `other_label` live only inside it; the card
+    # reads `render.value_label` first and the top-level `value_label` only as a fallback.
+    # `data_provenance` IS carried. It was not in the accepted three-field tuple, but the 11-08
+    # ruling (it "arrives whole: dataset URN, as-of, ticket id") answered cortex's 11-06 question
+    # for every served table, as MULTI_SERIES above already carries it; cortex's row reads it.
+    # The seal is tests/finance/test_the_flow_table_reaches_the_card.py.
+    "FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict", "data_provenance")),
 }
 
 
