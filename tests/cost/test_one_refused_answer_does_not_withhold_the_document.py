@@ -80,13 +80,14 @@ def _needs_the_runtime():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
 
 
-def test_the_verb_builds_the_same_package_with_or_without_the_refused(state, isolated_dist):
+def test_the_verb_builds_the_same_package_with_or_without_the_refused(
+        state, isolated_dist, monkeypatch):
     """Defends: M.package_export on the mixed canvas has the good-only canvas's sha, and names
     the refused answers in refused_answers."""
     _needs_the_runtime()
-    mixed = M.package_export(state, recipient_scope=ALPHA, canvas=_mixed(), as_of="2026-01-02")
-    only = M.package_export(state, recipient_scope=ALPHA, canvas={"answers": GOOD},
-                            as_of="2026-01-02")
+    monkeypatch.setattr(M, "_request_date", lambda: "2026-01-02")
+    mixed = M.package_export(state, recipient_scope=ALPHA, canvas=_mixed())
+    only = M.package_export(state, recipient_scope=ALPHA, canvas={"answers": GOOD})
     assert mixed["artifact_sha256"] == only["artifact_sha256"]
     assert mixed["refused_answers"] == _items()
     assert only["refused_answers"] == []

@@ -1056,7 +1056,7 @@ def _request_date() -> str:
 
 def package_export(
     state: CostState, *, recipient_scope: str, include_dataset: Optional[bool] = None,
-    canvas: Optional[dict] = None, as_of: Optional[str] = None,
+    canvas: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Produce a customer-validation package for one recipient. A GOVERNED EMIT (ADR-0047).
 
@@ -1084,19 +1084,10 @@ def package_export(
     different artifact than the one a recipient opens. The JavaScript gate and the manifest
     hashing are load-bearing here, and they are load-bearing because they are the same code.
     """
-    # AS_OF IS AN INPUT, RESOLVED ONCE. Absent, it is the request date, taken here and handed to
-    # every builder below so the page, the package and the response cannot disagree.
-    if as_of is None:
-        as_of = _request_date()
-    else:
-        try:
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(as_of)):
-                raise ValueError
-            date.fromisoformat(as_of)
-        except ValueError:
-            raise NotInModel(
-                f"as_of {as_of!r} is not a date; expected YYYY-MM-DD, e.g. 2026-01-02",
-                slot="as_of") from None
+    # THE DATE IS THE REQUEST DATE, TAKEN ONCE here and handed to every builder below so the page,
+    # the package and the response cannot disagree. A caller cannot supply one (RULED
+    # 2026-11-23): the route refuses `as_of` with a 422 before this verb runs.
+    as_of = _request_date()
     scopes = sorted(RECIPIENT_SCOPES)
     if not recipient_scope or not str(recipient_scope).strip():
         raise NotInModel(

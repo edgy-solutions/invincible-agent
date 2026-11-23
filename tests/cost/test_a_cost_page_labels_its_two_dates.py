@@ -41,25 +41,27 @@ def _needs_the_runtime():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
 
 
-def _export(state, isolated_dist, *, canvas=None, as_of=None):
-    out = M.package_export(state, recipient_scope=ALPHA, canvas=canvas, as_of=as_of)
+def _export(state, isolated_dist, monkeypatch, *, canvas=None, as_of=None):
+    if as_of is not None:
+        monkeypatch.setattr(M, "_request_date", lambda: as_of)
+    out = M.package_export(state, recipient_scope=ALPHA, canvas=canvas)
     html = (isolated_dist / out["artifact_filename"]).read_text(encoding="utf-8")
     return out, html
 
 
 @pytest.mark.parametrize("canvas", [None, _ONE_ANSWER], ids=["fixed-page", "dataset-page"])
-def test_the_page_carries_both_labelled_dates(state, isolated_dist, canvas):
+def test_the_page_carries_both_labelled_dates(state, isolated_dist, monkeypatch, canvas):
     _needs_the_runtime()
-    out, html = _export(state, isolated_dist, canvas=canvas)
+    out, html = _export(state, isolated_dist, monkeypatch, canvas=canvas)
     assert f"data as of {SAMPLE}" in html
     assert f"generated {out['as_of']}" in html
     assert "&middot; as of " not in html
 
 
 @pytest.mark.parametrize("canvas", [None, _ONE_ANSWER], ids=["fixed-page", "dataset-page"])
-def test_a_pinned_as_of_is_the_generated_date_never_the_data_date(state, isolated_dist, canvas):
+def test_a_pinned_as_of_is_the_generated_date_never_the_data_date(state, isolated_dist, monkeypatch, canvas):
     _needs_the_runtime()
-    _, html = _export(state, isolated_dist, canvas=canvas, as_of=PINNED)
+    _, html = _export(state, isolated_dist, monkeypatch, canvas=canvas, as_of=PINNED)
     meta = next(ln for ln in html.splitlines() if 'class="meta"' in ln and "algorithm" in ln)
     data_part, generated_part = meta.split("generated", 1)
     assert PINNED not in data_part
@@ -68,9 +70,9 @@ def test_a_pinned_as_of_is_the_generated_date_never_the_data_date(state, isolate
 
 
 @pytest.mark.parametrize("canvas", [None, _ONE_ANSWER], ids=["fixed-page", "dataset-page"])
-def test_the_response_and_the_package_carry_data_as_of(state, isolated_dist, canvas):
+def test_the_response_and_the_package_carry_data_as_of(state, isolated_dist, monkeypatch, canvas):
     _needs_the_runtime()
-    out, html = _export(state, isolated_dist, canvas=canvas, as_of=PINNED)
+    out, html = _export(state, isolated_dist, monkeypatch, canvas=canvas, as_of=PINNED)
     assert out["data_as_of"] == SAMPLE
     assert out["as_of"] == PINNED
     pkg = I.package_from_html(html)
