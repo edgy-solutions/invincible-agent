@@ -1063,10 +1063,11 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     #
     # `render` travels WHOLE because `unit` and `other_label` live only inside it; the card
     # reads `render.value_label` first and the top-level `value_label` only as a fallback.
-    # `data_provenance` is NOT carried, as proposed. Whether the synthetic banner should reach
-    # the card is cortex's open question to Chris (11-06); widening this tuple is that ruling.
+    # `data_provenance` IS carried. It was not in the accepted three-field tuple, but the 11-08
+    # ruling (it "arrives whole: dataset URN, as-of, ticket id") answered cortex's 11-06 question
+    # for every served table, as MULTI_SERIES above already carries it; cortex's row reads it.
     # The seal is tests/finance/test_the_flow_table_reaches_the_card.py.
-    "FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict")),
+    "FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict", "data_provenance")),
 }
 
 

@@ -13,8 +13,9 @@ function, loaded without the agent's imports. So the join is measured, not resta
   - `value_label` and `verdict` arrive as the engine sent them.
   - Every key the tuple names is one the engine sends, so no passthrough waits on a field that
     never comes.
-  - `data_provenance` does not travel, as proposed. Cortex asked Chris on 11-06 whether it should;
-    that ruling would change this arm and the tuple together.
+  - `data_provenance` arrives whole. The accepted tuple left it out; the 11-08 ruling ("arrives
+    whole: dataset URN, as-of, ticket id") answered cortex's 11-06 question, and cortex's row reads it.
+  - The capability row that claims the shape names only fields the engine sends.
 
 Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_the_flow_table_reaches_the_card.py
 """
@@ -64,8 +65,19 @@ def test_EVERY_FIELD_THE_ROW_CARRIES_IS_ONE_THE_ENGINE_SENDS(post):
     assert [k for k in (payload_key, *carried) if k not in env] == []
 
 
-def test_THE_SYNTHETIC_BANNER_DOES_NOT_TRAVEL_AS_PROPOSED(post):
+def test_THE_PROVENANCE_ARRIVES_WHOLE(post):
     env = _served(post)
     assert env["data_provenance"].startswith("SYNTHETIC")      # control: the engine does send it
     _ns, got = _project(env)
-    assert got is not None and "data_provenance" not in got
+    assert got is not None and got["data_provenance"] == env["data_provenance"]
+
+
+def test_THE_CAPABILITY_ROW_NAMES_ONLY_WHAT_THE_ENGINE_SENDS(post):
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+
+    env = _served(post)
+    (row,) = [c for c in PRESENTATION_CAPABILITIES if c["archetype"] == ARCH]
+    assert row["subject_uri"] == "fin:DeclaredMeasureSeries"   # the one class a declared measure registers as
+    assert row["object_uri"] == "mesh:FlowDecomposition"
+    assert row["expected_fields"]                             # control: the check below is not vacuous
+    assert [f for f in row["expected_fields"] if f not in env] == []
