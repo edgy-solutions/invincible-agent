@@ -1223,6 +1223,11 @@ def _classify_route(
                 # so an unthreaded identity here is a 400 from engine-o, not a quiet
                 # attribution loss. Threaded the same way /resolve already receives it.
                 "user_email": user_email,
+                # The Dagster run id: what joins Engine O's routing_decision audit row to
+                # this run's own log and Langfuse trace. None (not "") when there is none,
+                # so Engine O mints its own id rather than recording an empty one.
+                "request_id": str(getattr(context, "run_id", "") or "") or None,
+                "audit_source": "user_request",
             },
             timeout=CLASSIFY_PREDICATE_TIMEOUT_S,  # LLM call inside; see the constant.
             **_bearer_kwargs(_tok),
