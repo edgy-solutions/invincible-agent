@@ -285,7 +285,7 @@ def accept_slots(
         #   anything else         -> REFUSED, with the vocabulary named
         #
         # Resolution is DECLARATION-DRIVEN: the boundaries ride on `period_end`, derived from
-        # FISCAL_PERIODS at declaration time, so this module holds no copy of the fiscal
+        # the declared fiscal calendar at declaration time, so this module holds no copy of the fiscal
         # calendar and cannot drift from it.
         if decl.get("period") == "date" and isinstance(value, str):
             boundaries = decl.get("period_end") or {}

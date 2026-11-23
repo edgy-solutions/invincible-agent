@@ -99,3 +99,13 @@ A dataset row (see [adding-a-measure-by-declaration.md](adding-a-measure-by-decl
 names its own `inputs.dataset.urn`, `banner` and `contract`, and needs the section 3 grants on
 *that* URN. The overlay directory is named in `MEASURE_VERB_OVERLAY_DIRS`. A misspelt path loads
 nothing, and raises no error.
+
+## 8. Declare your fiscal calendar
+
+| item | needed |
+|---|---|
+| a `fin_calendar` file: `calendar_id` and the `periods` list, in `FIN_CALENDAR_OVERLAY_DIRS` | yes. With none declared, every period is refused (`period_outside_calendar`), whether or not `FIN_DATASET_URN` is set |
+
+A private policy repo delivered by `policyOverlay` needs a `fin_calendar` directory before it rolls
+a chart that carries this. The file shape and every rule are in
+[finance-overlays.md](finance-overlays.md), section 8.

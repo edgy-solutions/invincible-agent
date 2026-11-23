@@ -2697,6 +2697,7 @@ policyOverlay:
       - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS}
       - {dir: fin_export_profiles, env: FIN_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
       - {dir: fin_instances, env: FIN_INSTANCE_OVERLAY_DIRS, optional: true}
+      - {dir: fin_calendar, env: FIN_CALENDAR_OVERLAY_DIRS, optional: true}
     cortex-bff:
       - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
       - {dir: exports, env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}

@@ -52,7 +52,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import measures
     import state_codec
     from entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
@@ -67,7 +67,7 @@ except ImportError:
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
     from agent_fleet.finance_agent.entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from agent_fleet.finance_agent.seed import build_seed, check_consistency, notional_banner
     from agent_fleet.finance_agent.slots import (
@@ -515,7 +515,7 @@ def _registration_calls() -> list[dict[str, Any]]:
     seal that pins what is registered -- the loop that registered and the test that checked it
     were two copies of one fact. Each carries the measure's `fn` rather than a URL: the lifespan
     builds `endpoint_url` from it, so the verb is in the path where the registration is made."""
-    periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
+    periods = [p for p in fiscal_periods() if any(f.period == p for f in STATE.facts)]
     plan = [
         (v, v["input_uri"], "engine_fin_finance") for v in VERBS
     ] + [

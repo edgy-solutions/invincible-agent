@@ -45,9 +45,9 @@ dependencies:
 
 period:
   column: period
-  # The engine's vocabulary (agent_fleet/finance_agent/entities.py), FY26-01..FY26-12. FY26 only
-  # today, so a real source's FY27 row is refused: a fork listed for the architect on 2026-11-03.
-  vocabulary: FISCAL_PERIODS
+  # The periods are the deployment's declared fiscal calendar (the `fin_calendar` overlay kind,
+  # docs/contracts/finance-overlays.md section 8). A period outside it refuses `period_outside_calendar`.
+  vocabulary: fin_calendar
 # The period the program is reported through. Named here so a time-phased row can mark it from
 # data; never a constant in a measure row.
 status_period: status_period

@@ -50,7 +50,7 @@ from agent_fleet.finance_agent import export as fin_export                     #
 from agent_fleet.finance_agent import export_dates as fin_export_dates         # noqa: E402
 from agent_fleet.finance_agent import page as fin_page                         # noqa: E402
 from agent_fleet.finance_agent import state_codec                              # noqa: E402
-from agent_fleet.finance_agent.entities import FinanceState, SourceUnavailable  # noqa: E402
+from agent_fleet.finance_agent.entities import FinanceState, SourceUnavailable, fiscal_periods  # noqa: E402
 from agent_fleet.finance_agent.seed import build_seed                          # noqa: E402
 
 #: Every module the exported page embeds, with the PATH it is written to inside the
@@ -369,7 +369,9 @@ import json
 import page
 
 pkg = json.loads(PACKAGE_JSON)
-results = page.verify(pkg["state"], pkg["panels"])
+if not pkg.get("calendar"):
+    raise ValueError("this package carries no fiscal calendar, so its figures cannot be reproduced")
+results = page.verify(pkg["state"], pkg["panels"], pkg["calendar"])
 json.dumps(results)
 `);
     const results = JSON.parse(resultsJson);
@@ -422,7 +424,8 @@ def build_html(recipient_scope: str, program_id: str, runtime_dir: pathlib.Path,
     """Build the page. `panels` carries the SERVED rows (`_measure_envelope`'s output),
     never recomputed here — recomputation is `page.verify`'s job, inside the browser."""
     embedded, loader_js = embedded_runtime(runtime_dir)
-    package_json = json.dumps({"state": state_dict, "panels": panels}, default=str)
+    package_json = json.dumps({"state": state_dict, "panels": panels, "calendar": list(fiscal_periods())},
+                              default=str)
     return _TEMPLATE.format(
         recipient=recipient_scope, program_id=program_id, sha=sha,
         template_id=template_id, data_as_of=html_lib.escape(data_as_of),
@@ -458,7 +461,7 @@ def build(*, recipient_scope: str, program_id: str, state: FinanceState,
     # (1) THE NARROWED STATE MUST STILL REPRODUCE EVERY SERVED PANEL. If a panel's rows
     # depended on something `narrow` dropped, this package would ship a page that refuses to
     # verify itself the moment the recipient opens it — caught here, before a byte is written.
-    results = fin_page.verify(state_dict, panels)
+    results = fin_page.verify(state_dict, panels, list(fiscal_periods()))
     bad = [r for r in results if not r["reproduced"]]
     if bad:
         raise SourceUnavailable(

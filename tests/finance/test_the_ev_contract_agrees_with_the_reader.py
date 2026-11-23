@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_fleet.finance_agent import asset_inputs, entities
+from agent_fleet.finance_agent import asset_inputs, entities, fiscal_calendar
 from agent_fleet.utils import dataset_contracts
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,8 +86,7 @@ def test_the_rule_detector_sees_the_form():
 
 
 def test_the_period_vocabulary_and_row_cap_are_the_readers(contract):
-    assert contract["period"]["vocabulary"] == "FISCAL_PERIODS"
-    assert getattr(entities, contract["period"]["vocabulary"]) is asset_inputs.FISCAL_PERIODS
+    assert contract["period"]["vocabulary"] == fiscal_calendar.KIND
     cap = contract["limits"]["max_rows"]
     assert (cap["env"], cap["default"]) == (asset_inputs.MAX_ROWS_ENV, asset_inputs.DEFAULT_MAX_ROWS)
 

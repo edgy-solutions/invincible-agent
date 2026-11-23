@@ -31,11 +31,11 @@ from fastapi import HTTPException, Request
 
 try:  # flat in the image (/app), packaged in the repo — the same two-way import `main` uses
     from entities import (
-        FISCAL_PERIODS, ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage,
+        ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage, fiscal_periods,
     )
 except ImportError:
     from agent_fleet.finance_agent.entities import (
-        FISCAL_PERIODS, ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage,
+        ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage, fiscal_periods,
     )
 
 try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils in the repo
@@ -268,7 +268,7 @@ def state_from_rows(df: Any, program_id: str) -> FinanceState:
     if df.select(["work_package", "period"]).is_duplicated().any():
         raise ContractViolation("duplicate_work_package_period",
                                 "more than one row for a (work_package, period)")
-    if not df["period"].is_in(list(FISCAL_PERIODS)).all():
+    if not df["period"].is_in(list(fiscal_periods())).all():
         raise ContractViolation("period_outside_calendar",
                                 "a period outside the fiscal calendar")
 
@@ -481,7 +481,7 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
     check_contract_rows(df, contract)
-    calendar = list(FISCAL_PERIODS)
+    calendar = list(fiscal_periods())
     if not df[period].is_in(calendar).all() or (status and df[status][0] not in calendar):
         raise ContractViolation("period_outside_calendar", "a period outside the fiscal calendar")
     sums: dict[str, dict[str, Decimal]] = {}
