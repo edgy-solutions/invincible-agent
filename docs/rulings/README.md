@@ -4249,20 +4249,23 @@ reader cannot tell them apart.
 
 ## R-122 — AN EXPORT CARRIES TWO DATES, EACH LABELLED
 
-**RULED 2026-11-21.** Source: the architect, via Chris. **No verbatim wording is on record.** What
-follows is fin's paraphrase of the ruling, from the packet that sent #508 to gov; the architect is
-asked to confirm it in review of this entry:
+**RULED 2026-11-21; wording given 2026-11-23.** Source: the architect, via Chris. The 11-21 ruling
+was relayed without verbatim wording. The architect gave this wording on 11-23, in review of this
+entry:
 
-> An export carries the data's as-of and the generation date, each labelled. The data's as-of is
-> the source's own as-of from the read receipt. An unavailable as-of is said in the field. It is
-> never blank, and never the generation date. A profile row chooses which dates it shows.
+> *"an export carries a data date from the source's own as-of and a generated date from the server
+> clock, each labelled. An unavailable as-of says so. A caller-supplied date is refused. Sample data
+> is labelled as sample. Fields per profile are rows."*
 
 **The rule.** An export has two dates with different meanings, and it labels both:
-- **the data's as-of:** the source's own, from the read receipt. When it is unavailable, the field
-  says so; it is never blank, and the generation date never stands in for it;
-- **the generation date:** when the file was made.
+- **the data date:** the source's own as-of, from the read receipt. When it is unavailable, the
+  field says so. It is never blank, and the generated date never stands in for it;
+- **the generated date:** from the server clock, when the file was made.
 
-The deployment's profile row chooses which of the two an export shows.
+Three more parts:
+- **A caller never supplies either date.** A request that names one is refused (R-121).
+- **Sample data says it is sample data,** in place of a data date.
+- **Which fields a profile shows is a row** of the profile, not code.
 
 **Why.** It is R-121 applied to a file. A file outlives the session that made it, so a reader has
 nothing but the labels to tell the two dates apart.
@@ -4271,68 +4274,85 @@ nothing but the labels to tell the two dates apart.
 profile row names it.
 
 **Built by:** #508, merged 2026-11-23, directly after #512 as R-121 requires.
+- The labels are in `agent_fleet/finance_agent/export_dates.py`: `AS_OF_UNAVAILABLE` and
+  `SAMPLE_DATA_AS_OF`.
+- The caller's date is refused by #512.
 
 ---
 
-## R-123 — THE READINESS LATCH: AN UNREADABLE COMPLETION DECLARATION REFUSES; THE RUNNING CASE IS OPEN
+## R-123 — THE READINESS LATCH: NOT READY UNTIL THE FIRST CLEAN READ; THEN THAT READ IS SERVED FROM CACHE
 
-**RULED 2026-11-20, restated 2026-11-22; one part OPEN.** Source: the architect, via Chris. Two
-rulings are on record verbatim:
+**RULED 2026-11-20, corrected 2026-11-21, restated 2026-11-22, worded 2026-11-23.** Source: the
+architect, via Chris. The rulings, verbatim:
 
 1. **11-20:** *"an unreadable completion declaration refuses completion with a clear error. It does
    not warn and pass."*
-2. **11-22:** *"keep it as built. It refuses completions that could need fields and logs once.
+2. **11-21** (received 2026-11-22T05:12Z; quoted from gov's record): *"#494: a running BFF serves
+   its first good read from cache; only a start with unreadable files is not ready. That's the
+   ruling, corrected."*
+3. **11-22:** *"keep it as built. It refuses completions that could need fields and logs once.
    Serving the last good copy is a possible later refinement."*
+4. **11-23,** the wording of this entry: *"not ready until the first clean read of the
+   declarations. After that a running BFF serves that read from cache, and only a start with
+   unreadable files is not ready."*
 
-An 11-21 ruling, described in the packets as a correction to the latch, has no verbatim on record.
+**The rule.**
+- **Until the first clean read** of the completion declarations, the BFF is not ready. It refuses
+  every completion that could need declared fields, with a clear error, and logs once. It never
+  warns and lets the completion through. A failed read is not cached, so the next call reads
+  again.
+- **After the first clean read,** a running BFF serves that read from cache for the life of the
+  process. Files that break later do not make it not ready.
+- **Only a start with unreadable files is not ready.**
 
-**The rule (settled).** When the BFF cannot read the completion declarations, it refuses every
-completion that could need declared fields, with a clear error. It never warns and lets the
-completion through.
+This settles the question 74 put on 11-22, whether a running BFF refuses after a later break. It
+does not: that is 74's option (a), keep it as built. The 11-22 phrase "serving the last good copy
+is a possible later refinement" is overtaken. What #494 builds is the ruled rule.
 
-**OPEN: a break after a clean first read.** Lane 74 reported on 11-22 that the build does
-something the 11-22 wording does not describe. In #494 at `0cf4c156`:
-- the first clean read is cached for the life of the process, and a failed read is not cached;
-- **at start,** a failed read refuses and logs, and is retried on the next call;
-- **when the files break after a clean first read,** a running BFF never reads them again. It keeps
-  serving the copy it has (the "last good copy") until it restarts.
+**What it does NOT decide.** Whether a restart that reads broken files is a deploy failure. Today
+it refuses completions from then on, which the rule allows.
 
-So "keep it as built" and "serving the last good copy is a later refinement" cannot both hold. 74
-asked the architect to choose:
-- **(a)** keep it as built, and correct the ruling's wording;
-- **(b)** refuse after a later break, as written. That means a new read or file-state check on the
-  request path, and gov re-reviews #494.
-
-This entry is updated when the architect rules.
-
-**What it does NOT decide.** Whether a restart that reads broken files is a deploy failure. Today it
-refuses completions from then on, which the settled rule allows.
-
-**Built by:** #494, open (head `56e15684`) at the time of writing; gov's last verdict was HOLD.
+**Built by:** #494, a draft (head `c043a9e6`) at the time of writing; gov's last verdict was HOLD at
+`54476658`.
 
 ---
 
-## R-124 — THE ROUTING SCORE: A SUBJECT IS RIGHT WHEN IT IS EXACT, OR A SUBCLASS OF THE EXPECTED CLASS
+## R-124 — THE ROUTING SCORE: A SUBJECT IS RIGHT WHEN EXACT, A SUBCLASS, OR THE HOME OF THE EXPECTED VERB
 
-**RULED 2026-11-19.** Source: the architect, via Chris. **No verbatim wording is on record.** What
-follows is perf's statement of the ruling, from perf's 11-19 and 11-20 reports; the architect is
-asked to confirm it in review of this entry.
+**RULED 2026-11-19, widened 2026-11-23.** Source: the architect, via Chris. The 11-19 ruling (exact
+or a subclass) was relayed without verbatim wording. The architect gave this wording on 11-23, in
+review of this entry:
 
-**The rule.** perf scores a routed run's subject as right when the resolved class is exactly the
-expected class, or a proper subclass of it. A run matched only through a subclass is marked
-`matched_by_subclass`. The class closure comes from the ontology TTL, generated into
-`class-parents.json`, and every report names the TTL commit it was generated from.
+> *"a subject is right when exact or a subclass, or when the expected verb is compatible with the
+> resolved class, excluding verbs compatible with at least half the resolved subjects and
+> excluding request types as subjects. Both figures are reported."*
+
+**The rule.** perf scores a routed run's subject as right when any of these holds:
+1. the resolved class is exactly the expected class;
+2. it is a proper subclass of the expected class. Such a run is marked `matched_by_subclass`;
+3. **the expected verb is compatible with the resolved class.** This counts the referent routes,
+   such as a baseline question answered on `Program`. Two exclusions apply, and both are derived,
+   with no class or verb named:
+   - **a generic verb does not count:** one compatible with at least half the resolved subjects;
+   - **a request type is never a right subject:** a subclass of `mesh#Request` in the class
+     closure.
+
+The class closure comes from the ontology TTL, generated into `class-parents.json`. Every report
+names the TTL commit it was generated from.
+
+**Both figures are reported:** the figure under (1)–(2) alone, and the figure under the whole rule.
+On round B these are 0.383 and 0.492. The latter is perf's "narrow, request shapes excluded" form,
+from perf's 11-20 packet to the architect.
 
 **The acceptance bar for a routing PR (perf, 11-21).** The reference is round B (0.4.90, 515 runs,
-question set `questions-r2-b.yaml`). Under this rule, a PR:
+question set `questions-r2-b.yaml`). A PR:
 - must not raise the routed ambiguous questions above 6 of 8;
-- reports both subject figures beside the reference's 0.383 (this rule) and 0.492 (the wider
-  rule below).
+- reports both subject figures beside the reference's 0.383 and 0.492.
 
 **What it does NOT decide.**
-- **The wider rule.** Perf's "(4a) as worded" variant also counts a run when the routed verb is
-  compatible with the resolved class. It scores round B at 0.863. It is reported for comparison and
-  is not the ruled rule.
+- **The routed-verb variant.** perf's "(4a) as worded" counts a run when the *routed* verb, not the
+  expected one, is compatible with the resolved class, and has no exclusions. It scores round B at
+  0.863. It is not the ruled rule.
 - **The owner-persona headline.** Which figure leads perf's owner-persona reports is still open.
 
 **Applied in:** perf's round-B and night-2 re-scores; the bar governs #504 and #506 (both open).
