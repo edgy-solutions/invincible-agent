@@ -70,6 +70,8 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
 | `menu` | Optional. Where the card sits on the menu: what it places, the card it draws as, and who it fits. |
+| `example_ask` | Optional. A non-empty string: one question a person could ask that this measure answers. It must route to this measure's own verb; the check that it does is a sandbox eval still to come, so none is written yet. |
+| `group_label` | Optional. A non-empty string: the heading the measure is listed under. |
 | `source` | Optional. Where the measure reads when `FIN_DATASET_URN` is set (section 5a): `asset` (the default) or `seed`, the notional model. A dataset row reads its own asset and is refused if it carries one. |
 | `reason` | Required with `source: seed`, refused otherwise. Why the measure stays on the seed under the flag. |
 | `ratified_by` | Required with `source: seed`, refused otherwise. Who ratified that. |
@@ -440,9 +442,9 @@ scope: program                       # one file per program
 label: CDRL A001 - Notional EV summary (synthetic)
 audience: program_office
 cdrl: {item: A001, title: Notional Earned Value Summary, data_item: DI-NOTIONAL-0001, frequency: monthly}
-template: {file: cdrl_a001_ev_summary.xlsx, sha256: 041f60148f0a6fb3aedc9c382151482d0e77c7eb48a6e7506ef01a8653d52f4a}
+template: {file: cdrl_a001_ev_summary.xlsx, sha256: eb3708c4d72b03b3089cd412adb634ff95fbfa0f22f475f1018f176819d7e78c}
 sheet: EV Summary
-cells: {B2: program.name, B3: program.id, B4: as_of, B5: cdrl.item}
+cells: {B2: program.name, B3: program.id, B4: as_of, B5: generated_on, B6: cdrl.item}
 sources:
   - fn: fin_performance_indices
   - fn: fin_tcpi

@@ -2416,7 +2416,8 @@ services:
           BFF serves it, cortex reads it). Returns, per declared row, a subject class, an
           archetype class, the verb that declared it and the personas/domains it RANKS for:
           the SHAPE of the menu, never an answer, a row or a task. Nothing is read from the
-          substrate; the source is `<overlay>/menu_blocks/*.yaml`.
+          substrate; the sources are `<overlay>/menu_blocks/*.yaml` and the `menu:`
+          blocks of declared measure rows (`MEASURE_VERB_OVERLAY_DIRS`).
 
           NOT ENTITLEMENT-SCOPED ON PURPOSE, for /task_kinds' reason: persona_fit and
           domain_fit only rank, the picker stays entitlement-driven, and the verb behind each
