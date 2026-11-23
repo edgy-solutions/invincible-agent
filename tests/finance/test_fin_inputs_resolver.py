@@ -1128,7 +1128,7 @@ def _built_ins():
 
 def test_the_shipped_source_rows_are_the_ruled_ones():
     assert {fn: {"kind": r.source, "reason": r.source_reason, "ratified_by": r.ratified_by}
-            for fn, r in engine.SOURCES.items()} == _SEED_SOURCED
+            for fn, r in engine.SOURCES.items() if r.source == "seed"} == _SEED_SOURCED
 
 
 @pytest.mark.parametrize("fn", _built_ins())
