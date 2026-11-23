@@ -230,7 +230,10 @@ class AskableMeasures:
 
 def askable() -> AskableMeasures:
     """Every declared measure row (with or without a `menu:` block), sorted by verb, from the
-    same cached load `compose` uses. Never raises. `composed: False` is "not read"."""
+    same cached load `compose` uses. `shape` is the row's `render.shape`; `unit` is its
+    `render.unit` when the render block declares one, else None (never defaulted). Built-in
+    measures (code, not declared rows) are not listed. Never raises. `composed: False` is
+    "not read"."""
     if not os.getenv(_MEASURE_OVERLAY_ENV, ""):
         return AskableMeasures(False)
     try:
@@ -239,16 +242,19 @@ def askable() -> AskableMeasures:
         return AskableMeasures(False, [], [
             {"source": "measure_verbs", "reason": f"unreadable: {type(exc).__name__}"}])
     measures = [{"verb": _measure_verb(r), "name": r.name, "description": r.description,
-                 "phrasings": list(r.synonyms), "cells": sorted(r.cells)} for r in rows]
+                 "phrasings": list(r.synonyms), "cells": sorted(r.cells),
+                 "shape": r.archetype,
+                 "unit": r.render.get("unit") if isinstance(r.render, dict) else None}
+                for r in rows]
     measures.sort(key=lambda m: m["verb"])
     return AskableMeasures(True, measures, [])
 
 
 def visible_to(measures: list, domains) -> list:
-    """The entries whose declared cells the caller holds a domain in. Finance's own rule
-    (`agent_fleet/finance_agent/main.py` `_require_cell` / `_held_domains`): both sides are
-    upper-cased (cells also stripped, as finance strips them) and compared as sets; no held
-    domain sees nothing."""
+    """The entries whose declared cells the caller holds a domain in: the cell gate the
+    measure's own engine refuses on. Both sides are upper-cased (cells also stripped) and
+    compared as sets; no held domain sees nothing."""
+    # rule: agent_fleet/finance_agent/main.py `_require_cell` / `_held_domains`
     held = {str(d).upper() for d in (domains or [])}
     return [m for m in measures
             if held & {str(c).strip().upper() for c in m["cells"]}]

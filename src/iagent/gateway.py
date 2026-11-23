@@ -2071,6 +2071,8 @@ class AskableMeasure(_BaseModel):
     description: str
     phrasings: list[str]
     cells: list[str]
+    shape: str
+    unit: str | None = None
 
 
 class AskableMeasuresResponse(_BaseModel):
@@ -2084,11 +2086,13 @@ async def get_askable_measures(current_user: User = Depends(get_current_user)):
     """The declared measures this caller can ask, for discovery. One entry per declared measure
     row (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),
     whether or not the row carries a `menu:` block. An entry is listed only when the caller holds
-    a domain in the row's declared cells, the same comparison the finance engine refuses on, so
-    the list never names a measure the caller would be refused. The engine still refuses on its
-    own gate. `verb` joins to a `/menu_blocks` placement's `declared_by`.
+    a domain in the row's declared cells, the same comparison the engine that declares the
+    measure refuses on, so the list never names a measure the caller would be refused. The
+    engine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's
+    `declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the
+    row declares none).
 
-    Built-in (non-declared) finance measures are NOT listed: only declared rows are.
+    Built-in measures (code, not declared rows) are not listed.
 
     `composed: false` means the rows were NOT READ (no overlay dir configured, or the load
     failed, named in `invalid` and logged at ERROR); it never means "none".

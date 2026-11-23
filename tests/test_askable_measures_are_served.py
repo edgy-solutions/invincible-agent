@@ -56,6 +56,10 @@ def _get(domains):
     return r.json()
 
 
+def _unit_of(r):
+    return r.render.get("unit") if isinstance(r.render, dict) else None
+
+
 def _cells_of(r):
     return {c.upper() for c in r.cells}
 
@@ -74,7 +78,8 @@ def test_one_entry_per_declared_row_with_or_without_a_menu(monkeypatch):
     for r in rows:
         assert by_verb["mesh:" + r.verb] == {
             "verb": "mesh:" + r.verb, "name": r.name, "description": r.description,
-            "phrasings": list(r.synonyms), "cells": sorted(r.cells)}
+            "phrasings": list(r.synonyms), "cells": sorted(r.cells),
+            "shape": r.archetype, "unit": _unit_of(r)}
     verbs = [m["verb"] for m in got.measures]
     assert verbs == sorted(verbs)
 
@@ -158,3 +163,63 @@ def test_compose_and_askable_share_one_load(monkeypatch):
     assert menu_blocks.compose().composed is True
     assert menu_blocks.askable().composed is True
     assert len(calls) == 1
+
+
+# 7  shape and unit come from the row
+def test_shape_and_unit_are_served_from_the_row(monkeypatch):
+    rows = _rows()
+    assert any(_unit_of(r) for r in rows), "control: a row with a unit"
+    assert any(_unit_of(r) is None for r in rows), "control: a row without a unit"
+    _use_sample(monkeypatch)
+    by_verb = {m["verb"]: m for m in menu_blocks.askable().measures}
+    for r in rows:
+        m = by_verb["mesh:" + r.verb]
+        assert m["shape"] == r.archetype
+        assert m["unit"] == _unit_of(r)
+    domains = sorted(set().union(*(_cells_of(r) for r in rows)))
+    body = _get(domains)
+    served = {m["verb"]: m for m in body["measures"]}
+    assert served
+    for r in rows:
+        if "mesh:" + r.verb in served:
+            assert served["mesh:" + r.verb]["shape"] == r.archetype
+            assert served["mesh:" + r.verb]["unit"] == _unit_of(r)
+
+
+# 8  nothing finance-specific in the served contract
+_FIN = ("financ", "fin_", "finance_agent")
+
+
+def _names_finance(text):
+    low = text.lower()
+    return any(w in low for w in _FIN)
+
+
+def test_the_served_contract_names_nothing_finance_specific():
+    import yaml
+    assert _names_finance("the finance engine"), "control: the detector can fire"
+    spec = gateway.app.openapi()
+    desc = spec["paths"]["/askable_measures"]["get"].get("description", "")
+    assert desc, "control: the route has a description"
+    assert not _names_finance(desc), desc
+    schemas = spec["components"]["schemas"]
+    for name in ("AskableMeasure", "AskableMeasuresResponse"):
+        assert name in schemas
+        assert not _names_finance(repr(schemas[name])), name
+    root = Path(__file__).resolve().parents[1]
+    manifest = yaml.safe_load(
+        (root / "docs" / "architecture" / "endpoint_gating_manifest.yaml").read_text(encoding="utf-8"))
+
+    def walk(x):
+        if isinstance(x, dict):
+            if x.get("path") == "/askable_measures":
+                yield x
+            for v in x.values():
+                yield from walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                yield from walk(v)
+
+    found = list(walk(manifest))
+    assert len(found) == 1
+    assert not _names_finance(repr(found[0]))
