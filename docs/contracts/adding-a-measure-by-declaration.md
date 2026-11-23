@@ -137,3 +137,115 @@ Each of these needs engine code and a review, or is not supported at all.
 - **Alternative EAC method rows.** `MEASURE_OVERLAY_DIRS` is not read by the running engine.
 - **Looser visibility.** A row cannot widen who sees a program. The program check runs before any
   declared verb.
+
+## 5. Step by step, for a finance team member
+
+This section uses only the shipped sample: the row `fin_flow_cost_variance`, the contract
+`ev_fixture`, and the synthetic asset `urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)`.
+Your own measure follows the same steps with your names.
+
+### 5.1 The files you write
+
+**One file, in the usual case: the row.** Copy
+`policy/overlays/sample/measure_verbs/fin_flow_cost_variance.yaml` into your overlay directory, as
+`<measure_id>.yaml`. Your platform engineer tells you which directory engine-fin reads; it lives in
+your deployment's private policy repo, not in this one. Then change these keys:
+
+| key | what to write | in the sample |
+|---|---|---|
+| `measure_id` | `fin_` and a lower-case name, the same as the file name | `fin_flow_cost_variance` |
+| `verb` | a new camel-case name, not used by any other measure | `finFlowCostVariance` |
+| `name` | the title a reader sees | `Cost variance flow` |
+| `description` | what it is, and **which neighbouring measures it is not** | names `finVarianceAnalysis`, `finVarianceDrivers`, `finFlowActualCost` |
+| `synonyms` | phrases a person would type to mean this measure | `cost variance flow`, … |
+| `anti_synonyms` | phrases that mean a neighbour, so this one is not chosen for them | `explain the cost variance`, … |
+| `inputs.dataset.value` | one column, or exactly `{minus: [a, b]}` | `{minus: [bcwp, acwp]}` |
+| `inputs.dataset.levels` | the hierarchy, top first; the first must be the contract's `scope` | `[program_id, control_account, work_package]` |
+| `other_threshold` | the share below which small siblings are grouped as "All other" | `"0.05"` |
+| `render.value_label` | the label of the figure | `Cost variance (EV - AC)` |
+| `policy.cells`, `policy.granted_by`, `policy.reason` | who may see it, who approved it, and why | `[PROGRAM_FINANCE]`, `seed`, … |
+
+Leave `computation` as it is: it names the reviewed function the row reuses. Keep the asset's
+`urn`, `banner` and `contract` unless your measure reads a different asset.
+
+**Two more items, only if the asset is new to engine-fin.** Your platform engineer supplies both
+(see [finance-deployment-checklist.md](finance-deployment-checklist.md)):
+- a contract file declaring every column your row names;
+- a reader grant on the asset's URN for each person who will ask.
+
+### 5.2 How to check it locally
+
+Run these from a checkout of this repository, with its environment synced (`uv sync --extra
+agent-fleet`).
+
+**Step 1: does it load?** Point engine-fin at a directory holding only your row, and import it:
+
+```bash
+MEASURE_VERB_OVERLAY_DIRS=/path/to/your/measure_verbs \
+  uv run python -I -c "import sys; sys.path.insert(0, '.'); from agent_fleet.finance_agent import main as m; print('LOADED', sorted(m.DECLARED))"
+```
+
+- **If the row is good,** it prints `LOADED ['fin_flow_cost_variance']`.
+- **If it is not,** the import stops with a `MeasureVerbError` that names the file and the reason.
+  Two real examples, from the sample row with one thing broken:
+  - with a `formula:` key added: `fin_flow_cost_variance.yaml is not a valid measure verb row:
+    row carries ['formula'], which no part of the engine reads; a measure row cannot carry a
+    formula, expression or query -- the computation lives in the named module`;
+  - with `acwp` misspelt `acwq`: `... inputs.dataset names ['acwq'], which contract 'ev_fixture'
+    does not declare`.
+
+  The running engine refuses to start in the same way, so a row that fails here would never
+  reach a user.
+
+`MEASURE_VERB_OVERLAY_DIRS` replaces the list of directories. Pointed at your directory alone, it
+loads only your rows; the engine's own measures are unaffected, and none of the other sample rows
+load.
+
+**Step 2: does it compute what you expect?** This step is for whoever writes your tests.
+1. Copy `tests/finance/test_a_measure_added_by_declaration_alone.py`.
+2. Change `FN`, `VERB` and the expected figures to yours. The oracle, `expected_edges`, sums
+   `bcwp − acwp` with polars, so change that expression to match your `value`.
+3. Run it:
+
+```bash
+uv run python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider -q tests/finance/<your test>.py
+```
+
+It calls the real route as an allowed caller and as a refused one, and compares the answer with
+the polars sum. Its census also checks that no engine file names your measure.
+
+**Step 3: what to tell your platform engineer.** Give them the row's file name and verb. The
+measure goes live only when engine-fin restarts with the directory mounted, because verbs register
+once, at startup.
+
+### 5.3 What you will see
+
+**The answer** to `POST /measure/fin_flow_cost_variance` for the sample program, as an allowed
+caller (measured locally on the synthetic fixture; nothing here ran on a cluster):
+
+| field | what it holds | in the sample |
+|---|---|---|
+| `verdict` | one sentence restating the figures, never a judgement | `Cost variance (EV - AC): net -1130000.00 across 14 edges over 2 levels, 0 'All other' sink(s) from the collapse, 8 edge(s) at zero` |
+| `rows` | one edge per parent and child, the program's own edge first | 15 rows; the first is the program, `negative`, `1130000.00` |
+| `data_provenance` | the banner, the as-of and ticket, and the source URN | `SYNTHETIC earned-value fixture, not a real program. (as of …, ticket: …) Source: urn:li:dataset:…` |
+| `method` | the measure, the function's version, and its source's sha256 | `version 1.3.0` |
+| `render` | the shape, the label and the unit | `FLOW_DECOMPOSITION`, `Cost variance (EV - AC)`, `USD` |
+
+Each edge carries:
+- `value`: the size, always positive;
+- `sign`: `positive`, `negative` or `zero`;
+- `level`: 0 for the program's own edge, then one per level down;
+- `value_exact`: the figure as a string with two decimals.
+
+**In chat,** a person asks in their own words: "show me the cost variance flow for the program".
+The router chooses your verb from its synonyms and anti-synonyms. As of 2026-11-21 the UI draws no
+card for a flow answer (section 4 lists what that waits on).
+
+**A person without access** gets a refusal, never a figure:
+- without program membership: 403 `program_not_visible`;
+- without the reader grant on the asset: 403 `access_denied`, with the message "You are not
+  authorized to read this dataset (<urn>). You can request access."
+- if the row sets `policy.cells` and the person holds none of them: 403 `measure_not_in_cell`.
+
+The checks run in that order (program, then cells, then the asset), so a person outside the program
+learns nothing about the measure.
