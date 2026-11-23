@@ -442,9 +442,9 @@ scope: program                       # one file per program
 label: CDRL A001 - Notional EV summary (synthetic)
 audience: program_office
 cdrl: {item: A001, title: Notional Earned Value Summary, data_item: DI-NOTIONAL-0001, frequency: monthly}
-template: {file: cdrl_a001_ev_summary.xlsx, sha256: 041f60148f0a6fb3aedc9c382151482d0e77c7eb48a6e7506ef01a8653d52f4a}
+template: {file: cdrl_a001_ev_summary.xlsx, sha256: eb3708c4d72b03b3089cd412adb634ff95fbfa0f22f475f1018f176819d7e78c}
 sheet: EV Summary
-cells: {B2: program.name, B3: program.id, B4: as_of, B5: cdrl.item}
+cells: {B2: program.name, B3: program.id, B4: as_of, B5: generated_on, B6: cdrl.item}
 sources:
   - fn: fin_performance_indices
   - fn: fin_tcpi
