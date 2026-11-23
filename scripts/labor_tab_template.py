@@ -74,7 +74,7 @@ TEMPLATE = """<!doctype html>
 </style></head><body>
 <header>
  <h1>Cost validation package - {recipient}</h1>
- <div class="meta">algorithm {sha} &middot; as of {as_of} &middot; {locator}</div>
+ <div class="meta">algorithm {sha} &middot; data as of {data_as_of} &middot; generated {as_of} &middot; {locator}</div>
  <div class="meta">data {duckdb_filename} &middot; {duckdb_hash}</div>
  <div class="meta" id="boot"></div>
 </header>
