@@ -2,6 +2,8 @@
 
 ## 0.4.92 — not yet cut
 
+**Opened at the 0.4.91 cut** (the architect, 2026-11-22: "Open `## 0.4.92 — not yet cut` now as a small PR, and after every cut from now on"). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.91 one. `Chart.yaml` stays at 0.4.91 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
+
 - **Only the BFF can reach Electric** (saf; step 2 of the sync-service exposure plan). A NetworkPolicy `<release>-electric-ingress` admits ingress to the Electric pods from the cortex-bff pods only, on `electric.port`. It has its own switch, `electric.networkPolicy.enabled` (default false: enabling a perimeter is the operator's decision, and the CNI is unmeasured), so it does not wait on the fleet gate `networkPolicy.enabled`. The selectors come from two helpers (`electricComponent`, `cortexBffComponent`) that the Electric and BFF templates also label themselves with; a seal renders both and compares, and a census fails when any other pod names Electric. **Whether this cluster's CNI enforces NetworkPolicy is unmeasured**: the roll has two checks (a call to Electric from a non-BFF pod must fail; the BFF's shape read must answer), each needing approval. Not in the ruled 0.4.91 list; rides the release after unless ruled.
 
 ## 0.4.91 — 2026-11-21
