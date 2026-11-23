@@ -99,7 +99,7 @@ def _strip_setting(chart: Path) -> None:
     s = t.read_text(encoding="utf-8")
     s2, n1 = re.subn(r"\{\{- /\* The source types the PINNED.*?\*/\}\}\n\{\{- \$asOfRegistered := list \}\}\n",
                      "", s, flags=re.S)
-    s3, n2 = re.subn(r"            \{\{- \$asOfReaders := dig.*?value: \{\{ join \",\" \$asOfReaders \| quote \}\}\n"
+    s3, n2 = re.subn(r"            \{\{- /\* One home, checked unconditionally.*?value: \{\{ join \",\" \$asOfReaders \| quote \}\}\n"
                      r"            \{\{- end \}\}\n", "", s2, flags=re.S)
     assert (n1, n2) == (1, 1), "template lines not found"
     t.write_text(s3, encoding="utf-8")
@@ -138,6 +138,19 @@ def test_the_setting_has_one_home(tmp_path: Path):
               "--set", f"userDeployments.dag-tools.broker.env.{_ENVKEY}=x")
     assert r.returncode != 0, "a second home for the setting rendered"
     assert _ENVKEY in r.stderr
+
+
+@pytest.mark.parametrize("widened", [False, True], ids=["at_this_pin", "widened"])
+def test_the_env_alone_is_refused_too(tmp_path: Path, widened: bool):
+    """gov, #529 review: with `asOf.readers` empty, `broker.env.DAG_TOOLS_AS_OF_READERS` alone
+    must not render; otherwise it bypasses the registered-set check."""
+    ch = _copy_chart(tmp_path)
+    if widened:
+        _widen(ch, '"s3_iceberg" "s3_delta"')
+    r = _helm(ch, "--set", f"userDeployments.dag-tools.broker.env.{_ENVKEY}=s3_delta")
+    assert r.returncode != 0, "the env alone rendered: a second home bypasses the registered set"
+    assert f"broker.env.{_ENVKEY}" in r.stderr and "one home" in r.stderr, r.stderr[-700:]
+    assert "dag_tools.domain_broker.main:app" in _render(ch)  # control: the same chart renders without it
 
 
 def test_the_registered_constant_is_empty_at_this_pin():

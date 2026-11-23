@@ -259,6 +259,11 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
             {{- end }}
+            {{- /* One home, checked unconditionally: an env-only DAG_TOOLS_AS_OF_READERS (with
+                 asOf.readers empty) would otherwise bypass the registered-set check below. */}}
+            {{- if hasKey (default dict $deploy.broker.env) "DAG_TOOLS_AS_OF_READERS" }}
+            {{- fail (printf "userDeployments.%s.broker.env.DAG_TOOLS_AS_OF_READERS: set broker.asOf.readers instead; the setting has one home" $name) }}
+            {{- end }}
             {{- $asOfReaders := dig "asOf" "readers" (list) $deploy.broker }}
             {{- if $asOfReaders }}
             {{- if not (kindIs "slice" $asOfReaders) }}
@@ -268,9 +273,6 @@ spec:
             {{- if not (has . $asOfRegistered) }}
             {{- fail (printf "userDeployments.%s.broker.asOf.readers: the pinned broker registers no as-of reader for %q (registered: %v)" $name . $asOfRegistered) }}
             {{- end }}
-            {{- end }}
-            {{- if hasKey (default dict $deploy.broker.env) "DAG_TOOLS_AS_OF_READERS" }}
-            {{- fail (printf "userDeployments.%s.broker.env.DAG_TOOLS_AS_OF_READERS: set broker.asOf.readers instead; the setting has one home" $name) }}
             {{- end }}
             - name: DAG_TOOLS_AS_OF_READERS
               value: {{ join "," $asOfReaders | quote }}
