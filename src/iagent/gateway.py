@@ -2065,6 +2065,45 @@ async def get_menu_blocks(current_user: User = Depends(get_current_user)):
     return {"composed": result.composed, "blocks": result.blocks, "invalid": result.invalid}
 
 
+class AskableMeasure(_BaseModel):
+    verb: str
+    name: str
+    description: str
+    phrasings: list[str]
+    cells: list[str]
+
+
+class AskableMeasuresResponse(_BaseModel):
+    composed: bool
+    measures: list[AskableMeasure]
+    invalid: list[MenuBlockInvalid]
+
+
+@app.get("/askable_measures", response_model=AskableMeasuresResponse)
+async def get_askable_measures(current_user: User = Depends(get_current_user)):
+    """The declared measures this caller can ask, for discovery. One entry per declared measure
+    row (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),
+    whether or not the row carries a `menu:` block. An entry is listed only when the caller holds
+    a domain in the row's declared cells, the same comparison the finance engine refuses on, so
+    the list never names a measure the caller would be refused. The engine still refuses on its
+    own gate. `verb` joins to a `/menu_blocks` placement's `declared_by`.
+
+    Built-in (non-declared) finance measures are NOT listed: only declared rows are.
+
+    `composed: false` means the rows were NOT READ (no overlay dir configured, or the load
+    failed, named in `invalid` and logged at ERROR); it never means "none".
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import menu_blocks
+
+    result = await run_in_threadpool(menu_blocks.askable)
+    for bad in result.invalid:
+        logger.error("askable measures are unreadable (%s): %s", bad["source"], bad["reason"])
+    return {"composed": result.composed,
+            "measures": menu_blocks.visible_to(result.measures, current_user.entitled_domains),
+            "invalid": result.invalid}
+
+
 @app.get("/task_kinds")
 async def get_task_kinds(current_user: User = Depends(get_current_user)):
     """Every declared species and its contract — the menu, readable without attempting it.

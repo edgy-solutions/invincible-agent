@@ -52,6 +52,7 @@ _MENU_KEYS = frozenset({"subject", "archetype", "persona_fit", "domain_fit"})
 _CURIE_FIELDS = ("subject", "archetype")
 _LIST_FIELDS = ("persona_fit", "domain_fit")
 _CACHE: dict = {}
+_ROWS_CACHE: dict = {}
 
 
 @dataclass(frozen=True)
@@ -131,12 +132,22 @@ def _measure_verb(row) -> str:
     return "mesh:" + row.verb
 
 
+def _measure_rows() -> list:
+    """The declared measure rows: ONE `load_measure_verbs()` per `_cache_key()`, shared by
+    `compose` (placements) and `askable` (discovery). Raises whatever the loader raises; a
+    failed load is not cached."""
+    key = _cache_key()
+    if key not in _ROWS_CACHE:
+        from agent_fleet.finance_agent.measure_verbs import load_measure_verbs
+        _ROWS_CACHE[key] = list(load_measure_verbs())
+    return _ROWS_CACHE[key]
+
+
 def _measure_blocks() -> dict[str, dict]:
     """`{source: {"block": {...}}}` for every declared measure row that carries a `menu:` block.
     Raises whatever the loader raises; `compose` turns that into an unreadable source."""
-    from agent_fleet.finance_agent.measure_verbs import load_measure_verbs
     out: dict[str, dict] = {}
-    for r in load_measure_verbs():
+    for r in _measure_rows():
         m = r.menu
         if m is None:
             continue
@@ -207,3 +218,37 @@ def compose() -> MenuBlocks:
 
 def clear_cache() -> None:
     _CACHE.clear()
+    _ROWS_CACHE.clear()
+
+
+@dataclass(frozen=True)
+class AskableMeasures:
+    composed: bool
+    measures: list = field(default_factory=list)
+    invalid: list = field(default_factory=list)
+
+
+def askable() -> AskableMeasures:
+    """Every declared measure row (with or without a `menu:` block), sorted by verb, from the
+    same cached load `compose` uses. Never raises. `composed: False` is "not read"."""
+    if not os.getenv(_MEASURE_OVERLAY_ENV, ""):
+        return AskableMeasures(False)
+    try:
+        rows = _measure_rows()
+    except Exception as exc:
+        return AskableMeasures(False, [], [
+            {"source": "measure_verbs", "reason": f"unreadable: {type(exc).__name__}"}])
+    measures = [{"verb": _measure_verb(r), "name": r.name, "description": r.description,
+                 "phrasings": list(r.synonyms), "cells": sorted(r.cells)} for r in rows]
+    measures.sort(key=lambda m: m["verb"])
+    return AskableMeasures(True, measures, [])
+
+
+def visible_to(measures: list, domains) -> list:
+    """The entries whose declared cells the caller holds a domain in. Finance's own rule
+    (`agent_fleet/finance_agent/main.py` `_require_cell` / `_held_domains`): both sides are
+    upper-cased (cells also stripped, as finance strips them) and compared as sets; no held
+    domain sees nothing."""
+    held = {str(d).upper() for d in (domains or [])}
+    return [m for m in measures
+            if held & {str(c).strip().upper() for c in m["cells"]}]
