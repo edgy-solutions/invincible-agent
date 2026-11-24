@@ -12,6 +12,8 @@
 
 - **The finance source reaches five more cards.** The finance source (`data_provenance`) now reaches the CONTRIBUTION_RANKING, VARIANCE_TREE, SHORTFALL_GRID, COMPETING_MEASURES and FORECAST_MEASURE cards; before, the projector dropped it for every finance tuple but MULTI_SERIES and FLOW_DECOMPOSITION.
 
+- **`/askable_measures` serves the list of askable measures** (74; the architect, 2026-11-22: "A served list of askable measures, through the same mechanism, so a person can discover them", and 2026-11-23: "The askable list names nothing finance-specific and is filtered by the caller's cells"). It is a new BFF route with the same gate and overlay switch as `/menu_blocks`. It lists each declared measure row the caller's cells hold, and each built-in measure from its listing row, through the measure engine's own loader. Each entry carries its verb, name, phrasings and cells, plus `shape`, `unit`, `example_ask` and `group_label` exactly as declared. A built-in declares no shape, and nothing is defaulted. A verb declared on both sides is left out and named in `invalid`, and an unreadable built-in listing is named there too, while the declared rows are still served. Without `MEASURE_VERB_OVERLAY_DIRS` the list is empty and says `composed: false`. **No chart change**: the BFF's image only. **Before the roll:** nothing.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
