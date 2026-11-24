@@ -1,0 +1,6 @@
+# A built-in's row: it lists the measure in the askable list. `source: asset` is where it reads
+# under FIN_DATASET_URN; cells and phrasings are the engine's own.
+measure_id: fin_performance_indices
+source: asset
+name: Performance indices (CPI, SPI)
+description: Cost and schedule performance indices per period and cumulative, with the quantities each ratio came from.

@@ -160,6 +160,20 @@ if not _routing_audit_logger.handlers:
     _routing_audit_logger.propagate = False
 
 
+def _routing_candidates_raw(hits: list[dict]) -> list[dict]:
+    """The audit row's ``candidates_raw`` items, one per candidate; shared by both handlers."""
+    return [
+        {
+            "verb_iri": h.get("verb_iri"),
+            "endpoint": h.get("endpoint"),
+            "score": h.get("score"),
+            "domains": h.get("domains"),
+            "cost_class": h.get("cost_class"),
+        }
+        for h in hits
+    ]
+
+
 def _emit_routing_decision(
     *,
     source: str,
@@ -175,8 +189,17 @@ def _emit_routing_decision(
     fallback_reason: str | None,
     search_ms: int,
     total_ms: int,
+    endpoint: str | None = None,
+    classifier_confidence: float | None = None,
+    classifier_reasoning: str | None = None,
 ) -> None:
     """Emit one routing-decision row as a single-line JSON log.
+
+    Written by BOTH verb-picking handlers, ``/search_predicates`` and
+    ``/classify_predicate`` (the supervisor's live path). ``endpoint``,
+    ``classifier_confidence`` and ``classifier_reasoning`` are keys ADDED to the
+    ADR-0015 §3 shape: always present, null when the writer has none (every
+    ``/search_predicates`` row carries nulls for the classifier pair).
 
     The schema mirrors the ADR-0015 §3 SQL DDL exactly so the eventual
     Phase 2 INSERT is a column-for-column copy. ``candidates_filt`` is
@@ -201,6 +224,9 @@ def _emit_routing_decision(
             "fallback_reason": fallback_reason,
             "search_ms": search_ms,
             "total_ms": total_ms,
+            "endpoint": endpoint,
+            "classifier_confidence": classifier_confidence,
+            "classifier_reasoning": classifier_reasoning,
         }
         _routing_audit_logger.info(json.dumps(record, default=str))
     except Exception:  # noqa: BLE001 — never let audit emit kill a request
@@ -4720,6 +4746,7 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
             fallback_reason="no_predicate_matched",
             search_ms=_search_ms,
             total_ms=int((time.perf_counter() - _total_t0) * 1000),
+            endpoint="/search_predicates",
         )
         return SearchPredicatesResponse(
             found=False,
@@ -4765,16 +4792,7 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
         user_id=request.user_id,
         sub_query=request.query,
         entitled_domains=entitled,
-        candidates_raw=[
-            {
-                "verb_iri": h["verb_iri"],
-                "endpoint": h["endpoint"],
-                "score": h.get("score"),
-                "domains": h.get("domains"),
-                "cost_class": h.get("cost_class"),
-            }
-            for h in hits
-        ],
+        candidates_raw=_routing_candidates_raw(hits),
         picked_engine=_top.get("endpoint"),
         picked_verb=_top.get("verb_iri"),
         pick_score=_pick_score,
@@ -4782,6 +4800,7 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
         fallback_reason=None,
         search_ms=_search_ms,
         total_ms=int((time.perf_counter() - _total_t0) * 1000),
+        endpoint="/search_predicates",
     )
 
     return SearchPredicatesResponse(found=True, candidates=candidates)
@@ -7122,6 +7141,12 @@ class ClassifyPredicateRequest(BaseModel):
     # How many Weaviate candidates to put in front of the LLM. Higher =
     # better recall, more tokens. 10 mirrors /resolve's default.
     candidate_limit: int = 10
+    # Audit context, the same two fields `SearchPredicatesRequest` carries. The audit row's
+    # user_id is `user_email` above; there is deliberately no second identity field.
+    # request_id is trace correlation (the supervisor sends its run id); audit_source labels
+    # synthetic traffic ('user_request' | 'canary' | ...), defaulting to user_request when unset.
+    request_id: str | None = None
+    audit_source: str | None = None
     # ADR-0018 addendum (proper SPO): when populated, the LLM is
     # constrained to picking among ONLY these verb_iris — sourced from
     # the supervisor's prior call to /find_compatible_verbs (Cypher walk
@@ -7244,6 +7269,45 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     entitled = [d.upper() for d in (request.entitled_domains or [])]
     compatible = set(request.compatible_verb_iris or [])
 
+    # Routing-decision audit row: exactly one per request, on every exit below. Never raises
+    # (`_emit_routing_decision` swallows), so it cannot change a response or a status.
+    _total_t0 = time.perf_counter()
+    _request_id = request.request_id or str(uuid.uuid4())
+    _search_ms = 0
+
+    def _audit(*, cands: list[dict], picked: dict | None, fallback_reason: str | None,
+               confidence: float | None, reasoning: str | None) -> None:
+        _pick_score = picked.get("score") if picked else None
+        _others = [
+            c.get("score") for c in cands
+            if c is not picked and c.get("score") is not None
+        ]
+        # May be NEGATIVE: the classifier chose a verb that the hybrid search ranked below
+        # another candidate. That is the point of recording it.
+        _pick_margin = (
+            _pick_score - max(_others)
+            if _pick_score is not None and _others
+            else None
+        )
+        _emit_routing_decision(
+            source=(request.audit_source or "user_request"),
+            request_id=_request_id,
+            user_id=request.user_email,
+            sub_query=request.query,
+            entitled_domains=entitled,
+            candidates_raw=_routing_candidates_raw(cands),
+            picked_engine=picked.get("endpoint") if picked else None,
+            picked_verb=picked.get("verb_iri") if picked else None,
+            pick_score=_pick_score,
+            pick_margin=_pick_margin,
+            fallback_reason=fallback_reason,
+            search_ms=_search_ms,
+            total_ms=int((time.perf_counter() - _total_t0) * 1000),
+            endpoint="/classify_predicate",
+            classifier_confidence=confidence,
+            classifier_reasoning=reasoning,
+        )
+
     # ADR-0019 Contract B — subject valid + zero compatible verbs →
     # hard NO_MATCH → generalist, WITHOUT burning an LLM call. The
     # caller resolved a real subject (not "UNKNOWN") and queried
@@ -7269,30 +7333,42 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         and request.compatible_verb_iris is not None
         and len(request.compatible_verb_iris) == 0
     ):
+        _cb_reasoning = (
+            f"Contract B short-circuit: subject {request.subject_uri!r} "
+            f"resolved but Neo4j's compat-walk returned zero verbs "
+            f"typed against it (or any ancestor via subClassOf). "
+            f"Routing to generalist fallback without invoking the "
+            f"LLM — the predicate graph already authoritatively "
+            f"said no registered verb operates on this kind."
+        )
+        _audit(cands=[], picked=None, fallback_reason="contract_b_no_compatible_verb",
+               confidence=0.0, reasoning=_cb_reasoning)
         return ClassifyPredicateResponse(
             resolved_verb_iri="UNKNOWN",
             confidence_score=0.0,
-            reasoning=(
-                f"Contract B short-circuit: subject {request.subject_uri!r} "
-                f"resolved but Neo4j's compat-walk returned zero verbs "
-                f"typed against it (or any ancestor via subClassOf). "
-                f"Routing to generalist fallback without invoking the "
-                f"LLM — the predicate graph already authoritatively "
-                f"said no registered verb operates on this kind."
-            ),
+            reasoning=_cb_reasoning,
             candidate_verb_iris=[],
             classify_called=False,
         )
 
-    candidates = await predicate_hybrid_search(
-        query=request.query,
-        entitled_domains=entitled,
-        limit=max(request.candidate_limit, 25),  # widen so the filter survives
-        user_email=request.user_email,
-        # The compat set goes INTO the query, so the limit cannot crowd a compatible verb out
-        # (see `_predicate_hybrid_search_sync`). Sorted for a stable filter.
-        verb_iris=sorted(compatible) or None,
-    )
+    _search_t0 = time.perf_counter()
+    try:
+        candidates = await predicate_hybrid_search(
+            query=request.query,
+            entitled_domains=entitled,
+            limit=max(request.candidate_limit, 25),  # widen so the filter survives
+            user_email=request.user_email,
+            # The compat set goes INTO the query, so the limit cannot crowd a compatible verb out
+            # (see `_predicate_hybrid_search_sync`). Sorted for a stable filter.
+            verb_iris=sorted(compatible) or None,
+        )
+    except Exception as exc:
+        # A search error is an exit too: one row, then the same exception as before.
+        _search_ms = int((time.perf_counter() - _search_t0) * 1000)
+        _audit(cands=[], picked=None, fallback_reason="search_error",
+               confidence=None, reasoning=type(exc).__name__)  # the type only: an exception message can carry a URL
+        raise
+    _search_ms = int((time.perf_counter() - _search_t0) * 1000)
 
     # ADR-0018 addendum + ADR-0006 §Addendum conjunctive-read invariant
     # (2026-06-13): when the caller has resolved the subject and asked
@@ -7368,6 +7444,11 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
                 f"absence, not ranking). Routes to generalist until the "
                 f"substrate is reconciled."
             )
+        _audit(
+            cands=[], picked=None,
+            fallback_reason=("conjunctive_read_invariant" if compatible else "no_predicate_matched"),
+            confidence=0.0, reasoning=reason,
+        )
         return ClassifyPredicateResponse(
             resolved_verb_iri="UNKNOWN",
             confidence_score=0.0,
@@ -7558,6 +7639,8 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
             baml_options={"tb": tb, **routing_call_options("VERB")},
         )
     except Exception as exc:
+        _audit(cands=candidates, picked=None, fallback_reason="classifier_error",
+               confidence=None, reasoning=type(exc).__name__)  # the type only: an exception message can carry a URL
         raise HTTPException(
             status_code=502,
             detail=f"BAML ClassifyPredicate failed: {exc}",
@@ -7573,6 +7656,11 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
                 matched_predicate = cand
                 break
 
+    _audit(
+        cands=candidates, picked=matched_predicate,
+        fallback_reason=(None if matched_predicate else "classifier_unknown"),
+        confidence=result.confidence_score, reasoning=result.reasoning,
+    )
     return ClassifyPredicateResponse(
         resolved_verb_iri=resolved_verb_iri,
         confidence_score=result.confidence_score,

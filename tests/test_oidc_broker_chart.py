@@ -254,11 +254,13 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     # #427 (GET /menu_blocks): the shared -config ConfigMap names the sample menu-block overlay by default,
     # because an unset MENU_BLOCK_OVERLAY_DIRS serves `composed: false`. It is a line in a template the OIDC change
     # touched, not an OIDC line, and is the one other allowed addition.
-    # #495 (no library calls home): the same ConfigMap turns off mem0's analytics and LiteLLM's
-    # remote cost-map fetch for every engine. Also not OIDC lines; the comment is a template comment.
+    # #495 (no library calls home): the same ConfigMap turns off mem0's analytics, LiteLLM's
+    # remote cost-map fetch, DataHub's usage upload and Hugging Face's telemetry for every engine. Also not OIDC lines; the comment is a template comment.
     assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == [
         '+  MEM0_TELEMETRY: "False"',
         '+  LITELLM_LOCAL_MODEL_COST_MAP: "True"',
+        '+  DATAHUB_TELEMETRY_ENABLED: "false"',
+        '+  HF_HUB_DISABLE_TELEMETRY: "1"',
         '+  MENU_BLOCK_OVERLAY_DIRS: "/app/policy/overlays/sample/menu_blocks"',
         '+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
