@@ -1033,6 +1033,46 @@ async def test_the_dagster_path_makes_zero_reserve_and_zero_release_calls(mesh_e
     assert await ns.reserve("x") is None and await ns.release("x") is False
 
 
+
+@pytest.mark.asyncio
+async def test_the_dagster_path_never_takes_a_place(mesh_env, monkeypatch, caplog):
+    """gov's A14 seal: the guard `_answer_path() == "durable"` is what keeps the Dagster path out
+    of the gate. Dropped, the Dagster backend's no-op reserve is CALLED and answers None, so no
+    post is ever logged: the test above cannot see it. Here every backend's reserve is a spy that
+    really reserves (through the durable client, over the real gate), so a Dagster-path reserve
+    is counted AND would take a place."""
+    monkeypatch.setenv("IAGENT_ANSWER_PATH", "dagster")
+    adm.reset_gate_for_tests(1, 5)
+    m = mesh_env()
+    calls, at_route = [], []
+    real_backend = gw._answer_backend
+
+    def spied_backend():
+        ns = real_backend()
+
+        async def reserve(rid):
+            calls.append(rid)
+            return await gw._DURABLE_ANSWERS.reserve(rid)
+        ns.reserve = reserve
+        return ns
+    monkeypatch.setattr(gw, "_answer_backend", spied_backend)
+    real_post = m.post
+
+    async def post(url, *a, **kw):
+        if str(url).endswith(ADM_ROUTE):
+            at_route.append(adm.get_gate().state())     # the gate while the model is called
+        return await real_post(url, *a, **kw)
+    monkeypatch.setattr(m, "post", post)
+    with caplog.at_level(logging.WARNING, logger=gw.logger.name):
+        await _stream(m)
+    assert m.n(ADM_ROUTE) == 1
+    assert calls == []                                   # no reserve call
+    assert m.n("reserve") == 0
+    assert [(s["running"], s["waiting"]) for s in at_route] == [(0, 0)]   # the gate stays empty
+    st = adm.get_gate().state()
+    assert st["running"] == 0 and st["waiting"] == 0
+    assert "admission reserve failed" not in caplog.text
+
 # 4. the claim ----------------------------------------------------------------------------
 
 
