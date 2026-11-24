@@ -245,6 +245,13 @@ def _RateSetFromManifest(r: dict[str, Any]):
     )
 
 
+#: What the data is as of. This engine reads only its seed, never an asset, so there is no source
+#: receipt and no date: the field says so. `as_of` in a package is the GENERATION date, never this.
+#: Equal to finance_agent.export_dates.SAMPLE_DATA_AS_OF (sealed by a test; engines do not import
+#: each other).
+SAMPLE_DATA_AS_OF = "sample data (notional seed): no as-of"
+
+
 def build_package(
     state: CostState,
     *,
@@ -292,6 +299,8 @@ def build_package(
         "recipient_scope": recipient_scope,
         "scenario": scenario or "baseline",
         "as_of": as_of or date.today().isoformat(),
+        # THE DATA'S DATE, labelled apart from the generation date above (ruling 2026-11-21).
+        "data_as_of": SAMPLE_DATA_AS_OF,
         "algorithm_sha": algorithm_sha,
         "program": state.program_name,
         # EVERYTHING EMBEDDED IS DISCLOSED. There is no render-time filtering in a file the

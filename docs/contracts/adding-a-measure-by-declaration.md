@@ -61,6 +61,61 @@ two ways:
 
    See [finance-deployment-checklist.md](finance-deployment-checklist.md).
 
+### If your data's columns have other names
+
+**Write your own contract, and never edit the sample.** `contracts/ev_fixture.yaml` describes the
+sandbox's synthetic fixture. Your contract is its own file, with your URN, your columns, your grain
+and your rules. Its header says which lines are the format and which are the sample's own.
+
+What you do about the column names depends on which measures read the asset:
+- **A declared dataset row reads your names.** The row names its columns (`levels`, `value`, the
+  series keys) and your contract declares them. Use your own names in both, and conform nothing.
+- **The built-in measures read fixed names.** The asset behind the built-ins whose row says
+  `source: asset` (`FIN_DATASET_URN`) is read by the columns `program_id`, `program_name`,
+  `program_bac`, `control_account`, `work_package`, `period`, `bcws`, `bcwp` and `acwp`. No
+  contract key renames a column. To serve the built-ins from your data, **conform it upstream**:
+  rename the columns in the pipeline that produces the asset, and declare the conformed names in
+  your contract.
+
+The labels in your period column must be periods of your deployment's declared fiscal calendar
+([finance-overlays.md](finance-overlays.md), the `fin_calendar` section). Otherwise the read
+refuses `period_outside_calendar`. A calendar is named: your contract names its calendar in
+`period.calendar`; with one calendar declared it is the default and the key may be omitted. A
+configured dataset with no calendar declared fails at boot.
+
+### Which rule ids are general
+
+A contract's `rules` block gives each rule id a message. It cannot add a rule. The ids fall into
+three groups:
+
+| group | rule ids | raised by |
+|---|---|---|
+| **every contract** | `duplicate_key`, `missing_column`, `not_determined_by`, `personal_data`, `wrong_type` | the shared reader, on every read of every contract |
+| **every finance read** | `non_finite`, `null_value`, `other_program_rows`, `period_outside_calendar`, `varies_within_path`, `version_outside_list` | engine-fin, on its reads of any finance dataset (the last only over a contract that declares a `version_dimension`) |
+| **the earned-value shape only** | `program_name_not_unique`, `program_bac_not_unique`, `work_package_in_two_accounts`, `duplicate_work_package_period` | engine-fin's built-in read only |
+
+**The last four are the sample's own key and dependencies,** checked under fin's own ids:
+- one row per work package and period;
+- one name and one budget per program;
+- one control account per work package.
+
+They belong to the earned-value shape the built-ins read, so data conformed to that shape meets
+them too. In your own contract, declare your key as `grain` and your dependencies under
+`dependencies`; the shared reader then refuses those as `duplicate_key` and `not_determined_by`.
+
+`interval_overlap` and `orphan_reference` are checked by the producer, not the engine.
+
+### Comparing two versions
+
+If your dataset carries several versions of one figure (a baseline and two estimates, say), the
+contract declares them: `version_dimension: {column: version, values: [PMB, EAC-CTR, EAC-GOV]}`. A flow row
+then compares two with `value: {compare: {column: amount, by: version}}` and lists `version_a` and
+`version_b` in `inputs.params`. The person picks them from the declared list, never from the data.
+The paths are summed per version and subtracted (a path in one version only counts as zero in the
+other), and the verdict says how many paths only one version holds. A row that reads one version
+lists `version`; over a versioned contract a row that lists none is refused at load. Full contract:
+`docs/contracts/finance-overlays.md` section 2.
+
 ## 3. How it is checked
 
 **At load.** engine-fin refuses to start, naming the file and the reason, if anything below is

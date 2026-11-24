@@ -33,7 +33,7 @@ for _p in (REPO, REPO / "src", REPO / "scripts"):
 
 from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed, state_codec  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
-from agent_fleet.finance_agent.entities import FISCAL_PERIODS, NotInModel  # noqa: E402
+from agent_fleet.finance_agent.entities import NotInModel, fiscal_periods  # noqa: E402
 from dag_tools.cortex_data.client import ticket_receipt  # noqa: E402
 
 SAMPLE = REPO / "policy" / "overlays" / "sample" / "measure_verbs"
@@ -524,7 +524,7 @@ def test_more_rows_than_the_cap_is_a_422_asset_too_large(client, seam, monkeypat
 
 
 def test_no_rows_for_the_program_or_the_window_is_a_422_not_in_model_never_an_empty_200(client, seam):
-    seam.frame = frame_of().filter(pl.col("period").is_in(list(FISCAL_PERIODS[:3]))).lazy()
+    seam.frame = frame_of().filter(pl.col("period").is_in(list(fiscal_periods()[:3]))).lazy()
     none_for_program = measure(client, params={"program_id": OTHER_PROGRAM})
     none_for_window = measure(client, params={"program_id": PROGRAM, "window": ["FY26-12"]})
     for r in (none_for_program, none_for_window):
@@ -1128,7 +1128,7 @@ def _built_ins():
 
 def test_the_shipped_source_rows_are_the_ruled_ones():
     assert {fn: {"kind": r.source, "reason": r.source_reason, "ratified_by": r.ratified_by}
-            for fn, r in engine.SOURCES.items()} == _SEED_SOURCED
+            for fn, r in engine.SOURCES.items() if r.source == "seed"} == _SEED_SOURCED
 
 
 @pytest.mark.parametrize("fn", _built_ins())

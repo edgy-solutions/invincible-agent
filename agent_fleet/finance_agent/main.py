@@ -52,7 +52,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import measures
     import state_codec
     from entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
@@ -67,7 +67,7 @@ except ImportError:
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
     from agent_fleet.finance_agent.entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from agent_fleet.finance_agent.seed import build_seed, check_consistency, notional_banner
     from agent_fleet.finance_agent.slots import (
@@ -505,8 +505,18 @@ def _declared_input_uri() -> str:
 def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]:
     """`program_id` / `window` slots EQUAL to `fin_performance_indices`'s, filtered to the row's
     params. Derived, never hand-written: a slot typed here is a second declaration of a fact
-    the signature already makes."""
-    return [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+    the signature already makes.
+
+    A dataset row that lists a version param (`version`, `version_a`, `version_b`) gets one more
+    slot each, with the shape of `fin_eac_calculation`'s `method`, an existing required enum: its
+    `values` are the row's contract's declared versions, in declared order. The list is the
+    contract's, never read from the data."""
+    slots = [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+    if row.contract is not None and row.contract.versions:
+        (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
+        slots += [{**enum, "name": n, "values": list(row.contract.versions)}
+                  for n in measure_verbs._VERSION_PARAMS if n in row.params]
+    return slots
 
 
 def _registration_calls() -> list[dict[str, Any]]:
@@ -515,7 +525,7 @@ def _registration_calls() -> list[dict[str, Any]]:
     seal that pins what is registered -- the loop that registered and the test that checked it
     were two copies of one fact. Each carries the measure's `fn` rather than a URL: the lifespan
     builds `endpoint_url` from it, so the verb is in the path where the registration is made."""
-    periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
+    periods = [p for p in fiscal_periods() if any(f.period == p for f in STATE.facts)]
     plan = [
         (v, v["input_uri"], "engine_fin_finance") for v in VERBS
     ] + [
@@ -1028,7 +1038,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
     if missing:
         raise HTTPException(status_code=422, detail={
             "needs_slots": missing, "question": refusal_for(
-                "fin_performance_indices", [s for s in slots_for("fin_performance_indices")
+                "fin_performance_indices", [s for s in _declared_slots(row)
                                             if s["name"] in missing]),
         })
     if row.kind == measure_verbs.KIND_DATASET:
@@ -1145,9 +1155,19 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     receipts: list[dict[str, Any]] = []
     try:
         with _asset_read_errors(urn):
-            paths = asset_inputs.read_dataset_rows(
+            read = asset_inputs.read_dataset_rows(
                 _ticketed_reader(receipts), urn, row.levels, row.value_columns, row.value_op,
-                row.per_path, program_id, row.contract)
+                row.per_path, program_id, row.contract,
+                **{n: params.get(n) for n in measure_verbs._VERSION_PARAMS if n in row.params},
+                version_column=row.contract.version_column, versions=row.contract.versions)
+            compare = None
+            if isinstance(read, asset_inputs.CompareRead):
+                paths = read.paths
+                compare = {"version_a": params["version_a"], "version_b": params["version_b"],
+                           "total_a_exact": format(read.total_a, "f"), "total_b_exact": format(read.total_b, "f"),
+                           "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
+            else:
+                paths = read
             try:
                 rows = measure_verbs.run_dataset(paths, row, program_id=program_id)
             except ValueError as exc:
@@ -1172,10 +1192,19 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
-        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows)) is not None else {}),
+        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
+        **({"version": params["version"]} if "version" in row.params else {}),
+        **({"compare": compare} if compare is not None else {}),
         "rows": rows,
     }
     return envelope
+
+
+def _row_calendar_labels(row: "measure_verbs.MeasureVerbRow") -> Optional[tuple[str, ...]]:
+    """The labels of the calendar the row's contract resolved to at load, in the CURRENT
+    composition; None when that id is no longer declared (the env changed after load)."""
+    cal = measure_verbs._fiscal_calendar.declared_calendars().get(row.calendar_id)
+    return cal.labels if cal is not None else None
 
 
 def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
@@ -1191,7 +1220,7 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
                 _ticketed_reader(receipts), urn, scope=row.scope_column, period=row.period_column,
                 status=row.status_column, per_period=tuple(row.per_period.values()),
                 per_program=tuple(row.per_program.values()), program_id=program_id,
-                contract=row.contract)
+                contract=row.contract, calendar=_row_calendar_labels(row))
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
     rows = measure_verbs.run_dataset_series(read, row)
@@ -1284,7 +1313,7 @@ def _package_provenance(program_source: Optional[dict[str, Any]],
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
-    return name == "program_id"
+    return name == "program_id" or name in measure_verbs._VERSION_PARAMS
 
 
 @app.post("/measure/{fn}")

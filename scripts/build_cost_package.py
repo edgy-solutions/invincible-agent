@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import html as _html
 import json
 import pathlib
 import re
@@ -330,7 +331,8 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
         page_src = (ROOT / "agent_fleet" / "cost_agent" / "page.py").read_text(encoding="utf-8")
         return tmpl.format(
             recipient=recipient, sha=sha, locator=package["locator"],
-            as_of=package["as_of"], program=package["program"],
+            as_of=package["as_of"], data_as_of=_html.escape(package["data_as_of"]),
+            program=package["program"],
             lots=", ".join(str(n) for n in package["lots"]),
             duckdb_filename=package["dataset"]["duckdb_filename"],
             duckdb_hash=package["dataset"]["duckdb_sha256"],
@@ -344,6 +346,7 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
         sha=sha,
         locator=package["locator"],
         as_of=package["as_of"],
+        data_as_of=_html.escape(package["data_as_of"]),
         program=package["program"],
         lots=", ".join(str(n) for n in package["lots"]),
         package_json=json.dumps(package),
@@ -377,7 +380,7 @@ _TEMPLATE = """<!doctype html>
 </style></head><body>
 <header>
  <h1>Cost validation package - {recipient}</h1>
- <div class="meta">algorithm {sha} &middot; as of {as_of} &middot; {locator}</div>
+ <div class="meta">algorithm {sha} &middot; data as of {data_as_of} &middot; generated {as_of} &middot; {locator}</div>
 </header>
 <main>
  <div id="status" class="checking">Verifying against the producing engine...</div>

@@ -42,7 +42,7 @@ The seed is built so the six verbs have something true to say and the demo beats
     of each colour.
 
 ── THE NUMBERS THE DEMO TURNS ON, stated here so they can be checked by hand ─────────────
-Through FY26-06 (six of twelve periods reported):
+Through the sixth declared period (six of twelve periods reported):
 
     BAC   12,000,000     BCWS  6,900,000     BCWP  6,300,000     ACWP  7,430,000
     CV    -1,130,000     SV     -600,000     CPI  0.8479         SPI  0.9130
@@ -62,20 +62,22 @@ from typing import Any, Optional
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     from entities import (
-        FISCAL_PERIODS, ControlAccount, FinanceState, FundingLine, OBSElement, PeriodFact,
-        Program, WBSElement, WorkPackage,
+        ControlAccount, FinanceState, FundingLine, OBSElement, PeriodFact,
+        Program, WBSElement, WorkPackage, fiscal_periods,
     )
 except ImportError:
     from agent_fleet.finance_agent.entities import (
-        FISCAL_PERIODS, ControlAccount, FinanceState, FundingLine, OBSElement, PeriodFact,
-        Program, WBSElement, WorkPackage,
+        ControlAccount, FinanceState, FundingLine, OBSElement, PeriodFact,
+        Program, WBSElement, WorkPackage, fiscal_periods,
     )
 
 PROGRAM_ID = "NP-MERIDIAN"
 
-#: Periods with reported performance. The remaining six are authorized and unreported, which
-#: is what makes an estimate at completion a forecast rather than a subtraction.
-REPORTED_PERIODS: tuple[str, ...] = FISCAL_PERIODS[:6]
+#: Periods with reported performance: the first six of the declared calendar, so they are
+#: positional. The remaining six are authorized and unreported, which is what makes an estimate
+#: at completion a forecast rather than a subtraction.
+_REPORTED_COUNT = 6
+REPORTED_PERIODS: tuple[str, ...] = fiscal_periods()[:_REPORTED_COUNT]
 
 #: work package -> (name, control account, BAC, technique, monthly BCWS, spi factor, cpi factor)
 #:
@@ -127,12 +129,12 @@ def _per_period(factor: Any) -> tuple[float, ...]:
     a period is a seed whose totals are wrong by an amount nobody can see.
     """
     if isinstance(factor, (int, float)):
-        return tuple(float(factor) for _ in REPORTED_PERIODS)
+        return tuple(float(factor) for _ in range(_REPORTED_COUNT))
     factor = tuple(float(f) for f in factor)
-    if len(factor) != len(REPORTED_PERIODS):
+    if len(factor) != _REPORTED_COUNT:
         raise ValueError(
             f"per-period factor has {len(factor)} values for "
-            f"{len(REPORTED_PERIODS)} reported periods"
+            f"{_REPORTED_COUNT} reported periods"
         )
     return factor
 
