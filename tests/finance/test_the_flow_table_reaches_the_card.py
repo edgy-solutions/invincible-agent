@@ -62,7 +62,8 @@ def test_EVERY_FIELD_THE_ROW_CARRIES_IS_ONE_THE_ENGINE_SENDS(post):
     ns, _got = _project(env)
     payload_key, carried = ns["_PROJECTED_ARCHETYPES"][ARCH]
     assert payload_key == "rows"
-    assert [k for k in (payload_key, *carried) if k not in env] == []
+    # a COLUMN row sends every carried key but `walk`, which only a minus or compare row sends
+    assert [k for k in (payload_key, *carried) if k not in env] == ["walk"]
 
 
 def test_THE_PROVENANCE_ARRIVES_WHOLE(post):
