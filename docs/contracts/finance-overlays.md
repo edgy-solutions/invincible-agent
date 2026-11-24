@@ -120,7 +120,8 @@ differences under `inputs` and `render`:
   values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
   declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is
   a 502 `asset_contract_violation` with rule `version_outside_list`, naming the column and never a
-  value; a null version is `null_value`. Over such a contract, a row whose value is a column or
+  value; a null version is `null_value`, so the version column is declared `nullable: false` (a
+  contract that leaves it nullable refuses every row over it at load). Over such a contract, a row whose value is a column or
   `minus` lists `version` in `inputs.params` (else it would sum every version together, and the row
   is refused at load), and a compare row lists `version_a` and `version_b`. A row over a contract
   with no version lists none of them, and a `MULTI_SERIES` dataset row cannot read a versioned

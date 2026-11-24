@@ -294,6 +294,20 @@ def test_a_version_param_on_an_unversioned_contract_is_refused(tmp_path, monkeyp
         load(tmp_path, monkeypatch, {FN_FILTER: row}, contracts={"program_b_plain": _plain_raw()})
 
 
+@pytest.mark.parametrize("row", [B_COMPARE, B_FILTER], ids=["compare", "filter"])
+def test_a_version_column_the_contract_leaves_nullable_is_refused_at_load(tmp_path, monkeypatch, row):
+    # every row over a versioned contract reads the version column, so it is held to nullable: false
+    # as the row's own columns are; else a null version falls out of the version filter unseen
+    raw = _b_raw()
+    for col in raw["columns"]:
+        if col["name"] == "version":
+            del col["nullable"]
+    fn = row["name"]
+    with pytest.raises(ValueError, match=r"version column 'version' without nullable: false"):
+        load(tmp_path, monkeypatch, {fn: row}, contracts={"program_b_versions": raw})
+    assert load(tmp_path, monkeypatch, {fn: row}, contracts={"program_b_versions": _b_raw()})[fn]  # control
+
+
 def test_a_multi_series_row_over_a_versioned_contract_is_refused(tmp_path, monkeypatch):
     series = yaml.safe_load((ROWS / f"{CUM}.yaml").read_text(encoding="utf-8"))
     with pytest.raises(ValueError, match="a series by version is a later step"):
