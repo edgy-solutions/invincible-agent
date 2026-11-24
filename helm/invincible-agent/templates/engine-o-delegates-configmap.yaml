@@ -1,0 +1,22 @@
+{{- /*
+  Engine O's delegation rows (architect 11-19): the chart's copy of policy/gateway_delegates.yaml,
+  mounted by templates/engines.yaml at /etc/iagent/delegates. Engine O's image is built from
+  agent_fleet/ontology_service and does not carry the repo's policy/, so the file ships here.
+  An absent file renders "" silently under .Files.Get, so the render FAILS instead.
+  tests/security/test_gateway_delegates_rail.py keeps the copy byte-equal to the policy file.
+*/}}
+{{- if .Values.engineO.enabled }}
+{{- $rows := .Files.Get "files/policy/gateway_delegates.yaml" }}
+{{- if not $rows }}
+{{- fail "helm/invincible-agent/files/policy/gateway_delegates.yaml is missing or empty: engine O would read no delegation rows" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-engine-o-delegates
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+data:
+  gateway_delegates.yaml: |
+{{ $rows | indent 4 }}
+{{- end }}

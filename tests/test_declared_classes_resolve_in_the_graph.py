@@ -111,6 +111,7 @@ def graph_reachable():
     return True
 
 
+@pytest.mark.live
 def test_the_probe_can_say_NO(graph_reachable):
     """POSITIVE CONTROL, and it has already earned its place once. A first version of this probe
     replaced the subprocess environment instead of extending it; kubectl never ran, every ASK
@@ -148,6 +149,7 @@ def on_origin_master(curie: str) -> bool | None:
     return bool(re.search(rf"\b\w+:{re.escape(local)}\s+a\s+owl:Class", r.stdout))
 
 
+@pytest.mark.live
 def test_EVERY_DECLARED_ARCHETYPE_RESOLVES_IN_THE_GRAPH(graph_reachable):
     """The check neither repo had.
 

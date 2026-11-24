@@ -96,12 +96,35 @@ def test_the_candidate_model_still_types_these_fields_str(ontology_main):
         assert fields[f].annotation is str, f
 
 
-@pytest.mark.parametrize("source", sorted(_STR_FIELDS))
+@pytest.mark.parametrize("source", sorted(set(_STR_FIELDS) - {"endpoint_url"}))
 def test_a_present_null_string_field_maps_to_empty_string(ontology_main, monkeypatch, source):
     row = _engine_row()
     row[source] = None
     (hit,) = _search(ontology_main, monkeypatch, [row])
     assert hit[_STR_FIELDS[source]] == "", (source, hit[_STR_FIELDS[source]])
+
+
+# The endpoint arm moved to the row builder. A row with no endpoint is a renderer, and the search
+# no longer offers it as a candidate (ruled 2026-11-19, test_a_renderer_is_never_a_routing_candidate),
+# so the search cannot show its coercion. The builder still coerces, and that is what these hold.
+def _engine_row_with_endpoint(endpoint: str) -> dict:
+    row = _engine_row()
+    if endpoint == "absent":
+        del row["endpoint_url"]
+    else:
+        row["endpoint_url"] = None
+    return row
+
+
+@pytest.mark.parametrize("endpoint", ["null", "absent"])
+def test_the_row_builder_maps_a_null_or_absent_endpoint_to_empty_string(ontology_main, endpoint):
+    hit = ontology_main._predicate_row("q", _engine_row_with_endpoint(endpoint), 0.5)
+    assert hit["endpoint"] == ""
+
+
+@pytest.mark.parametrize("endpoint", ["null", "absent"])
+def test_a_null_or_absent_endpoint_row_leaves_the_search_without_raising(ontology_main, monkeypatch, endpoint):
+    assert _search(ontology_main, monkeypatch, [_engine_row_with_endpoint(endpoint)]) == []
 
 
 def test_CONTROL_a_set_endpoint_survives_the_coercion(ontology_main, monkeypatch):
@@ -110,19 +133,15 @@ def test_CONTROL_a_set_endpoint_survives_the_coercion(ontology_main, monkeypatch
     assert hit["verb_type"] == "explain"
 
 
-def test_CONTROL_an_absent_key_still_maps_to_empty_string(ontology_main, monkeypatch):
-    row = _engine_row()
-    del row["endpoint_url"]
-    (hit,) = _search(ontology_main, monkeypatch, [row])
-    assert hit["endpoint"] == ""
-
-
 def test_search_predicates_answers_with_a_renderer_row_in_the_window(ontology_main, monkeypatch):
     """The measured failure, end to end through the handler: one null-endpoint renderer row
     beside a real engine row. Unfixed, this raises ValidationError (the live 500)."""
     monkeypatch.setattr(ontology_main, "_WEAVIATE_CLIENT",
                         _Client([_FakeObject(_renders_as_row(), 0.7), _FakeObject(_engine_row(), 0.3)]))
     monkeypatch.setattr(ontology_main, "_emit_routing_decision", lambda **_kw: None)
+    # Engine O binds the VERIFIED caller, never the body (#458), so a direct handler call needs one.
+    from tests._helpers.verified_caller import install as _install_caller  # noqa: PLC0415
+    _install_caller(monkeypatch, ontology_main, "alice@example.com", ["DOCS"])
     # HARNESS, not production: the fixture loads main.py by path under a synthetic module name,
     # so pydantic cannot resolve the response model's forward reference on its own.
     ontology_main.SearchPredicatesResponse.model_rebuild(
@@ -135,6 +154,7 @@ def test_search_predicates_answers_with_a_renderer_row_in_the_window(ontology_ma
                                               user_email="alice@example.com")))
     assert resp.found is True
     by_verb = {c.verb_iri: c for c in resp.candidates}
-    assert set(by_verb) == {"mesh:rendersAs", "mesh:explain"}
-    assert by_verb["mesh:rendersAs"].endpoint == ""
+    # The renderer answers no question, so it is not a candidate (ruled 2026-11-19). The handler
+    # still answers with the engine row and raises nothing, which is the class this file defends.
+    assert set(by_verb) == {"mesh:explain"}
     assert by_verb["mesh:explain"].endpoint == "http://engine-docs:8100/explain"

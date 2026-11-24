@@ -55,6 +55,10 @@ from typing import Mapping, Optional, Sequence
 #: case was one candidate, specific, real, and of the wrong class. Reusing either would make
 #: this vocabulary lie to keep its size.
 #:
+#: A SECOND VALUE IS ALSO PRODUCED OUTSIDE THIS MODULE: `session_expired` (ruled 2026-11-19, Q2),
+#: by the fan-out when the person's own token has expired or a provider refused it. It is never
+#: `empty` and never resolvable: `/resolve` answers UNKNOWN, `/fill_slots` refuses with 401.
+#:
 #: Recorded HERE so an exhaustive match written against this list does not silently fall
 #: through on a value it has never seen. This module does not produce `wrong_class` and does
 #: not need to handle it; a consumer of `/fill_slots` does.
@@ -626,10 +630,17 @@ def is_instance_shaped(identifier: str) -> bool:
     return False
 
 
+#: The reason a name abstains with when a provider OUTSIDE the asked domains resolves it.
+#: Existing wire vocabulary (the supervisor's and the gateway's fallback reasons), not a new code.
+OUT_OF_DOMAIN_REASON = "domain_scope_excluded"
+
+
 def decide_instance_abstention(
     identifier: Optional[str],
     instance_subject: Optional[str],
     instance_match: str,
+    *,
+    resolves_out_of_domain: bool = False,
 ) -> Optional[str]:
     """The structural abstention gate — policy over the two recorded facts.
 
@@ -658,6 +669,14 @@ def decide_instance_abstention(
         return None  # infra non-answer, not a clean not-found
     if not is_instance_shaped(identifier or ""):
         return None  # generic term mislabeled as identifier → class-fallback
+    # KNOWN, BUT NOT HERE. MEASURED 2026-11-16: a notice id asked with three active domains
+    # drew "instance not found" while the one provider that knew it exactly (score 1.0) sat in
+    # a fourth domain the caller holds but had not made active. Its claim was demoted (correctly:
+    # an out-of-domain hit is a candidate, not an authority), and this gate then said nobody
+    # knows the name, which is false and sends the caller to check their spelling. The name is
+    # still NOT resolved here; only the reason changes, and every gate above still comes first.
+    if resolves_out_of_domain:
+        return OUT_OF_DOMAIN_REASON
     return "instance_not_found"
 
 
@@ -670,6 +689,23 @@ def instance_not_found_message(identifier: str) -> str:
         f"form of a specific named item, but the instance registry "
         f"returned no match. Check that the identifier is exact, or ask "
         f"about its general category instead of the specific instance."
+    )
+
+
+def instance_out_of_domain_message(identifier: str, domains: Optional[list] = None) -> str:
+    """The actionable text when the name resolves only outside the asked domains. Says the name
+    is known, names where (the resolving provider's declared domains; none named when that is
+    empty), and the next step. Not "no provider recognizes it": that would be false."""
+    names = sorted({d for d in (domains or []) if d})
+    if not names:
+        tail = " Ask again with the domain it belongs to active."
+    elif len(names) == 1:
+        tail = f" It resolves in {names[0]}. Ask again with that domain active."
+    else:
+        tail = f" It resolves in {', '.join(names)}. Ask again with one of those domains active."
+    return (
+        f"'{identifier}' is a known item, but not in the domains this question was "
+        f"asked in, so it was not used to answer.{tail}"
     )
 
 

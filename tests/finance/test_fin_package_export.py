@@ -29,7 +29,9 @@ for _p in (ROOT, ROOT / "src", ROOT / "scripts"):
         sys.path.insert(0, str(_p))
 
 from agent_fleet.finance_agent import export as fin_export  # noqa: E402
-from agent_fleet.finance_agent import state_codec  # noqa: E402
+from agent_fleet.finance_agent import export_dates  # noqa: E402
+from agent_fleet.finance_agent import entities, page as fin_page, state_codec  # noqa: E402
+from agent_fleet.finance_agent.entities import fiscal_periods  # noqa: E402
 from agent_fleet.finance_agent.seed import build_seed  # noqa: E402
 from tests.recipient_rail_double import install as install_rail  # noqa: E402
 from iagent.canvas_template import (  # noqa: E402
@@ -280,7 +282,7 @@ def engine(monkeypatch):
         @staticmethod
         def build(**kw):
             built.append(kw)
-            return {"manifest": {"panels": kw["panels"], "as_of": "2026-01-01",
+            return {"manifest": {"panels": kw["panels"], "generated_on": "2026-01-01",
                                  "recipient_scope": kw["recipient_scope"],
                                  "algorithm_sha": kw["sha"],
                                  "template_id": kw["template_id"],
@@ -408,11 +410,11 @@ sys.path.insert(0, sys.argv[1])
 import page
 assert page.__file__.startswith(sys.argv[1]), page.__file__
 payload = json.loads(sys.stdin.read())
-print(json.dumps(page.verify(payload["state"], payload["panels"]), default=str))
+print(json.dumps(page.verify(payload["state"], payload["panels"], payload["calendar"]), default=str))
 """
 
 
-def _verify_flat(tmp_path, state_dict, panels):
+def _verify_flat(tmp_path, state_dict, panels, calendar=None):
     import build_fin_package as b
 
     flat = tmp_path / "flat"
@@ -422,7 +424,9 @@ def _verify_flat(tmp_path, state_dict, panels):
         dest.write_text(text, encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, "-c", _FLAT_RUNNER, str(flat)],
-        input=json.dumps({"state": state_dict, "panels": panels}, default=str),
+        input=json.dumps({"state": state_dict, "panels": panels,
+                          "calendar": list(fiscal_periods()) if calendar is None else calendar},
+                         default=str),
         capture_output=True, text=True, cwd=str(tmp_path), timeout=300,
     )
     assert proc.returncode == 0, proc.stderr[-800:]
@@ -582,26 +586,29 @@ def test_the_html_half_alone_parses_without_duckdb():
         pytest.skip("no .pyodide-cache in this checkout")
     html = b.build_html(SCOPE, "NP-MERIDIAN", ROOT / ".pyodide-cache", _narrowed_dict(),
                         _served_panels(),
-                        template_id="program_finance", as_of="2026-01-01", sha="0" * 40)
+                        template_id="program_finance", data_as_of="2026-01-01",
+                        generated_on="2026-01-01", sha="0" * 40)
     assert check_javascript(html) == []
     assert "cdn.jsdelivr.net" not in html
 
 
 # ── AS_OF IS AN INPUT ────────────────────────────────────────────────────────
-def test_as_of_absent_is_resolved_once_and_reaches_the_engine_fin_body(posts, monkeypatch):
-    import iagent.gateway as gw
-
-    calls = []
-    monkeypatch.setattr(gw, "_export_request_date", lambda: calls.append(1) or "2031-03-04")
+def test_the_finance_package_call_sends_no_caller_date(posts):
+    """RULED 2026-11-22: engine-fin stamps its own dates; the BFF forwards none."""
     status, _ = _export({**GOOD, "recipient_scope": SCOPE})
-    assert status == 200 and len(calls) == 1
-    assert [p["json"]["as_of"] for p in posts] == ["2031-03-04"]
-
-
-def test_as_of_explicit_is_forwarded_verbatim_to_engine_fin(posts):
-    status, _ = _export({**GOOD, "recipient_scope": SCOPE, "as_of": "2026-01-02"})
     assert status == 200
-    assert [p["json"]["as_of"] for p in posts] == ["2026-01-02"]
+    fin = [p for p in posts if p["url"].endswith("/package_export")]
+    assert len(fin) == 1
+    body = fin[0]["json"]
+    assert "as_of" not in body
+    assert set(body) == {"recipient_scope", "canvas", "user_email"}
+
+
+def test_an_export_refuses_a_caller_as_of_on_the_template_path(posts):
+    status, detail = _export({**GOOD, "recipient_scope": SCOPE, "as_of": "2026-01-02"})
+    assert status == 422
+    assert detail["error"] == "as_of_not_accepted" and detail["field"] == "as_of"
+    assert not [p for p in posts if p["url"].endswith("/package_export")] and posts == []
 
 
 @pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
@@ -613,12 +620,15 @@ def test_as_of_malformed_is_refused_by_the_request_model(bad):
         gw.ExportPackageRequest(**GOOD, as_of=bad)
 
 
-def test_engine_as_of_in_the_body_reaches_the_builder(engine):
+def test_engine_generated_on_is_the_server_clock_and_reaches_the_builder(engine, monkeypatch):
+    from agent_fleet.finance_agent import main as fmain
+
     client, built = engine
+    monkeypatch.setattr(fmain, "_request_date", lambda: "2026-02-03")
     r = client.post("/package_export", json={
-        "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
+        "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
-    assert built[0]["as_of"] == "2026-02-03"
+    assert built[0]["generated_on"] == "2026-02-03"
 
 
 def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypatch):
@@ -629,7 +639,7 @@ def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypat
     monkeypatch.setattr(fmain, "_request_date", lambda: calls.append(1) or "2031-03-04")
     r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
-    assert len(calls) == 1 and built[0]["as_of"] == "2031-03-04"
+    assert len(calls) == 1 and built[0]["generated_on"] == "2031-03-04"
 
 
 @pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
@@ -662,16 +672,91 @@ def test_the_real_build_carries_as_of_in_the_page_and_the_manifest_and_is_byte_s
         return real_audit(manifest, **kw)
 
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fmain, "_request_date", lambda: "2026-02-03")
         mp.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
         mp.setattr(fmain, "_dist_dir", lambda root: dist)
         mp.setattr(fin_export, "audit_line", spy)
         with TestClient(fmain.app) as client:
             for _ in range(2):
                 r = client.post("/package_export", json={
-                    "user_email": CALLER, "recipient_scope": SCOPE, "canvas": canvas, "as_of": "2026-02-03"})
+                    "user_email": CALLER, "recipient_scope": SCOPE, "canvas": canvas})
                 assert r.status_code == 200, r.text[:400]
                 pages.append((dist / html_name).read_bytes())
     assert pages[0] == pages[1]
     html = pages[0].decode("utf-8")
-    assert "as of 2026-02-03" in html
-    assert [m["as_of"] for m in manifests] == ["2026-02-03", "2026-02-03"]
+    assert "generated 2026-02-03" in html
+    assert f"data as of {export_dates.SAMPLE_DATA_AS_OF}" in html
+    assert "as of 2026-02-03" not in html
+    assert [m["generated_on"] for m in manifests] == ["2026-02-03", "2026-02-03"]
+    assert [m["data_as_of"] for m in manifests] == [export_dates.SAMPLE_DATA_AS_OF] * 2
+
+
+# -- THE PAGE'S CALENDAR: the package carries the calendar its figures were computed under ------------
+
+def _narrowed_and_served():
+    return _narrowed_dict(), json.loads(json.dumps(_served_panels(), default=str))
+
+
+def test_the_embedded_set_does_not_carry_fiscal_calendar_and_the_flat_page_runs_without_it(tmp_path):
+    import build_fin_package as b
+
+    sources = b._embedded_sources()
+    assert not any("fiscal_calendar" in name for name in sources), sorted(sources)
+    assert "fiscal_calendar" not in json.dumps(sorted(fin_export.module_hashes()))
+    assert not any(line.startswith(("import fiscal_calendar", "from fiscal_calendar"))
+                   or line.startswith("from agent_fleet.finance_agent.fiscal_calendar")
+                   for text in sources.values() for line in text.splitlines())
+    state, panels = _narrowed_and_served()
+    assert all(r["reproduced"] for r in _verify_flat(tmp_path, state, panels))
+
+
+def test_the_page_reads_the_shipped_calendar_not_the_engines(tmp_path):
+    # Control: the same package, the calendar's labels reversed, no longer reproduces a cumulative figure.
+    state, panels = _narrowed_and_served()
+    assert all(r["reproduced"] for r in fin_page.verify(state, panels, list(fiscal_periods())))
+    reversed_ = fin_page.verify(state, panels, list(reversed(fiscal_periods())))
+    assert any(not r["reproduced"] for r in reversed_), reversed_
+    flat = _verify_flat(tmp_path, state, panels, calendar=list(reversed(fiscal_periods())))
+    assert any(not r["reproduced"] for r in flat)
+
+
+def test_verify_leaves_the_engines_calendar_as_it_found_it_after_a_return_and_a_raise():
+    declared = fiscal_periods()
+    state, panels = _narrowed_and_served()
+    fin_page.verify(state, panels, list(reversed(declared)))
+    assert fiscal_periods() == declared
+    with pytest.raises(ValueError):
+        fin_page.verify(state, panels, [])
+    assert fiscal_periods() == declared
+    with pytest.raises(RuntimeError):
+        with entities.calendar_installed(["X-1", "X-2"]):
+            assert fiscal_periods() == ("X-1", "X-2") and entities.period_order() == {"X-1": 0, "X-2": 1}
+            raise RuntimeError("boom")
+    assert fiscal_periods() == declared
+    with pytest.raises(ValueError):
+        with entities.calendar_installed(["X-1", "X-1"]):
+            pass
+    assert fiscal_periods() == declared
+
+
+def test_entities_has_no_module_level_import_of_fiscal_calendar():
+    import ast
+
+    tree = ast.parse((pathlib.Path(entities.__file__)).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [a.name for a in node.names] + [getattr(node, "module", None) or ""]
+            assert not any("fiscal_calendar" in n for n in names), ast.dump(node)
+
+
+def test_the_package_json_carries_the_calendar_at_build_time(tmp_path, monkeypatch):
+    import build_fin_package as b
+
+    monkeypatch.setattr(b, "embedded_runtime", lambda runtime_dir: ({}, ""))
+    state, panels = _narrowed_and_served()
+    html = b.build_html("scope", "NP-MERIDIAN", tmp_path, state, panels, template_id="t",
+                        data_as_of="2026-01-01", generated_on="2026-01-01", sha="x")
+    m = re.search(r'<script id="package-data" type="application/json">(.*?)</script>', html, re.S)
+    assert json.loads(m.group(1))["calendar"] == list(fiscal_periods())
+    assert 'pkg["calendar"]' in html and "carries no fiscal calendar" in html
+

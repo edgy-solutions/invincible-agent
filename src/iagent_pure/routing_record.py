@@ -74,6 +74,8 @@ ROUTE_REASON_CODES = frozenset({
     # negative — ADR-0008 generalist-fallback reasons
     "no_predicate_matched",
     "low_confidence",
+    # negative — the classified predicate has no endpoint (a renderer, never routable)
+    "no_endpoint",
 })
 
 

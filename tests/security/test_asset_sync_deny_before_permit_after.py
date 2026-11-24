@@ -30,6 +30,9 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 
 _SYNC = Path(__file__).resolve().parents[2] / "policy" / "sync"
 if str(_SYNC) not in sys.path:

@@ -70,7 +70,7 @@ from tests._responder_identity import routing_base_url
 # (tests/routing/conftest.py). Before this marker existed the module documented itself as
 # "skips if Engine O isn't reachable" while actually emitting ConnectionError failures — an
 # environmental fact wearing a defect's clothes, ~32 per run, for months.
-pytestmark = pytest.mark.requires_engine_o
+pytestmark = [pytest.mark.requires_engine_o, pytest.mark.live]
 
 _BASE = routing_base_url()
 _TIMEOUT_SEC = float(os.getenv("ROUTING_TEST_TIMEOUT_SEC", "45"))

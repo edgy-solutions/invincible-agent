@@ -189,7 +189,7 @@ def test_3_no_overlay_declares_nothing(tmp_path, monkeypatch):
     assert _load([], tmp=tmp_path) == []
 
 
-SHIPPED = ["fin_eac_trend", "fin_ev_cumulative", "fin_flow_acwp", "fin_flow_eac_variance", "fin_tcpi",
+SHIPPED = ["fin_eac_trend", "fin_ev_cumulative", "fin_flow_acwp", "fin_flow_cost_variance", "fin_flow_eac_variance", "fin_tcpi",
            "fin_vac_cpi"]
 
 

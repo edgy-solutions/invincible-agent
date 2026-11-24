@@ -199,9 +199,75 @@ def test_the_supervisor_degrades_to_defaults_on_every_failure_path():
         "degrading, and a slot extractor must never be able to break routing"
     )
     assert any(isinstance(n, ast.Try) for n in ast.walk(fn)), "the network call is unguarded"
-    assert not [n for n in ast.walk(fn) if isinstance(n, ast.Raise)], (
+    assert not _unexempt_raises(fn), (
         "the helper raises — routing would fail because a refinement was unavailable"
     )
+
+
+# UPDATED 2026-11-16 (Lane 1): ONE RAISE IS EXEMPT, AND ONLY IN ONE FORM. `00dcf15e` (11-03, the
+# identity vault) made a run with a person behind it redeem that person's token per call. When
+# the redeem cannot prove who is asking it raises `CallerIdentityUnavailable`, and the helper
+# re-raises it bare: an unprovable caller is not "a refinement was unavailable", so it must
+# not degrade to defaults and answer as nobody. The seal above kept forbidding every raise, so
+# it went red on master. The exemption is a bare `raise` whose DIRECT handler catches exactly
+# `CallerIdentityUnavailable`; any other raise, or that bare raise under a wider handler, is
+# still reported (the two controls below).
+_EXEMPT_HANDLER = "CallerIdentityUnavailable"
+
+
+def _unexempt_raises(fn) -> list:
+    parent = {c: p for p in ast.walk(fn) for c in ast.iter_child_nodes(p)}
+    out = []
+    for n in ast.walk(fn):
+        if not isinstance(n, ast.Raise):
+            continue
+        h = parent.get(n)
+        exempt = (
+            n.exc is None
+            and isinstance(h, ast.ExceptHandler)
+            and isinstance(h.type, ast.Name)
+            and h.type.id == _EXEMPT_HANDLER
+        )
+        if not exempt:
+            out.append(n)
+    return out
+
+
+def _fill_fn(src: str):
+    return next(f for f in ast.walk(ast.parse(src))
+                if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and f.name == "_fill_slots_from_query")
+
+
+_REDEEM_RERAISE = "    except CallerIdentityUnavailable:\n        raise"
+
+
+def test_the_exempt_reraise_is_present_exactly_once():
+    """The exemption names a form the code must take; if that form moved, re-check it."""
+    src = SUPERVISOR.read_text(encoding="utf-8")
+    body = ast.get_source_segment(src, _fill_fn(src))
+    assert body.count(_REDEEM_RERAISE) == 1
+
+
+def _mutate_fill_fn(new: str) -> str:
+    """Replace the re-raise INSIDE `_fill_slots_from_query` only: the same two lines also
+    appear in other functions of the supervisor, which this seal is not about."""
+    src = SUPERVISOR.read_text(encoding="utf-8")
+    body = ast.get_source_segment(src, _fill_fn(src))
+    at = src.index(body)
+    mutated_body = body.replace(_REDEEM_RERAISE, new, 1)
+    assert mutated_body != body
+    return src[:at] + mutated_body + src[at + len(body):]
+
+
+def test_control_any_other_raise_is_still_reported():
+    mutated = _mutate_fill_fn(_REDEEM_RERAISE.replace("raise", 'raise ValueError("no")'))
+    assert len(_unexempt_raises(_fill_fn(mutated))) == 1
+
+
+def test_control_the_bare_reraise_under_a_wider_handler_is_reported():
+    mutated = _mutate_fill_fn(_REDEEM_RERAISE.replace(_EXEMPT_HANDLER, "Exception"))
+    assert len(_unexempt_raises(_fill_fn(mutated))) == 1
 
 
 def test_an_explicitly_supplied_slot_is_not_overridden_by_the_model():
@@ -220,3 +286,12 @@ def test_the_filler_runs_BEFORE_the_acceptance_guard():
     fill = src.index("_fill_slots_from_query(\n")
     guard = src.index("accepted = accept_slots(")
     assert fill < guard, "the acceptance guard runs before the filler — it would check nothing"
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name tester@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "tester@example.com", ["SUSTAINMENT"])

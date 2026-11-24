@@ -188,6 +188,18 @@ class Mem0CompatibleWeaviate(WeaviateVectorStore):
         "user_id", "agent_id", "text_lemmatized", "updated_at", "hash",
     }
 
+    def __deepcopy__(self, memo):
+        """A copy of the adapter IS the adapter: it wraps the process-wide Weaviate client.
+
+        mem0 deep-copies its vector-store config (for telemetry at init, and for the entity
+        store on first use). Copying the live client fails, and mem0 falls back to a clone that
+        holds this same adapter anyway. The failed copy is not silent, though: the half-built
+        connection logs "'ConnectionSync' object has no attribute '_client'" when it is
+        collected. Returning the adapter gives mem0 the result its fallback gave, without the
+        failure."""
+        memo[id(self)] = self
+        return self
+
     def _sanitize_metadatas(self, metadatas):
         """Strip mem0-only fields the Weaviate schema does not accept."""
         if not metadatas:

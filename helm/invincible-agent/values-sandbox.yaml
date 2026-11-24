@@ -120,12 +120,19 @@ agentFleet:
     LANGFUSE_TRACING_ENVIRONMENT: "sandbox"
     # A MEASURE IS AN OVERLAY ROW (proposal docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md).
     # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
-    # invented to prove the contract. engine-fin reads the first, cortex-bff the second; the
+    # invented to prove the contract. engine-fin reads the first, cortex-bff the second
+    # (and also MEASURE_VERB_OVERLAY_DIRS, for the measures' menu placements); the
     # shared agentFleet configmap carries both and each service reads only its own.
     # The second directory holds the refusal probes: rows over dag-tools' planted-refusal assets,
     # which exist only so the live leg can see each reader rule refuse. Nothing else names it.
     # The separator is the pod's os.pathsep (":").
     MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs:/app/policy/overlays/sandbox/measure_verbs"
+    # A PROGRAM IS AN INSTANCE ROW (docs/contracts/finance-overlays.md section 7). SANDBOX ONLY: the
+    # three planted refusal programs, declared so a question can name them. engine-fin reads it.
+    FIN_INSTANCE_OVERLAY_DIRS: "/app/policy/overlays/sandbox/fin_instances"
+    # A FISCAL CALENDAR IS DECLARED BY THE DEPLOYMENT (docs/contracts/finance-overlays.md section 8). This
+    # is the sample FY26 calendar, so the sandbox's periods are unchanged. engine-fin reads it.
+    FIN_CALENDAR_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_calendar"
     CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.
@@ -698,7 +705,7 @@ centralGateway:
   # in its hypercorn invocation). Chart default of 8000 caused
   # readiness/liveness probes to hit a closed port — pod stuck 0/1 Running.
   port: 8090
-  # PINNED BY DIGEST in values.yaml `global.imageDigests` (dag-tools v0.14.0); no image override here.
+  # PINNED BY DIGEST in values.yaml `global.imageDigests` (dag-tools v0.17.0); no image override here.
   env:
     # The gateway's verified identity (dag-tools PR #6). The issuer is what a realm token carries,
     # so it is the public realm URL. JWKS is fetched inside the cluster, like every other realm read.

@@ -93,9 +93,13 @@ def test_text_off_by_default_and_the_ref_has_no_default():
     rows = {c: [(r["dir"], r["env"]) for r in rows] for c, rows in po["components"].items()}
     assert rows == {
         "engine-fin": [("measure_verbs", "MEASURE_VERB_OVERLAY_DIRS"),
-                       ("fin_export_profiles", "FIN_EXPORT_PROFILE_OVERLAY_DIRS")],
+                       ("fin_export_profiles", "FIN_EXPORT_PROFILE_OVERLAY_DIRS"),
+                       ("fin_instances", "FIN_INSTANCE_OVERLAY_DIRS"),
+                       ("fin_calendar", "FIN_CALENDAR_OVERLAY_DIRS")],
         "cortex-bff": [("canvases", "CANVAS_OVERLAY_DIRS"),
-                       ("exports", "INGEST_EXPORT_PROFILE_OVERLAY_DIRS")],
+                       ("exports", "INGEST_EXPORT_PROFILE_OVERLAY_DIRS"),
+                       ("menu_blocks", "MENU_BLOCK_OVERLAY_DIRS"),
+                       ("measure_verbs", "MEASURE_VERB_OVERLAY_DIRS")],
     }
 
 
@@ -177,7 +181,9 @@ def test_d_the_env_names_the_delivered_paths():
     bff = _env(deps["t-cortex-bff"]["containers"][0])
     assert bff["CANVAS_OVERLAY_DIRS"] == "/policy-overlay/canvases"
     assert bff["INGEST_EXPORT_PROFILE_OVERLAY_DIRS"] == "/policy-overlay/exports"
-    assert "CANVAS_OVERLAY_DIRS" not in fin and "MEASURE_VERB_OVERLAY_DIRS" not in bff
+    # cortex-bff reads the measure rows too (their `menu:` blocks, served by /menu_blocks)
+    assert bff["MEASURE_VERB_OVERLAY_DIRS"] == "/policy-overlay/measure_verbs"
+    assert "CANVAS_OVERLAY_DIRS" not in fin
 
 
 @needs_helm

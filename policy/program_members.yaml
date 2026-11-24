@@ -143,6 +143,16 @@ programs:
       membership.
     grant_to:
       - alice@example.com
+  NP-PLANT-VARIES-WITHIN-SCOPE:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.15.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
   NP-PLANT-WORK-PACKAGE-IN-TWO-ACCOUNTS:
     granted_by: seed
     ratified_by: owner

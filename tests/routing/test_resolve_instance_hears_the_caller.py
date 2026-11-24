@@ -107,10 +107,11 @@ def test_EVERY_PROVIDER_IS_TOLD_THE_PERSON_AND_THE_GRANT(eo, monkeypatch):
         assert body.get("identifier"), (url, body)
 
 
-def test_CONTROL_NO_PERSON_IS_REFUSED_AND_NO_PROVIDER_IS_ASKED(eo, monkeypatch):
+def test_CONTROL_NO_PERSON_IS_REFUSED_AND_NO_PROVIDER_IS_ASKED(eo, monkeypatch, _the_caller_is_verified):
     """Differs from the arm above only in the person and the grant. `/fill_slots` now refuses a
     caller with no person (422 no_person; lane/74, 2026-10-16), so no provider is asked at all.
     The explicit-empty wire this arm used to seal moved to the next arm."""
+    _the_caller_is_verified.as_("")  # the VERIFIED caller carries no person
     r = _fill(eo, monkeypatch, acting_domains=[])
     assert r.status_code == 422, r
     assert eo._test_posts == []
@@ -190,13 +191,27 @@ def test_THE_PROVIDER_ROUTE_RECEIVES_BOTH_FIELDS():
 
 class _Ctx:
     log = SimpleNamespace(warning=lambda *a, **k: None, info=lambda *a, **k: None)
+    run_id = "run-1"  # 00dcf15e: a person behind the run redeems from the vault, keyed by run id
 
 
-def _posted(monkeypatch, **kw) -> dict:
+REDEEMED = "redeemed-token-for-the-person"
+
+
+def _posted(monkeypatch, seen: dict | None = None, **kw) -> dict:
+    """`seen`, when given, collects who the vault was asked to redeem for and the headers sent."""
     from iagent.defs import dynamic_supervisor as ds
     posted: dict = {}
+    seen = {} if seen is None else seen
 
-    def _fake_post(url, json=None, timeout=None):
+    def _redeem(ctx, who, leg="call"):
+        seen["redeemed_for"] = getattr(who, "user_email", who)
+        seen["leg"] = leg
+        return REDEEMED
+
+    monkeypatch.setattr(ds, "_redeem_caller_token", _redeem)
+
+    def _fake_post(url, json=None, timeout=None, headers=None, **_kw):
+        seen["headers"] = headers
         posted.update(json or {})
         return SimpleNamespace(status_code=200, json=lambda: {"slots": {}, "resolution": {}})
 
@@ -207,7 +222,10 @@ def _posted(monkeypatch, **kw) -> dict:
 
 
 def test_THE_SUPERVISOR_SENDS_THE_PERSON_TO_FILL_SLOTS(monkeypatch):
-    assert _posted(monkeypatch, user_email=PERSON).get("user_email") == PERSON
+    seen: dict = {}
+    assert _posted(monkeypatch, seen, user_email=PERSON).get("user_email") == PERSON
+    assert seen.get("redeemed_for") == PERSON, seen  # the person reaches the vault gate
+    assert seen.get("headers") == {"Authorization": f"Bearer {REDEEMED}"}, seen  # and the redeemed caller arrives
 
 
 def test_CONTROL_THE_SUPERVISOR_SENDS_AN_EXPLICIT_EMPTY(monkeypatch):
@@ -223,3 +241,12 @@ def test_EVERY_SUPERVISOR_CALL_SITE_PASSES_THE_CONFIGS_PERSON():
         assert isinstance(v, ast.Attribute) and v.attr == "user_email", (
             f"supervisor line {c.lineno}: /fill_slots is not told the config's person "
             f"({ast.unparse(v) if v is not None else 'absent'})")
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name ann.analyst@example.test, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "ann.analyst@example.test", ["PRODUCTION_COST","SUSTAINMENT"])

@@ -773,7 +773,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 _calib(op="search_manual_text", intent=semantic_query, error=True)
                 return f"Error executing semantic search: {str(e)}"
 
-        @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
+        @safe_observe(as_type="retriever", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
             # ADR-0016 r2 Open Items: agent_id partition.
             # Mirrors restate_analyst/main.py; Engine A and Engine E
