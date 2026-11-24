@@ -8,6 +8,7 @@ a fake WorkflowContext, an in-memory exporter, and a scripted durable backend be
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import sys
@@ -54,15 +55,24 @@ class JCtx(FakeCtx):
         super().__init__(key)
         self.journal = {} if journal is None else journal
 
+    JOURNALED = ("admission", "queue_wait")
+
     def run_typed(self, name, fn, options=None, /, *a, **kw):
-        if name != "admission":
+        if name not in self.JOURNALED:
             return super().run_typed(name, fn, options, *a, **kw)
         self.runs.append((name, getattr(options, "max_attempts", None)))
-        if name not in self.journal:
-            self.journal[name] = fn(*a, **kw)
-        fut = asyncio.get_running_loop().create_future()
-        fut.set_result(self.journal[name])
-        return fut
+        if name in self.journal:                  # replayed: the stored result, fn not run
+            fut = asyncio.get_running_loop().create_future()
+            fut.set_result(self.journal[name])
+            return fut
+
+        async def step():
+            out = fn(*a, **kw)
+            if inspect.isawaitable(out):
+                out = await out
+            self.journal[name] = out              # journaled only once it COMPLETES
+            return out
+        return asyncio.ensure_future(step())
 
     run = run_typed
 
@@ -1345,3 +1355,136 @@ async def test_the_reserved_path_says_false_and_carries_no_flag(run_mesh, rec, m
     assert len(m.launched) == 2
     assert all("reserve_failed" not in body for body in m.launched.values())   # absent, not False
     assert _queue_wait_flags(client, exp) == [False, False]
+
+
+# 11. a restart while WAITING is refused, never admitted (ruled 2026-11-24) ------------------
+#
+# gov's finding on 7061679a: a process restart while an answer waits for a slot let it
+# through and called the model (answer_admitted=True with a restart, False without). Ruled:
+# refused with a clear "ask again"; the queue is never rebuilt from memory.
+
+
+def _restart():
+    """A process restart, as the gate sees it: a fresh gate that knows nobody."""
+    adm.reset_gate_for_tests(1, 5)
+
+
+@pytest.mark.asyncio
+async def test_a_restart_while_waiting_is_refused_and_calls_no_model(mesh_env):
+    """gov's probe at the boundary. Its control (no restart: admitted, one model call) is
+    test_a_waiting_request_makes_no_model_call_until_admitted."""
+    adm.reset_gate_for_tests(1, 5)
+    _gate_full(("h",))
+    m = mesh_env()
+    task = asyncio.ensure_future(_stream(m))
+    await _until(lambda: ("ev", "answer_queued") in m.log)
+    _restart()
+    blob = await asyncio.wait_for(task, 10)
+    assert "answer_admitted" not in blob                      # answer_admitted=False
+    assert m.n(ADM_ROUTE) == 0 and m.n("run/send") == 0       # no model call, no launch
+    errs = _events(blob, "pipeline_error")
+    assert len(errs) == 1 and errs[0]["cause"] == "answer_admission_lost", errs
+    assert errs[0]["retryable"] is True
+    assert errs[0]["message"] == gw._LOST_MESSAGE and "ask it again" in errs[0]["message"]
+    assert blob.index("event: pipeline_error") < blob.index("event: stream_end")
+    assert [b["status"] for b in mesh_env.calls["bundles"]] == ["failed"]
+    assert adm.get_gate().state()["running"] == 0 and adm.get_gate().state()["waiting"] == 0
+
+
+class _BusyBackend(FakeBackend):
+    def __init__(self, script, busy, **kw):
+        super().__init__(script, **kw)
+        self.busy = busy
+
+    async def _status(self, rid):
+        self.polls += 1
+        st = self._cur()[0]
+        return {"status": st, **({"busy": self.busy} if st == "BUSY" else {})}
+
+
+@pytest.mark.asyncio
+async def test_a_launched_answer_lost_then_refused_is_never_admitted(harness):
+    """After a launch: LOST (no record yet) is neither an admission nor an end; the run's
+    persisted refusal then reaches the person as the same ask-again error."""
+    script = [("QUEUED", 2), ("LOST", None), ("LOST", None), ("BUSY", None)]
+    be = harness(_BusyBackend(script, {"reason": "restarted"}))
+    blob = await _drive()
+    assert "answer_admitted" not in blob
+    errs = _events(blob, "pipeline_error")
+    assert len(errs) == 1 and errs[0]["cause"] == "answer_admission_lost", errs
+    assert be.polls == 4
+
+
+@pytest.mark.asyncio
+async def test_a_launched_answer_lost_then_running_is_not_ended(harness):
+    """An answer admitted before the restart: LOST until its run is replayed, then it runs."""
+    script = [("LOST", None), ("STARTED", None), ("SUCCESS", None)]
+    be = harness(FakeBackend(script))
+    blob = await _drive()
+    assert "answer_admission_lost" not in blob and "answer_admitted" not in blob
+    assert be.polls == 3
+
+
+def _blocking_run_answer(monkeypatch):
+    starts = []
+
+    async def fake_run_answer(answer_id, op_config, **kw):
+        starts.append(answer_id)
+        await fake_run_answer.go.wait()
+        return {"status": "SUCCESS", "id": answer_id}
+
+    monkeypatch.setattr(svc, "run_answer", fake_run_answer)
+    return starts, fake_run_answer
+
+
+def test_a_run_waiting_at_a_restart_is_refused_and_never_requeued(monkeypatch):
+    starts, fra = _blocking_run_answer(monkeypatch)
+
+    async def go():
+        fra.go = asyncio.Event()
+        gate = adm.get_gate()
+        assert gate.try_enter("h", 1.0) == "admitted"
+        ctx = JCtx("W")
+        t1 = asyncio.create_task(svc._run_impl(ctx, CFG, ops=fake_ops()))
+        await _until(lambda: gate.position("W") == 1)
+        t1.cancel()                                   # the process dies while W waits
+        with pytest.raises(asyncio.CancelledError):
+            await t1
+        _restart()
+        out = await svc._run_impl(ctx, CFG, ops=fake_ops())   # replayed: the SAME journal
+        snap = await svc.snapshot(_Shared(ctx))
+        return out, snap, adm.get_gate().state()
+
+    out, snap, st = _run(go())
+    assert out == {"busy": True, "lost": True}
+    assert starts == []                               # never admitted, no model call
+    assert snap["status"] == "BUSY" and snap["busy"] == {"reason": "restarted"}
+    assert st["running"] == 0 and st["waiting"] == 0  # not put back in the queue
+
+
+def test_a_queued_answer_admitted_before_a_restart_keeps_running(monkeypatch):
+    """The control: the wait is journaled, so an answer admitted before the restart is
+    replayed as admitted and runs again (an admitted answer is never dropped)."""
+    starts, fra = _blocking_run_answer(monkeypatch)
+
+    async def go():
+        fra.go = asyncio.Event()
+        gate = adm.get_gate()
+        assert gate.try_enter("h", 1.0) == "admitted"
+        ctx = JCtx("W")
+        t1 = asyncio.create_task(svc._run_impl(ctx, CFG, ops=fake_ops()))
+        await _until(lambda: gate.position("W") == 1)
+        gate.release("h")
+        await _until(lambda: starts == ["W"])         # admitted, running
+        t1.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await t1
+        _restart()
+        t2 = asyncio.create_task(svc._run_impl(ctx, CFG, ops=fake_ops()))
+        await _until(lambda: starts == ["W", "W"])
+        running = adm.get_gate().state()["running"]
+        fra.go.set()
+        return await t2, running
+
+    out, running = _run(go())
+    assert out["id"] == "W" and starts == ["W", "W"] and running == 1

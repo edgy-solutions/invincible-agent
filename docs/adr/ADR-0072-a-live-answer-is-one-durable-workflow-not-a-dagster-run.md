@@ -99,8 +99,11 @@ invocations of a service for us, so on `durable` nothing does.
 - **The user is told.** A waiting request is shown as queued, together with its position. The time it spends waiting is its own span, `supervisor.queue_wait`.
 - **Admission comes before intent extraction** (amended 2026-11-16, by the architect's ruling via Chris). The BFF reserves the place before its first model call, so a request refused as busy, or still waiting, makes no model call; `run` claims the reservation. A request whose intent is already resolved makes no extraction call and is gated by `run`. One case still calls the model before admission: a failed reservation, which falls back to `run`'s own admission rather than blocking every answer.
 - **Busy is decided at the door, and only there.** A request that arrives when M answers are already waiting is refused at once with "busy", and the refusal says that the queue is full. The BFF emits it as an error event. Nobody waits and is then refused.
-- **Once admitted, never dropped.** A request admitted to the queue is never dropped, except when its user leaves. The BFF withdraws it when the client disconnects. There is no wait ceiling.
-- **A restart keeps its place.** An answer that Restate re-invokes mid-run re-enters ordered by its first arrival time, which is journaled. It does not go to the back of the queue, and it is never refused as busy.
+- **Once admitted, never dropped.** A request admitted to the queue is never dropped, except when its user leaves or the service restarts while it waits (next point). The BFF withdraws it when the client disconnects. There is no wait ceiling.
+- **A restart: a running answer keeps running, a waiting one is refused** (amended 2026-11-24, by the architect's ruling via Chris).
+  - An answer that was admitted before the restart, and that Restate re-invokes mid-run, takes a slot again, ordered by its first arrival time (journaled). It is never refused as busy.
+  - An answer that was still **waiting** for a slot is **not admitted** after the restart. It is refused, and the person is told: "Your question was waiting for its turn when the answer service restarted, so it was not started. Please ask it again." (cause `answer_admission_lost`, retryable). No model call is made for it.
+  - The queue is not rebuilt from memory, and its order is not guessed. The end of the wait is journaled, so a replay can tell an admitted answer from a waiting one. Keeping the queue across a restart would be a separate design.
 - **The limit counts once per replica,** so the one-replica rule in section 3 is part of it.
 - **#396 does not have it.** It is the change that must land before `durable` becomes a default.
   The change is lane/perf's admission PR.

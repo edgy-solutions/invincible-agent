@@ -228,7 +228,7 @@ class AdmissionGate:
         return "queued"
 
     def reenter(self, answer_id: str, arrived_at: float) -> None:
-        """A restarted answer the gate no longer knows: back in by its first arrival, never
+        """A restarted ADMITTED answer the gate no longer knows: back in by its first arrival, never
         refused (an admitted answer is never dropped)."""
         if self.knows(answer_id):
             return
@@ -236,6 +236,9 @@ class AdmissionGate:
             self._hold(answer_id, arrived_at)
         else:
             self._enqueue(answer_id, arrived_at)
+
+    def is_withdrawn(self, answer_id: str) -> bool:
+        return answer_id in self._withdrawn
 
     def refused(self, answer_id: str) -> dict | None:
         return self._refused.get(answer_id)

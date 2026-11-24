@@ -34,6 +34,10 @@ from src.iagent import trace_spans as ts
 from src.iagent.answer_admission import AdmissionWithdrawn, get_gate
 from src.iagent.runless import drop_live, live_sink, peek_live, run_answer
 
+# Why an answer has no place at the gate and no run record: the process restarted while it
+# waited (ruled 2026-11-24: refused, and the person is asked to ask again).
+LOST_REASON = "restarted"
+
 logger = logging.getLogger("iagent.supervisor_service")
 
 supervisor_answer = restate.Workflow("SupervisorAnswer")
@@ -82,8 +86,12 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
     # back and `_enter` does not run, so a restarted answer keeps its first arrival time and its
     # "admitted"/"queued" decision, and is never re-checked against a full queue.
     reserved_at = op_config.get("reserved_arrived_at")
-    adm = await ctx.run_typed("admission", lambda: _enter(answer_id, reserved_at),
-                              RunOptions(max_attempts=1))
+    async def admission_step() -> dict:
+        # An async action: the SDK runs a plain function on an executor THREAD, and the gate
+        # (its futures above all) belongs to the event loop.
+        return _enter(answer_id, reserved_at)
+
+    adm = await ctx.run_typed("admission", admission_step, RunOptions(max_attempts=1))
     gate = get_gate()
     if adm["decision"] == "busy":
         refused = gate.refused(answer_id) or {"reason": "queue_full", **gate.state()}
@@ -101,7 +109,8 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
         logger.warning("admission: answer %s runs on run's own admission (reserve failed at the BFF)",
                        answer_id)
     restarted = not gate.knows(answer_id)
-    if restarted:
+    if restarted and adm["decision"] != "queued":
+        # Admitted before the restart: it takes a slot again and is never dropped.
         gate.reenter(answer_id, arrived_at)
     gate.claim(answer_id)
     position_at_entry = gate.position(answer_id) or 0
@@ -115,11 +124,36 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
         name="supervisor.queue_wait",
         parent_span_id=op_config.get("parent_span_id") or None,
     ) if trace_id else nullcontext())
+    async def wait_for_slot() -> dict:
+        # The wait is JOURNALED, so a replay can tell an answer that was admitted before a
+        # restart from one that was still WAITING. The gate does not know a waiting answer after
+        # a restart: it is refused, never put back in the queue (ruled 2026-11-24; its place and
+        # its order are not rebuilt from memory). An async action runs on the loop, not a thread.
+        if gate.is_withdrawn(answer_id):
+            return {"admission": "withdrawn"}     # its stream closed before the wait began
+        if not gate.knows(answer_id):
+            return {"admission": "lost"}
+        try:
+            await gate.acquire(answer_id, arrived_at)
+        except AdmissionWithdrawn:
+            return {"admission": "withdrawn"}
+        return {"admission": "admitted"}
+
     try:
         try:
             with span:
                 try:
-                    await gate.acquire(answer_id, arrived_at)
+                    got = (await ctx.run_typed("queue_wait", wait_for_slot,
+                                               RunOptions(max_attempts=1)))["admission"]
+                    if got == "withdrawn":
+                        raise AdmissionWithdrawn(answer_id)
+                    if got == "admitted":
+                        # On a replay the step comes back from the journal and the gate may not
+                        # know the answer: admitted before the restart, it takes a slot again.
+                        if not gate.knows(answer_id):
+                            gate.reenter(answer_id, arrived_at)
+                            gate.claim(answer_id)
+                        await gate.acquire(answer_id, arrived_at)
                 finally:
                     waited_ms = int((time.monotonic() - t0) * 1000)
                     if reserved:
@@ -135,6 +169,12 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
             persist({"status": "CANCELED", "events": [], "steps": [], "result": None,
                      "withdrawn": True})
             return {"withdrawn": True}
+        if got == "lost":
+            logger.warning("admission: answer %s was waiting when the process restarted: "
+                           "refused, the person is asked to ask again", answer_id)
+            persist({"status": "BUSY", "events": [], "steps": [], "result": None,
+                     "busy": {"reason": LOST_REASON}})
+            return {"busy": True, "lost": True}
         return await run_answer(answer_id, op_config, durable_step=durable_step, persist=persist,
                                 gather=gather, ops=ops, sink=live_sink(answer_id))
     finally:
@@ -185,7 +225,14 @@ async def snapshot(ctx: WorkflowSharedContext) -> dict:
     if refused is not None and durable is None:
         # Refused at entry: say so at once, without waiting for the journal.
         return {"status": "BUSY", "events": [], "steps": [], "result": None, "busy": refused}
-    return _merge_snapshot(durable, peek_live(ctx.key()))
+    live = peek_live(ctx.key())
+    if durable is None and live is None and not gate.knows(ctx.key()):
+        # No place at the gate, no run record: a place lost in a restart (or never taken). NOT
+        # an admission (ruled 2026-11-24). A waiting BFF refuses on it; a launched answer's
+        # poller looks again, because its run may yet be replayed or persist the refusal.
+        return {"status": "LOST", "events": [], "steps": [], "result": None,
+                "lost": {"reason": LOST_REASON}}
+    return _merge_snapshot(durable, live)
 
 
 @supervisor_answer.handler()

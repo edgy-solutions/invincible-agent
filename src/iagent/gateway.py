@@ -7823,6 +7823,9 @@ def _sse(event: str, data: str) -> str:
 #   answer_admitted → {run_id, waited_ms}: the queued answer started; once, after answer_queued.
 #   pipeline_error cause answer_busy_queue_full → the admission queue was FULL at entry (retryable);
 #                     refused at once, nobody waited (ruled 2026-11-16). A cause, not a new event.
+#   pipeline_error cause answer_admission_lost → the answer was WAITING when the answer service
+#                     restarted (retryable): not admitted, no model call, the person is asked to
+#                     ask again (ruled 2026-11-24). The queue is never rebuilt. A cause, not a new event.
 
 
 def _stage(
@@ -10220,6 +10223,17 @@ def _busy_message(queue_max) -> str:
             f"({queue_max} waiting, the most allowed). Please ask again shortly.")
 
 
+_LOST_MESSAGE = ("Your question was waiting for its turn when the answer service restarted, "
+                 "so it was not started. Please ask it again.")
+
+
+def _lost_error() -> str:
+    """The refusal for an answer that lost its place in a restart (ruled 2026-11-24): never an
+    admission, and the queue is not rebuilt."""
+    return _perror(_LOST_MESSAGE, kind="understanding", retryable=True,
+                   cause="answer_admission_lost")
+
+
 def _busy_error(queue_max) -> str:
     """The one refusal the admission gate gives a full queue (ruled 2026-11-16), whether the BFF
     learns it at reserve time or from the run's own snapshot."""
@@ -10580,6 +10594,18 @@ async def _generate_dagster_stream_inner(
                         _wst = (await _rb.status(_rid)).get("status")
                         if _wst is None:
                             continue        # the read failed: not an admission, look again
+                        if _wst == "LOST":
+                            # The gate no longer knows this answer (a restart while it waited):
+                            # refused, never admitted, no model call (ruled 2026-11-24).
+                            _res["id"] = None       # nothing is held to give back
+                            _res["queued"] = False
+                            yield _lost_error()
+                            await _dispatch_answer_artifact(_boundary_failure_bundle(
+                                request, user_id, user_persona, entitled_domains,
+                                entitlement_source,
+                                {"cause": "answer_admission_lost", "where": "admission"}))
+                            yield _sse("stream_end", "{}")
+                            return
                         _wq = await _rb.queue(_rid) if _wst == "QUEUED" else None
                         if _wq is None:
                             break
@@ -11179,12 +11205,21 @@ async def _generate_dagster_stream_inner(
 
             status_data = await _ab.status(run_id)
             _last_status = status_data.get("status")
+            if _last_status == "LOST":
+                # No place and no run record yet (a restart): neither an admission nor an end.
+                # The run is replayed and either takes a slot again (admitted before) or
+                # persists the refusal below (it was waiting). Ruled 2026-11-24.
+                continue
             if _last_status == "BUSY":
                 # The admission queue was FULL at entry (ruled 2026-11-16): refused at once,
-                # nobody waited. Never an answer_queued for it.
+                # nobody waited. Never an answer_queued for it. Or the answer was WAITING when
+                # the service restarted (ruled 2026-11-24): refused, asked to ask again.
                 VAULT.close(run_id)
-                _qmax = (status_data.get("busy") or {}).get("queue_max")
-                yield _busy_error(_qmax)
+                _busy = status_data.get("busy") or {}
+                if _busy.get("reason") == "restarted":
+                    yield _lost_error()
+                else:
+                    yield _busy_error(_busy.get("queue_max"))
                 _artifact_bundle["status"] = "failed"
                 break
             if _last_status == "QUEUED":

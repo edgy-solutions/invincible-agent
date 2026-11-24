@@ -1,5 +1,6 @@
 """Answers off Dagster: the Restate binding, with a fake WorkflowContext. No Restate runtime."""
 import asyncio
+import inspect
 import subprocess
 import sys
 import threading
@@ -28,6 +29,9 @@ class FakeCtx:
 
     def run_typed(self, name, fn, options=None, /, *a, **kw):
         self.runs.append((name, getattr(options, "max_attempts", None)))
+        # As the SDK does: a coroutine function runs on the loop, a plain one on a thread.
+        if inspect.iscoroutinefunction(fn):
+            return asyncio.ensure_future(fn(*a, **kw))
         return asyncio.ensure_future(asyncio.to_thread(fn, *a, **kw))
 
     run = run_typed
@@ -44,7 +48,8 @@ def test_run_impl_journals_each_step_once_and_persists():
     out = asyncio.run(svc._run_impl(ctx, CFG, gather=asyncio.gather, ops=fake_ops()))
     assert out["status"] == "SUCCESS" and ctx.state["snapshot"] == out
     assert all(attempts == 1 for _, attempts in ctx.runs)
-    names = [n for n, _ in ctx.runs if n != "admission"]  # the journaled admission decision comes first
+    # the journaled admission decision and the journaled wait come first
+    names = [n for n, _ in ctx.runs if n not in ("admission", "queue_wait")]
     assert names[0] == "t_start" and "execute_subtask[task_1]" in names
     from src.iagent.runless import peek_live
     assert peek_live("k1") is None  # dropped in finally
@@ -77,7 +82,9 @@ def test_snapshot_serves_live_mid_run_then_durable_and_queued():
     assert mid["status"] == "STARTED"
     assert ["mid_run"] in [e["assetKey"]["path"] for e in mid["events"]]
     assert after == final and after["status"] == "SUCCESS"
-    assert unknown == {"status": "QUEUED", "events": [], "steps": [], "result": None}
+    # Unknown to the gate, with no run record: LOST, never an admission (ruled 2026-11-24).
+    assert unknown == {"status": "LOST", "events": [], "steps": [], "result": None,
+                       "lost": {"reason": "restarted"}}
 
 
 class _Shared:
