@@ -1132,8 +1132,16 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
             compare = None
             if isinstance(read, asset_inputs.CompareRead):
                 paths = read.paths
+                difference = read.total_a - read.total_b
                 compare = {"version_a": params["version_a"], "version_b": params["version_b"],
                            "total_a_exact": format(read.total_a, "f"), "total_b_exact": format(read.total_b, "f"),
+                           "difference_exact": format(difference, "f"),
+                           # A FRACTION (0.25 is 25%), over abs(b) so its sign is the difference's;
+                           # None where b's total is zero, never 0 or 1 (measures._ratio's rule).
+                           # format "f", never str(): a cent on a billion is "1E-11" under str().
+                           "difference_percent_of_b": (
+                               format(difference / abs(read.total_b), "f")
+                               if read.total_b != 0 else None),
                            "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
             else:
                 paths = read
