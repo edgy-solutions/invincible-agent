@@ -29,10 +29,18 @@ from __future__ import annotations
 import contextlib
 import importlib.machinery
 import logging
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+# The engine holds no fiscal calendar: a deployment declares one. The suite declares the sample,
+# exactly as the sandbox chart does (a test that wants another calendar monkeypatches the env).
+os.environ.setdefault(
+    "FIN_CALENDAR_OVERLAY_DIRS",
+    str(Path(__file__).resolve().parents[1] / "policy" / "overlays" / "sample" / "fin_calendar"),
+)
 
 # Loggers configured by ensure_stdout_logger that tests assert against. Adding a
 # name here is cheaper than rediscovering why caplog is empty.

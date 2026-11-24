@@ -1375,6 +1375,16 @@ userDeployments:
         AWS_DEFAULT_REGION: "us-east-1"
         DAG_TOOLS_DEMO_S3_BUCKET: "dag-lake"
         MESH_DEMO_PREFIX: "mesh_demo"
+      # THE AS-OF SETTING (the architect, 11-23: Lane 1's proposal with fin, accepted). The source
+      # types this broker reads a data as-of for, at authorize time. Default none: every read says
+      # "as-of unavailable", as today. A type is allowed only if the pinned broker image registers
+      # an as-of reader for it. The chart refuses any other type at render (user-deployments.yaml).
+      # At this pin the broker registers none, so ANY non-empty list is refused at render. That is
+      # the design, not a fault: dag-tools ships the readers, then the image pin and the chart's
+      # registered set move together, and only then can a deployment set a type here.
+      # No measure row chooses its own as-of source: the type comes from the asset.
+      asOf:
+        readers: []
 
 # ==========================================================================
 # mesh-registrar — Contract D registration gateway.
@@ -2697,6 +2707,7 @@ policyOverlay:
       - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS}
       - {dir: fin_export_profiles, env: FIN_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
       - {dir: fin_instances, env: FIN_INSTANCE_OVERLAY_DIRS, optional: true}
+      - {dir: fin_calendar, env: FIN_CALENDAR_OVERLAY_DIRS, optional: true}
     cortex-bff:
       - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
       - {dir: exports, env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}

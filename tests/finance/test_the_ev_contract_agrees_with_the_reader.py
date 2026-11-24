@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_fleet.finance_agent import asset_inputs, entities
+from agent_fleet.finance_agent import asset_inputs, entities, fiscal_calendar
 from agent_fleet.utils import dataset_contracts
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,8 +88,10 @@ def test_the_rule_detector_sees_the_form():
 
 
 def test_the_period_vocabulary_and_row_cap_are_the_readers(contract):
-    assert contract["period"]["vocabulary"] == "FISCAL_PERIODS"
-    assert getattr(entities, contract["period"]["vocabulary"]) is asset_inputs.FISCAL_PERIODS
+    # the contract names a declared calendar of the sample (the `fin_calendar` kind), and the parser reads it
+    declared = fiscal_calendar.load_calendars([ROOT / "policy" / "overlays" / "sample" / "fin_calendar"])
+    assert contract["period"]["calendar"] in declared
+    assert dataset_contracts.load_contract("ev_fixture", CONTRACT.parent).calendar == contract["period"]["calendar"]
     cap = contract["limits"]["max_rows"]
     assert (cap["env"], cap["default"]) == (asset_inputs.MAX_ROWS_ENV, asset_inputs.DEFAULT_MAX_ROWS)
 

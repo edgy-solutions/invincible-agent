@@ -73,6 +73,10 @@ try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils i
     from utils import dataset_contracts as _contracts
 except ImportError:
     from agent_fleet.utils import dataset_contracts as _contracts
+try:  # the declared fiscal calendars, with the same two-way import
+    import fiscal_calendar as _fiscal_calendar
+except ImportError:
+    from agent_fleet.finance_agent import fiscal_calendar as _fiscal_calendar
 try:  # engine-fin's own rule ids, with the same two-way import
     from asset_inputs import RULES as _FIN_RULES
 except ImportError:
@@ -261,6 +265,7 @@ class MeasureVerbRow:
     per_period: dict[str, str] = field(default_factory=dict)    # keyword -> column, summed per period
     per_program: dict[str, str] = field(default_factory=dict)   # keyword -> column, one value per program
     contract: Any = None                  # a dataset row's `dataset_contracts.DatasetContract`
+    calendar_id: str = ""                 # a dataset row's resolved calendar; "" for a non-dataset row
     menu: Optional[dict[str, Any]] = None     # the `menu:` block, checked; None when undeclared
     # Where a state row reads under `FIN_DATASET_URN`; `source_reason`/`ratified_by` only for seed.
     source: str = SOURCE_ASSET
@@ -464,9 +469,17 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
     read's dependency check is what leaves each one value across the program's rows.
 
     Holding the named columns to the contract is the shared reader's (`undeclared`, `not_of`); the
-    roles are engine-fin's."""
+    roles are engine-fin's.
+
+    The contract's calendar (`period.calendar`, else the one declared) is resolved here, for EVERY
+    dataset row, flow rows that read no period included, and stored in `ds["calendar_id"]`. A dataset
+    with no calendar declared is refused at load (the ruling: not ready, not a refusal per answer)."""
     contract = _contracts.load_contract(ds["contract"])
     cid = contract.contract_id
+    try:
+        ds["calendar_id"] = _fiscal_calendar.calendar_for(contract.calendar).calendar_id
+    except _fiscal_calendar.FiscalCalendarError as e:
+        raise ValueError(f"contract {cid!r}: {e}") from e
     if not contract.scoped:
         raise ValueError(f"contract {cid!r} declares scope: none; a fin dataset row filters each read to one "
                          f"program, so it reads only a scoped contract")
@@ -783,6 +796,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         scope_column=dataset.get("scope_column", ""), period_column=dataset.get("period_column", ""),
         status_column=dataset.get("status_column", ""), per_period=dataset.get("per_period", {}),
         per_program=dataset.get("per_program", {}), contract=dataset.get("contract"),
+        calendar_id=dataset.get("calendar_id", ""),
         menu=menu,
         source=source, source_reason=source_reason, ratified_by=ratified_by,
         **_listing_fields(raw),

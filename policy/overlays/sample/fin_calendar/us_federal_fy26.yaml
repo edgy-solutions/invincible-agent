@@ -1,0 +1,22 @@
+# A SAMPLE fiscal calendar for engine-fin. It is a sample, not a default: the engine holds no
+# calendar, and nothing in engine code names this one.
+#
+# The US federal fiscal year is the sample's own choice (October to September); it matches the
+# planning engine's FY26 quarters. Before this file, no FY26 period in the repo carried a date.
+#
+# A deployment declares its own calendar in its own overlay (FIN_CALENDAR_OVERLAY_DIRS;
+# docs/contracts/finance-overlays.md, the fin_calendar section).
+calendar_id: us_federal_fy26
+periods:
+  - {label: FY26-01, start: 2025-10-01, end: 2025-10-31, fiscal_year: FY26, quarter: FY26-Q1, half: FY26-H1}
+  - {label: FY26-02, start: 2025-11-01, end: 2025-11-30, fiscal_year: FY26, quarter: FY26-Q1, half: FY26-H1}
+  - {label: FY26-03, start: 2025-12-01, end: 2025-12-31, fiscal_year: FY26, quarter: FY26-Q1, half: FY26-H1}
+  - {label: FY26-04, start: 2026-01-01, end: 2026-01-31, fiscal_year: FY26, quarter: FY26-Q2, half: FY26-H1}
+  - {label: FY26-05, start: 2026-02-01, end: 2026-02-28, fiscal_year: FY26, quarter: FY26-Q2, half: FY26-H1}
+  - {label: FY26-06, start: 2026-03-01, end: 2026-03-31, fiscal_year: FY26, quarter: FY26-Q2, half: FY26-H1}
+  - {label: FY26-07, start: 2026-04-01, end: 2026-04-30, fiscal_year: FY26, quarter: FY26-Q3, half: FY26-H2}
+  - {label: FY26-08, start: 2026-05-01, end: 2026-05-31, fiscal_year: FY26, quarter: FY26-Q3, half: FY26-H2}
+  - {label: FY26-09, start: 2026-06-01, end: 2026-06-30, fiscal_year: FY26, quarter: FY26-Q3, half: FY26-H2}
+  - {label: FY26-10, start: 2026-07-01, end: 2026-07-31, fiscal_year: FY26, quarter: FY26-Q4, half: FY26-H2}
+  - {label: FY26-11, start: 2026-08-01, end: 2026-08-31, fiscal_year: FY26, quarter: FY26-Q4, half: FY26-H2}
+  - {label: FY26-12, start: 2026-09-01, end: 2026-09-30, fiscal_year: FY26, quarter: FY26-Q4, half: FY26-H2}

@@ -61,6 +61,49 @@ two ways:
 
    See [finance-deployment-checklist.md](finance-deployment-checklist.md).
 
+### If your data's columns have other names
+
+**Write your own contract, and never edit the sample.** `contracts/ev_fixture.yaml` describes the
+sandbox's synthetic fixture. Your contract is its own file, with your URN, your columns, your grain
+and your rules. Its header says which lines are the format and which are the sample's own.
+
+What you do about the column names depends on which measures read the asset:
+- **A declared dataset row reads your names.** The row names its columns (`levels`, `value`, the
+  series keys) and your contract declares them. Use your own names in both, and conform nothing.
+- **The built-in measures read fixed names.** The asset behind the built-ins whose row says
+  `source: asset` (`FIN_DATASET_URN`) is read by the columns `program_id`, `program_name`,
+  `program_bac`, `control_account`, `work_package`, `period`, `bcws`, `bcwp` and `acwp`. No
+  contract key renames a column. To serve the built-ins from your data, **conform it upstream**:
+  rename the columns in the pipeline that produces the asset, and declare the conformed names in
+  your contract.
+
+The labels in your period column must be periods of your deployment's declared fiscal calendar
+([finance-overlays.md](finance-overlays.md), the `fin_calendar` section). Otherwise the read
+refuses `period_outside_calendar`. A calendar is named: your contract names its calendar in
+`period.calendar`; with one calendar declared it is the default and the key may be omitted. A
+configured dataset with no calendar declared fails at boot.
+
+### Which rule ids are general
+
+A contract's `rules` block gives each rule id a message. It cannot add a rule. The ids fall into
+two groups:
+
+| group | rule ids | raised by |
+|---|---|---|
+| **every contract** | `duplicate_key`, `missing_column`, `non_finite`, `not_determined_by`, `null_value`, `personal_data`, `wrong_type` | the shared reader, on every read of every contract |
+| **every finance read** | `other_program_rows`, `period_outside_calendar`, `varies_within_path` | engine-fin, on its reads of any finance dataset |
+
+**The sample's key and dependencies have no ids of their own.** It declares them:
+- one row per work package and period, as `grain`;
+- one name and one budget per program, and one control account per work package, under
+  `dependencies`.
+
+The built-in read is held to its deployment's contract like any other read, so the shared reader
+refuses those as `duplicate_key` and `not_determined_by`. In your own contract, declare your key
+as `grain` and your dependencies under `dependencies` the same way.
+
+`interval_overlap` and `orphan_reference` are checked by the producer, not the engine.
+
 ## 3. How it is checked
 
 **At load.** engine-fin refuses to start, naming the file and the reason, if anything below is

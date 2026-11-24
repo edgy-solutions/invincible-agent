@@ -30,7 +30,8 @@ for _p in (ROOT, ROOT / "src", ROOT / "scripts"):
 
 from agent_fleet.finance_agent import export as fin_export  # noqa: E402
 from agent_fleet.finance_agent import export_dates  # noqa: E402
-from agent_fleet.finance_agent import state_codec  # noqa: E402
+from agent_fleet.finance_agent import entities, page as fin_page, state_codec  # noqa: E402
+from agent_fleet.finance_agent.entities import fiscal_periods  # noqa: E402
 from agent_fleet.finance_agent.seed import build_seed  # noqa: E402
 from tests.recipient_rail_double import install as install_rail  # noqa: E402
 from iagent.canvas_template import (  # noqa: E402
@@ -409,11 +410,11 @@ sys.path.insert(0, sys.argv[1])
 import page
 assert page.__file__.startswith(sys.argv[1]), page.__file__
 payload = json.loads(sys.stdin.read())
-print(json.dumps(page.verify(payload["state"], payload["panels"]), default=str))
+print(json.dumps(page.verify(payload["state"], payload["panels"], payload["calendar"]), default=str))
 """
 
 
-def _verify_flat(tmp_path, state_dict, panels):
+def _verify_flat(tmp_path, state_dict, panels, calendar=None):
     import build_fin_package as b
 
     flat = tmp_path / "flat"
@@ -423,7 +424,9 @@ def _verify_flat(tmp_path, state_dict, panels):
         dest.write_text(text, encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, "-c", _FLAT_RUNNER, str(flat)],
-        input=json.dumps({"state": state_dict, "panels": panels}, default=str),
+        input=json.dumps({"state": state_dict, "panels": panels,
+                          "calendar": list(fiscal_periods()) if calendar is None else calendar},
+                         default=str),
         capture_output=True, text=True, cwd=str(tmp_path), timeout=300,
     )
     assert proc.returncode == 0, proc.stderr[-800:]
@@ -686,3 +689,74 @@ def test_the_real_build_carries_as_of_in_the_page_and_the_manifest_and_is_byte_s
     assert "as of 2026-02-03" not in html
     assert [m["generated_on"] for m in manifests] == ["2026-02-03", "2026-02-03"]
     assert [m["data_as_of"] for m in manifests] == [export_dates.SAMPLE_DATA_AS_OF] * 2
+
+
+# -- THE PAGE'S CALENDAR: the package carries the calendar its figures were computed under ------------
+
+def _narrowed_and_served():
+    return _narrowed_dict(), json.loads(json.dumps(_served_panels(), default=str))
+
+
+def test_the_embedded_set_does_not_carry_fiscal_calendar_and_the_flat_page_runs_without_it(tmp_path):
+    import build_fin_package as b
+
+    sources = b._embedded_sources()
+    assert not any("fiscal_calendar" in name for name in sources), sorted(sources)
+    assert "fiscal_calendar" not in json.dumps(sorted(fin_export.module_hashes()))
+    assert not any(line.startswith(("import fiscal_calendar", "from fiscal_calendar"))
+                   or line.startswith("from agent_fleet.finance_agent.fiscal_calendar")
+                   for text in sources.values() for line in text.splitlines())
+    state, panels = _narrowed_and_served()
+    assert all(r["reproduced"] for r in _verify_flat(tmp_path, state, panels))
+
+
+def test_the_page_reads_the_shipped_calendar_not_the_engines(tmp_path):
+    # Control: the same package, the calendar's labels reversed, no longer reproduces a cumulative figure.
+    state, panels = _narrowed_and_served()
+    assert all(r["reproduced"] for r in fin_page.verify(state, panels, list(fiscal_periods())))
+    reversed_ = fin_page.verify(state, panels, list(reversed(fiscal_periods())))
+    assert any(not r["reproduced"] for r in reversed_), reversed_
+    flat = _verify_flat(tmp_path, state, panels, calendar=list(reversed(fiscal_periods())))
+    assert any(not r["reproduced"] for r in flat)
+
+
+def test_verify_leaves_the_engines_calendar_as_it_found_it_after_a_return_and_a_raise():
+    declared = fiscal_periods()
+    state, panels = _narrowed_and_served()
+    fin_page.verify(state, panels, list(reversed(declared)))
+    assert fiscal_periods() == declared
+    with pytest.raises(ValueError):
+        fin_page.verify(state, panels, [])
+    assert fiscal_periods() == declared
+    with pytest.raises(RuntimeError):
+        with entities.calendar_installed(["X-1", "X-2"]):
+            assert fiscal_periods() == ("X-1", "X-2") and entities.period_order() == {"X-1": 0, "X-2": 1}
+            raise RuntimeError("boom")
+    assert fiscal_periods() == declared
+    with pytest.raises(ValueError):
+        with entities.calendar_installed(["X-1", "X-1"]):
+            pass
+    assert fiscal_periods() == declared
+
+
+def test_entities_has_no_module_level_import_of_fiscal_calendar():
+    import ast
+
+    tree = ast.parse((pathlib.Path(entities.__file__)).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [a.name for a in node.names] + [getattr(node, "module", None) or ""]
+            assert not any("fiscal_calendar" in n for n in names), ast.dump(node)
+
+
+def test_the_package_json_carries_the_calendar_at_build_time(tmp_path, monkeypatch):
+    import build_fin_package as b
+
+    monkeypatch.setattr(b, "embedded_runtime", lambda runtime_dir: ({}, ""))
+    state, panels = _narrowed_and_served()
+    html = b.build_html("scope", "NP-MERIDIAN", tmp_path, state, panels, template_id="t",
+                        data_as_of="2026-01-01", generated_on="2026-01-01", sha="x")
+    m = re.search(r'<script id="package-data" type="application/json">(.*?)</script>', html, re.S)
+    assert json.loads(m.group(1))["calendar"] == list(fiscal_periods())
+    assert 'pkg["calendar"]' in html and "carries no fiscal calendar" in html
+

@@ -150,20 +150,81 @@ def test_the_route_lists_for_the_holder_and_not_for_the_stranger(monkeypatch):
     assert c["composed"] is True and c["measures"] == []
 
 
-# 5
-def test_unset_env_is_not_read_and_a_bad_row_never_raises(monkeypatch, tmp_path):
-    assert menu_blocks.askable() == menu_blocks.AskableMeasures(False, [], [])
-    assert _get(["X"]) == {"composed": False, "measures": [], "invalid": []}
+# 5  built-ins list whatever the overlay env
+def test_unset_env_lists_the_builtins_and_reads_no_declared_row(monkeypatch):
+    entries = _builtins()
+    assert entries, "control: the engine has built-ins to list"
+    got = menu_blocks.askable()
+    assert got.composed is True and got.invalid == []
+    assert [m["verb"] for m in got.measures] == sorted(e["verb"] for e in entries)
+    e = next(x for x in entries if x["cells"])
+    holder = _get([e["cells"][0].lower()])
+    assert holder["composed"] is True and holder["invalid"] == []
+    assert e["verb"] in {m["verb"] for m in holder["measures"]}
+    stranger = "NOT_A_DECLARED_CELL"
+    assert all(stranger not in x["cells"] for x in entries)
+    body = _get([stranger])
+    assert body["composed"] is True and body["measures"] == []
+
+
+def test_a_bad_declared_row_never_raises(monkeypatch, tmp_path):
     (tmp_path / "bad.yaml").write_text("measure_id: [unterminated\n", encoding="utf-8")
     monkeypatch.setenv(_MEASURE_ENV, str(tmp_path))
     menu_blocks.clear_cache()
+    try:
+        entries = list(measure_verbs.load_askable_builtins())
+        builtins_raise = False
+    except Exception:
+        entries, builtins_raise = [], True
+    got = menu_blocks.askable()
+    sources = [i["source"] for i in got.invalid]
+    assert "measure_verbs" in sources
+    assert all(i["reason"].startswith("unreadable: ") for i in got.invalid)
+    # OBSERVED BRANCH: the built-in loader RAISES under this bad overlay, because its listing
+    # rows come from the same composition; so measure_builtins is named and nothing was read.
+    # (If this ever flips, the else branch asserts the built-ins are served.)
+    if builtins_raise:
+        assert sources == ["measure_verbs", "measure_builtins"]
+        assert got.composed is False and got.measures == []
+    else:
+        assert sources == ["measure_verbs"]
+        assert got.composed is True
+        assert [m["verb"] for m in got.measures] == sorted(e["verb"] for e in entries)
+    body = _get(["X"])
+    assert body["composed"] is got.composed
+    assert [i["source"] for i in body["invalid"]] == sources
+
+
+def test_nothing_read_is_not_composed(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(measure_verbs, "load_askable_builtins", boom)
     got = menu_blocks.askable()
     assert got.composed is False and got.measures == []
-    assert len(got.invalid) == 1 and got.invalid[0]["source"] == "measure_verbs"
-    assert got.invalid[0]["reason"].startswith("unreadable: ")
-    body = _get(["X"])
-    assert body["composed"] is False and body["measures"] == []
-    assert [i["source"] for i in body["invalid"]] == ["measure_verbs"]
+    assert got.invalid == [{"source": "measure_builtins", "reason": "unreadable: RuntimeError"}]
+
+
+def test_the_builtins_cache_follows_the_env_between_two_calls(monkeypatch):
+    def fake(*a, **k):
+        import os
+        return [{"verb": "mesh:x", "name": "name-" + os.getenv(_SEED_ENV, ""),
+                 "description": "d", "phrasings": [], "cells": ["X"]}]
+
+    monkeypatch.setattr(measure_verbs, "load_askable_builtins", fake)
+    def named():
+        return [m["name"] for m in menu_blocks.askable().measures if m["verb"] == "mesh:x"]
+
+    _use_sample(monkeypatch)
+    monkeypatch.setenv(_SEED_ENV, "one")
+    assert named() == ["name-one"]
+    monkeypatch.setenv(_SEED_ENV, "two")  # no clear_cache(): the key must follow the env
+    assert named() == ["name-two"]
+
+
+def test_visible_to_strips_a_padded_declared_cell():
+    entry = {"verb": "mesh:x", "cells": [" x "]}
+    assert menu_blocks.visible_to([entry], ["X"]) == [entry]
 
 
 # 6

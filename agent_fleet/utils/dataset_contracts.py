@@ -22,6 +22,9 @@ or `scope: none`, which declares there is none. Under `scope: none` no value fil
 the read is decided on the asset grant alone. An engine whose reads need a scope refuses such a
 contract at its join, as engine-fin does.
 
+PERIOD CALENDAR. `period.calendar` (optional) names the declared period calendar the dataset's
+period values are drawn from. The reader resolves it, not this module.
+
 PERSONAL DATA. A column marked `personal_data: true` records a FACT about the column; the
 classification level and who may see it are the deployment's, applied through its dimensions
 (gov's rail), never written in a contract. This reader holds the fact: a personal column is
@@ -106,6 +109,7 @@ class DatasetContract:
     rules: dict[str, str] = field(default_factory=dict)      # rule id -> the contract's message for it
     non_nullable: tuple[str, ...] = ()                       # the columns declared nullable: false
     personal: frozenset[str] = frozenset()                   # the columns marked personal_data
+    calendar: str | None = None                              # `period.calendar`, else None
 
     @property
     def scoped(self) -> bool:
@@ -238,9 +242,19 @@ def _parse(raw: dict) -> DatasetContract:
     if not isinstance(rules, dict) or not all(
             isinstance(k, str) and isinstance(v, str) and v for k, v in rules.items()):
         raise ValueError(f"rules maps a rule id to its message; {rules!r} is not")
+    period = raw.get("period")
+    calendar = None
+    if period is not None:
+        if not isinstance(period, dict):
+            raise ValueError(f"period is a mapping; {period!r} is not")
+        if "calendar" in period:
+            calendar = period["calendar"]
+            if not isinstance(calendar, str) or not calendar.strip():
+                raise ValueError(f"period.calendar is a non-empty string; {calendar!r} is not")
     return DatasetContract(contract_id=contract_id, types=types, required=tuple(required),
                            key=key, scope=scope, dependencies=dependencies, rules=dict(rules),
-                           non_nullable=tuple(non_nullable), personal=frozenset(personal))
+                           non_nullable=tuple(non_nullable), personal=frozenset(personal),
+                           calendar=calendar)
 
 
 class ContractViolation(Exception):

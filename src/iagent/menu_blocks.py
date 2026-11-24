@@ -241,34 +241,43 @@ class AskableMeasures:
 
 
 def askable() -> AskableMeasures:
-    """Every measure a caller can ask, sorted by verb: each declared measure row (with or without
-    a `menu:` block), from the same cached load `compose` uses, and each built-in measure, listed
-    from its listing row through the measure's engine's own loader. `shape` is the row's
+    """Every measure a caller can ask, sorted by verb: each built-in measure, listed from its
+    listing row through the measure's engine's own loader, WHATEVER the overlay env says; and
+    each declared measure row (with or without a `menu:` block), from the same cached load
+    `compose` uses, read only when `MEASURE_VERB_OVERLAY_DIRS` is set. `shape` is the row's
     `render.shape`; a built-in declares none, so its `shape` is None. `unit`, `example_ask` and
     `group_label` are served as declared and are None when undeclared (never defaulted). A verb
     served by both a declared row and a built-in is ambiguous: both are left out and named in
-    `invalid`. Never raises. `composed: False` is "not read"."""
-    if not os.getenv(_MEASURE_OVERLAY_ENV, ""):
-        return AskableMeasures(False)
-    try:
-        rows = _measure_rows()
-    except Exception as exc:
-        return AskableMeasures(False, [], [
-            {"source": "measure_verbs", "reason": f"unreadable: {type(exc).__name__}"}])
-    declared = [{"verb": _measure_verb(r), "name": r.name, "description": r.description,
-                 "phrasings": list(r.synonyms), "cells": sorted(r.cells),
-                 "shape": r.archetype,
-                 "unit": r.render.get("unit") if isinstance(r.render, dict) else None,
-                 "example_ask": r.example_ask or None,
-                 "group_label": r.group_label or None}
-                for r in rows]
+    `invalid`. An unreadable overlay names `measure_verbs` and, because the built-in listing
+    rows come from the same composition, usually `measure_builtins` too; that matches the
+    engine, which refuses to boot on a malformed row set. Never raises. `composed: False`
+    means nothing was read."""
     invalid: list = []
+    read = False
+    declared: list = []
+    if os.getenv(_MEASURE_OVERLAY_ENV, ""):
+        try:
+            rows = _measure_rows()
+            declared = [{"verb": _measure_verb(r), "name": r.name,
+                         "description": r.description,
+                         "phrasings": list(r.synonyms), "cells": sorted(r.cells),
+                         "shape": r.archetype,
+                         "unit": r.render.get("unit") if isinstance(r.render, dict) else None,
+                         "example_ask": r.example_ask or None,
+                         "group_label": r.group_label or None}
+                        for r in rows]
+            read = True
+        except Exception as exc:
+            declared = []
+            invalid.append({"source": "measure_verbs",
+                            "reason": f"unreadable: {type(exc).__name__}"})
     try:
         builtin = [{"verb": e["verb"], "name": e["name"], "description": e["description"],
                     "phrasings": list(e["phrasings"]), "cells": list(e["cells"]),
                     "shape": None, "unit": e.get("unit"),
                     "example_ask": e.get("example_ask"), "group_label": e.get("group_label")}
                    for e in _builtin_measures()]
+        read = True
     except Exception as exc:
         builtin = []
         invalid.append({"source": "measure_builtins",
@@ -281,7 +290,7 @@ def askable() -> AskableMeasures:
                         "reason": f"ambiguous: {verb} is also declared by measure_verbs"})
     measures = [m for m in declared + builtin if m["verb"] not in clash]
     measures.sort(key=lambda m: m["verb"])
-    return AskableMeasures(True, measures, invalid)
+    return AskableMeasures(read, measures, invalid)
 
 
 def visible_to(measures: list, domains) -> list:

@@ -1,11 +1,15 @@
 """No pod's libraries call the public internet on their own account.
 
-Two libraries do by default, from every engine that imports them:
+Four libraries do by default, from every engine that imports them:
 - mem0 sends usage events to its vendor's analytics service (`MEM0_TELEMETRY`, default on);
+- acryl-datahub uploads a usage event to its vendor's analytics service (`DATAHUB_TELEMETRY_ENABLED`,
+  default on, and off on its own under a CI variable);
+- huggingface_hub pings its hub and adds installed-framework versions to its user agent
+  (`HF_HUB_DISABLE_TELEMETRY`, default on);
 - LiteLLM fetches its model cost map from GitHub at import. With no route out, it waits for the
   handshake to time out, then uses the copy it ships with (`LITELLM_LOCAL_MODEL_COST_MAP`).
 
-The chart's release ConfigMap turns both off for every workload that loads it. These seals render
+The chart's release ConfigMap turns all four off for every workload that loads it. These seals render
 the chart, then let each library read the rendered value and make its own decision: the rule
 for what counts as "off" is the library's, never restated here.
 
@@ -31,7 +35,25 @@ _CHART = _REPO / "helm" / "invincible-agent"
 _SANDBOX = _CHART / "values-sandbox.yaml"
 _NAMESPACE = "sandbox"
 _RELEASE = "iagent"
-_KEYS = ("MEM0_TELEMETRY", "LITELLM_LOCAL_MODEL_COST_MAP")
+_KEYS = ("MEM0_TELEMETRY", "LITELLM_LOCAL_MODEL_COST_MAP", "DATAHUB_TELEMETRY_ENABLED",
+         "HF_HUB_DISABLE_TELEMETRY")
+# Cleared before every probe so the control behaves the same locally and in CI. acryl-datahub turns
+# itself off when ANY of its `CI_ENV_VARS` is in the environment (datahub/telemetry/telemetry.py: the
+# set of that name and the `any(var in os.environ ...)` test below it); that list is copied here. For
+# huggingface_hub: `HF_HUB_DISABLE_TELEMETRY` is also true under `DISABLE_TELEMETRY` or `DO_NOT_TRACK`
+# (huggingface_hub/constants.py), and telemetry is skipped when offline (`HF_HUB_OFFLINE`,
+# `TRANSFORMERS_OFFLINE`).
+_CI_STYLE = (
+    "APPCENTER", "APPCIRCLE", "APPCIRCLEAZURE_PIPELINES", "APPVEYOR", "AZURE_PIPELINES", "BAMBOO",
+    "BITBUCKET", "BITRISE", "BUDDY", "BUILDKITE", "BUILD_ID", "CI", "CIRCLE", "CIRCLECI", "CIRRUS",
+    "CIRRUS_CI", "CI_NAME", "CODEBUILD", "CODEBUILD_BUILD_ID", "CODEFRESH", "CODESHIP", "CYPRESS_HOST",
+    "DRONE", "DSARI", "EAS_BUILD", "GITHUB_ACTIONS", "GITLAB", "GITLAB_CI", "GOCD", "HEROKU_TEST_RUN_ID",
+    "HUDSON", "JENKINS", "JENKINS_URL", "LAYERCI", "MAGNUM", "NETLIFY", "NEVERCODE", "RENDER", "SAIL",
+    "SCREWDRIVER", "SEMAPHORE", "SHIPPABLE", "SOLANO", "STRIDER", "TASKCLUSTER", "TEAMCITY",
+    "TEAMCITY_VERSION", "TF_BUILD", "TRAVIS", "VERCEL", "WERCKER_ROOT", "bamboo.buildKey",
+    "DISABLE_TELEMETRY", "DO_NOT_TRACK", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+)
+_CLEARED = frozenset(_KEYS) | frozenset(_CI_STYLE)
 
 needs_helm = pytest.mark.skipif(
     shutil.which("helm") is None,
@@ -56,9 +78,11 @@ def _loads_release_config(cluster: ne.Cluster, workload: str) -> bool:
 
 
 def _library_decision(code: str, env_over: dict[str, str], tmp_path: Path) -> dict:
-    """Run `code` in a fresh interpreter with the given env (both keys cleared first)."""
-    env = {k: v for k, v in os.environ.items() if k not in _KEYS}
-    env.update({"MEM0_DIR": str(tmp_path / "mem0"), **env_over})
+    """Run `code` in a fresh interpreter with the given env (every name in `_CLEARED` cleared first;
+    HOME points into tmp_path so DataHub's client-id file never touches the real home)."""
+    env = {k: v for k, v in os.environ.items() if k not in _CLEARED}
+    home = str(tmp_path / "home")
+    env.update({"MEM0_DIR": str(tmp_path / "mem0"), "HOME": home, "USERPROFILE": home, **env_over})
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                           timeout=180, env=env, cwd=str(tmp_path))
     assert proc.returncode == 0, proc.stderr[-2000:]
@@ -73,7 +97,7 @@ _LITELLM = ("import json, litellm; "
 
 
 @needs_helm
-def test_EVERY_WORKLOAD_THAT_LOADS_THE_RELEASE_CONFIG_CARRIES_BOTH_SWITCHES(cluster):
+def test_EVERY_WORKLOAD_THAT_LOADS_THE_RELEASE_CONFIG_CARRIES_ALL_FOUR_SWITCHES(cluster):
     loaders = [p.name for p in cluster.pods if _loads_release_config(cluster, p.name)]
     assert len(loaders) >= 10, f"too few workloads load the release config: {loaders}"
     missing = {w: [k for k in _KEYS if k not in cluster.env_of(w)] for w in loaders}
@@ -150,3 +174,104 @@ def test_CONTROL_WITHOUT_THE_SETTING_MEM0_UPLOADS_TO_ITS_ANALYTICS_HOST(tmp_path
     pytest.importorskip("mem0")
     got = _library_decision(_MEM0_UPLOAD, {}, tmp_path)
     assert got["analytics_host"] in got["hosts"], got
+
+
+# acryl-datahub: `ping` hands the event to a mixpanel Consumer, which POSTs through
+# `requests.Session`. The probe replaces `Session.send` with a recorder that answers mixpanel's
+# success body and sends nothing. The telemetry client is built at import, so the env decides there.
+_DATAHUB_UPLOAD = r"""
+import json, requests
+from urllib.parse import urlparse
+seen = []
+def _send(self, req, **kw):
+    seen.append(urlparse(req.url).netloc)
+    r = requests.Response(); r.status_code = 200; r._content = b'{"status": 1}'; r.url = req.url; r.request = req
+    return r
+requests.Session.send = _send
+from datahub.telemetry import telemetry as t
+t.telemetry_instance.ping("probe-event", {"k": "v"})
+print(json.dumps({"hosts": sorted(set(seen)), "analytics_host": t.MIXPANEL_ENDPOINT.split("/")[0]}))
+"""
+
+
+@needs_helm
+def test_WITH_THE_RENDERED_SETTING_DATAHUB_SENDS_NO_USAGE_EVENT(cluster, tmp_path):
+    """With the value the chart renders, DataHub's `ping` makes no HTTP request at all."""
+    pytest.importorskip("datahub")
+    pytest.importorskip("mixpanel")
+    w = next(p.name for p in cluster.pods if _loads_release_config(cluster, p.name))
+    value = cluster.env_of(w)["DATAHUB_TELEMETRY_ENABLED"]
+    got = _library_decision(_DATAHUB_UPLOAD, {"DATAHUB_TELEMETRY_ENABLED": value}, tmp_path)
+    assert got["hosts"] == [], got
+
+
+def test_CONTROL_WITHOUT_THE_SETTING_DATAHUB_UPLOADS_TO_ITS_ANALYTICS_HOST(tmp_path):
+    """Same probe, key absent (and every CI variable cleared): the event reaches the wire, to the
+    host DataHub itself names."""
+    pytest.importorskip("datahub")
+    pytest.importorskip("mixpanel")
+    got = _library_decision(_DATAHUB_UPLOAD, {}, tmp_path)
+    assert got["analytics_host"] in got["hosts"], got
+
+
+# huggingface_hub: `send_telemetry` queues to a daemon thread that HEADs `<endpoint>/api/telemetry/..`
+# through `requests.Session`. The probe records at `Session.send`, then waits for the queue to drain.
+_HF_PING = r"""
+import json, requests
+from urllib.parse import urlparse
+seen = []
+def _send(self, req, **kw):
+    seen.append(urlparse(req.url).netloc)
+    r = requests.Response(); r.status_code = 200; r._content = b""; r.url = req.url; r.request = req
+    return r
+requests.Session.send = _send
+from huggingface_hub import constants
+from huggingface_hub.utils import _telemetry
+_telemetry.send_telemetry("probe/topic", library_name="probe-lib", library_version="1.0")
+_telemetry._TELEMETRY_QUEUE.join()
+print(json.dumps({"hosts": sorted(set(seen)), "hub_host": urlparse(constants.ENDPOINT).netloc}))
+"""
+
+# The user agent the library builds. What telemetry adds to it is the versions of installed ML
+# frameworks (torch, tensorflow, fastai, fastcore), which this venv does not install; the probe
+# makes the library's own detection report two of them present, so the setting's effect is visible.
+_HF_HEADERS = r"""
+import json
+from huggingface_hub.utils import _headers
+_headers.is_torch_available = lambda: True
+_headers.get_torch_version = lambda: "9.9.9"
+_headers.is_fastai_available = lambda: True
+_headers.get_fastai_version = lambda: "8.8.8"
+ua = _headers.build_hf_headers(token=False, library_name="probe-lib", library_version="1.0")["user-agent"]
+print(json.dumps({"ua": ua}))
+"""
+
+
+@needs_helm
+def test_WITH_THE_RENDERED_SETTING_HF_HUB_SENDS_NO_TELEMETRY_REQUEST(cluster, tmp_path):
+    pytest.importorskip("huggingface_hub")
+    w = next(p.name for p in cluster.pods if _loads_release_config(cluster, p.name))
+    value = cluster.env_of(w)["HF_HUB_DISABLE_TELEMETRY"]
+    got = _library_decision(_HF_PING, {"HF_HUB_DISABLE_TELEMETRY": value}, tmp_path)
+    assert got["hosts"] == [], got
+
+
+def test_CONTROL_WITHOUT_THE_SETTING_HF_HUB_PINGS_ITS_HUB(tmp_path):
+    pytest.importorskip("huggingface_hub")
+    got = _library_decision(_HF_PING, {}, tmp_path)
+    assert got["hub_host"] in got["hosts"], got
+
+
+@needs_helm
+def test_WITH_THE_RENDERED_SETTING_HF_HUB_HEADERS_CARRY_NO_USAGE_FIELDS(cluster, tmp_path):
+    pytest.importorskip("huggingface_hub")
+    w = next(p.name for p in cluster.pods if _loads_release_config(cluster, p.name))
+    value = cluster.env_of(w)["HF_HUB_DISABLE_TELEMETRY"]
+    got = _library_decision(_HF_HEADERS, {"HF_HUB_DISABLE_TELEMETRY": value}, tmp_path)
+    assert "torch/" not in got["ua"] and "fastai/" not in got["ua"], got
+
+
+def test_CONTROL_WITHOUT_THE_SETTING_HF_HUB_HEADERS_CARRY_USAGE_FIELDS(tmp_path):
+    pytest.importorskip("huggingface_hub")
+    got = _library_decision(_HF_HEADERS, {}, tmp_path)
+    assert "torch/9.9.9" in got["ua"] and "fastai/8.8.8" in got["ua"], got
