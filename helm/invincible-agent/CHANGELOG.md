@@ -22,6 +22,8 @@
 
 - **Engine O writes its `routing_decision` row on the live path** (74; the architect, 11-23: "The audit row on the live path"). `/classify_predicate`, the route that picks the verb for a supervisor-routed question, now writes exactly one row per request on every exit: a pick, an UNKNOWN, the Contract B short-circuit, no candidate, a search error and a classifier error. Each refusal or fallback sets its own `fallback_reason`. `user_id` and `entitled_domains` come from the verified binding. Every row, `/search_predicates`' included, gains `endpoint` (the route that wrote it) and `classifier_confidence`/`classifier_reasoning`; on an error exit the reasoning is the exception's type, never its message. `source` keeps its ADR-0015 meaning (the population). The supervisor sends the run id as `request_id`, and an Engine O that has not been rolled ignores it. **No chart change**: engine O's and the supervisor's images. Do not roll it during perf's runs.
 
+- **`/search_predicates`' routing row records the verified caller** (74; the architect, 11-24: "a routing row records the verified caller, never a user_id from the request body"). Both of its rows, the no-match row and the picked row, now write `user_id` from the verified binding, as `/classify_predicate`'s row already does. Until now they wrote the request body's `user_id`, a label nothing verified. The request keeps that field, but it is no longer written to the row. **No chart change**: engine O's image.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
