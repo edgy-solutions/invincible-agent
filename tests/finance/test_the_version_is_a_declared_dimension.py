@@ -577,6 +577,17 @@ def test_a_cent_on_a_billion_is_served_without_an_exponent(post, world):
     assert "E" not in env["verdict"].split(" less ", 1)[1]
 
 
+def test_a_very_small_difference_is_served_as_a_plain_decimal(post, world):
+    """Gov's mutant P5: str(difference) serves "1E-8". The cent-on-a-billion difference (0.01) prints alike either way."""
+    assert str(Decimal("0.00000003") - Decimal("0.00000002")) == "1E-8"  # control: str() would serve an exponent
+    tiny(world, 3e-8, 2e-8)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    served = env["compare"]["difference_exact"]
+    assert served == "0.00000001"
+    assert "E" not in served and "e" not in served
+
+
 def test_a_zero_b_total_leaves_the_percent_null_and_the_verdict_says_undefined(post, world):
     tiny(world, 250.0, 0.0)
     status, env = post(version_a=GOV, version_b=PMB)
