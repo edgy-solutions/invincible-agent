@@ -36,6 +36,8 @@ from typing import Any, Callable, Mapping, Optional
 
 import pytest
 
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 if str(REPO) not in sys.path:

@@ -32,10 +32,9 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
-import re
 import threading
-from datetime import date, datetime, timezone
-from typing import Any, Iterable, Optional
+from datetime import datetime, timezone
+from typing import Any, Callable, Iterable, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -46,12 +45,14 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import asset_inputs
     import cdrl
     import export
+    import export_dates
     import export_profiles
+    import instance_overlays
     import measure_verbs
     import measures
     import state_codec
     from entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
@@ -59,12 +60,14 @@ except ImportError:
     from agent_fleet.finance_agent import asset_inputs
     from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import export_dates
     from agent_fleet.finance_agent import export_profiles
+    from agent_fleet.finance_agent import instance_overlays
     from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
     from agent_fleet.finance_agent.entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from agent_fleet.finance_agent.seed import build_seed, check_consistency, notional_banner
     from agent_fleet.finance_agent.slots import (
@@ -452,22 +455,29 @@ def _seed_row(fn: str):
     return row if row is not None and row.source == measure_verbs.SOURCE_SEED else None
 
 
-def _measure_source(fn: str, params: dict[str, Any]) -> tuple[Any, Optional[dict[str, str]]]:
+def _measure_source(fn: str, params: dict[str, Any],
+                    receipts: list[dict[str, Any]]) -> tuple[Any, Optional[dict[str, str]]]:
     """`(state, data_source)` one state-kind measure computes over. Flag unset: the seed and no
     source, byte-identical to before the flag. Set: the asset as the caller, unless the measure's
     row declares `source: seed`, which answers from the seed and says so, with the row's reason.
-    Never a fallback from the asset to the seed: a refused or failed read is an error."""
+    Never a fallback from the asset to the seed: a refused or failed read is an error.
+
+    An asset read appends its ticket's receipt to `receipts`, the caller's own list for THIS
+    answer, so the answer cites the read it computed over (`_source_provenance`). The receipt is
+    not in `data_source`, whose members the wire seal pins."""
     urn = asset_inputs.dataset_urn()
     if urn is None:
         return STATE, None
     seed = _seed_row(fn)
     if seed is not None:
         return STATE, {"kind": "seed", "reason": seed.source_reason, "ratified_by": seed.ratified_by}
-    return _asset_state(urn, params), {"kind": "asset", "urn": urn}
+    return _asset_state(urn, params, receipts), {"kind": "asset", "urn": urn}
 
 
-def _source_provenance(source: Optional[dict[str, str]]) -> str:
-    return asset_inputs.provenance(source["urn"]) if source and source["kind"] == "asset" else notional_banner()
+def _source_provenance(source: Optional[dict[str, str]], receipts: list[dict[str, Any]]) -> str:
+    if source and source["kind"] == "asset":
+        return asset_inputs.provenance(source["urn"], _the_receipt(receipts, source["urn"]))
+    return notional_banner()
 
 
 def _load_profiles() -> dict[str, "export_profiles.ExportProfile"]:
@@ -495,8 +505,18 @@ def _declared_input_uri() -> str:
 def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]:
     """`program_id` / `window` slots EQUAL to `fin_performance_indices`'s, filtered to the row's
     params. Derived, never hand-written: a slot typed here is a second declaration of a fact
-    the signature already makes."""
-    return [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+    the signature already makes.
+
+    A dataset row that lists a version param (`version`, `version_a`, `version_b`) gets one more
+    slot each, with the shape of `fin_eac_calculation`'s `method`, an existing required enum: its
+    `values` are the row's contract's declared versions, in declared order. The list is the
+    contract's, never read from the data."""
+    slots = [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+    if row.contract is not None and row.contract.versions:
+        (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
+        slots += [{**enum, "name": n, "values": list(row.contract.versions)}
+                  for n in measure_verbs._VERSION_PARAMS if n in row.params]
+    return slots
 
 
 def _registration_calls() -> list[dict[str, Any]]:
@@ -505,7 +525,7 @@ def _registration_calls() -> list[dict[str, Any]]:
     seal that pins what is registered -- the loop that registered and the test that checked it
     were two copies of one fact. Each carries the measure's `fn` rather than a URL: the lifespan
     builds `endpoint_url` from it, so the verb is in the path where the registration is made."""
-    periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
+    periods = [p for p in fiscal_periods() if any(f.period == p for f in STATE.facts)]
     plan = [
         (v, v["input_uri"], "engine_fin_finance") for v in VERBS
     ] + [
@@ -907,7 +927,8 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
     try:
         # THE SAME SELECTION `_declared_envelope` makes: with the flag set a built-in computes over
         # the asset as the caller (ruled 2026-11-08), unless its row declares `source: seed`.
-        state, source = _measure_source(fn, params)
+        receipts: list[dict[str, Any]] = []
+        state, source = _measure_source(fn, params, receipts)
         rows = func(state, **params)
     except MethodRequired as exc:
         # THE SECOND GATE. Unreachable through this route (the declaration check above fires
@@ -947,7 +968,7 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
         # THE DISCLOSURE RIDES ON THE PAYLOAD, not only in a docstring. A finance figure that
         # leaves this engine without saying it is notional is a figure somebody can paste
         # into a deck, and a docstring is not visible from a screenshot.
-        "data_provenance": _source_provenance(source),
+        "data_provenance": _source_provenance(source, receipts),
         **({} if source is None else {"data_source": source}),
         # COMPUTED FROM THE ROWS, so it is emitted here rather than declared in a table — and
         # ABSENT WHEN THERE IS NOTHING TO SAY. A verdict key holding None would make the card
@@ -987,7 +1008,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
     if missing:
         raise HTTPException(status_code=422, detail={
             "needs_slots": missing, "question": refusal_for(
-                "fin_performance_indices", [s for s in slots_for("fin_performance_indices")
+                "fin_performance_indices", [s for s in _declared_slots(row)
                                             if s["name"] in missing]),
         })
     if row.kind == measure_verbs.KIND_DATASET:
@@ -997,7 +1018,8 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
     try:
         # THE ONE SELECTION OF THE STATE (`_measure_source`): unset, the seed; set, the asset as
         # the caller, or the seed where the row declares `source: seed`.
-        state, source = _measure_source(row.measure_id, params)
+        receipts: list[dict[str, Any]] = []
+        state, source = _measure_source(row.measure_id, params, receipts)
         rows = measure_verbs.run_declared(state, row, **params)
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
@@ -1010,7 +1032,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
         "series": [dict(s) for s in row.series],
         "render": copy.deepcopy(row.render),
         **({"reference": dict(row.reference)} if row.reference else {}),
-        "data_provenance": _source_provenance(source),
+        "data_provenance": _source_provenance(source, receipts),
         **({} if source is None else {"data_source": source}),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
@@ -1020,17 +1042,39 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
     return envelope
 
 
-def _asset_state(urn: str, params: dict[str, Any]) -> Any:
+def _ticketed_reader(receipts: list[dict[str, Any]]) -> Callable[[str], Any]:
+    """`mesh_ticketed_read` as the `asset_inputs` readers take it: a function returning the frame.
+    The read's receipt is appended to `receipts`, the list of the ONE answer being built, so a
+    receipt can only be cited by the answer whose read took it."""
+    def read(urn: str) -> Any:
+        frame, receipt = mesh_ticketed_read(urn)
+        receipts.append(receipt)
+        return frame
+    return read
+
+
+def _the_receipt(receipts: list[dict[str, Any]], urn: str) -> dict[str, Any]:
+    """The receipt of the one read an answer computed over. None, several, or one for another URN
+    is a defect, raised and never guessed: provenance that cites the wrong ticket is a false
+    statement about where a figure came from."""
+    if len(receipts) != 1 or receipts[0].get("urn") != urn:
+        raise RuntimeError(f"an answer over {urn} holds {len(receipts)} ticket receipt(s), not "
+                           "exactly the one its read took")
+    return receipts[0]
+
+
+def _asset_state(urn: str, params: dict[str, Any], receipts: list[dict[str, Any]]) -> Any:
     """The `FinanceState` of one program (and window) read from the catalogued asset, as the
     caller. Every outcome the spec tabulates leaves here as its own status; none degrades to the
-    seed. `NotInModel` (an unknown period, no rows) is left to the caller's 422."""
+    seed. `NotInModel` (an unknown period, no rows) is left to the caller's 422. The read's
+    ticket receipt is appended to `receipts` (`_ticketed_reader`)."""
     program_id = params.get("program_id")
     if not isinstance(program_id, str) or not program_id:
         raise NotInModel(f"unknown program {program_id!r}")
     window = params.get("window")
     periods = periods_in(window) if window is not None else None  # an unknown period: no read
     with _asset_read_errors(urn):
-        df = asset_inputs.read_rows(mesh_ticketed_read, urn, program_id, periods)
+        df = asset_inputs.read_rows(_ticketed_reader(receipts), urn, program_id, periods)
         return asset_inputs.state_from_rows(df, program_id)
 
 
@@ -1077,11 +1121,22 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     (never `FIN_DATASET_URN`, never the seed), the module run once, and the edge table as `rows`.
     Same keys as `_declared_envelope` minus `series`/`reference`, which a flow has no use for."""
     urn, program_id = row.dataset_urn, params["program_id"]
+    receipts: list[dict[str, Any]] = []
     try:
         with _asset_read_errors(urn):
-            paths = asset_inputs.read_dataset_rows(
-                mesh_ticketed_read, urn, row.levels, row.value_columns, row.value_op,
-                row.per_path, program_id, row.contract)
+            read = asset_inputs.read_dataset_rows(
+                _ticketed_reader(receipts), urn, row.levels, row.value_columns, row.value_op,
+                row.per_path, program_id, row.contract,
+                **{n: params.get(n) for n in measure_verbs._VERSION_PARAMS if n in row.params},
+                version_column=row.contract.version_column, versions=row.contract.versions)
+            compare = None
+            if isinstance(read, asset_inputs.CompareRead):
+                paths = read.paths
+                compare = {"version_a": params["version_a"], "version_b": params["version_b"],
+                           "total_a_exact": format(read.total_a, "f"), "total_b_exact": format(read.total_b, "f"),
+                           "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
+            else:
+                paths = read
             try:
                 rows = measure_verbs.run_dataset(paths, row, program_id=program_id)
             except ValueError as exc:
@@ -1101,14 +1156,23 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         "value_label": row.render.get("value_label", row.name),
         "render": {**copy.deepcopy(row.render),
                    "other_label": importlib.import_module(row.resolved_module).OTHER_LABEL},
-        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn),
+        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
         "data_source": {"kind": "asset", "urn": urn},
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
-        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows)) is not None else {}),
+        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
+        **({"version": params["version"]} if "version" in row.params else {}),
+        **({"compare": compare} if compare is not None else {}),
         "rows": rows,
     }
     return envelope
+
+
+def _row_calendar_labels(row: "measure_verbs.MeasureVerbRow") -> Optional[tuple[str, ...]]:
+    """The labels of the calendar the row's contract resolved to at load, in the CURRENT
+    composition; None when that id is no longer declared (the env changed after load)."""
+    cal = measure_verbs._fiscal_calendar.declared_calendars().get(row.calendar_id)
+    return cal.labels if cal is not None else None
 
 
 def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
@@ -1117,13 +1181,14 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
     `_declared_envelope`, plus `status_period` when the row names a status column: the period the
     ASSET says the program is reported through, served from data and never from the row."""
     urn, program_id = row.dataset_urn, params["program_id"]
+    receipts: list[dict[str, Any]] = []
     try:
         with _asset_read_errors(urn):
             read = asset_inputs.read_dataset_series(
-                mesh_ticketed_read, urn, scope=row.scope_column, period=row.period_column,
+                _ticketed_reader(receipts), urn, scope=row.scope_column, period=row.period_column,
                 status=row.status_column, per_period=tuple(row.per_period.values()),
                 per_program=tuple(row.per_program.values()), program_id=program_id,
-                contract=row.contract)
+                contract=row.contract, calendar=_row_calendar_labels(row))
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
     rows = measure_verbs.run_dataset_series(read, row)
@@ -1137,7 +1202,7 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
         "render": copy.deepcopy(row.render),
         **({"reference": dict(row.reference)} if row.reference else {}),
         **({"status_period": read.status} if row.status_column else {}),
-        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn),
+        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
         "data_source": {"kind": "asset", "urn": urn},
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
@@ -1175,8 +1240,8 @@ def _require_asset_grants(urns: Iterable[str]) -> None:
             asset_inputs.require_grant(mesh_ticketed_read, urn)
 
 
-def _export_program_state(reads: dict[str, str], program_id: str,
-                          fns: Iterable[str] = ()) -> tuple[Any, Optional[dict[str, Any]]]:
+def _export_program_state(reads: dict[str, str], program_id: str, fns: Iterable[str],
+                          receipts: list[dict[str, Any]]) -> tuple[Any, Optional[dict[str, Any]]]:
     """`(state, source)`: where an export's program facts are read. The seed and no source when no
     source reads `FIN_DATASET_URN` (a dataset-kind row reads its own asset, which holds no
     program's facts; a `source: seed` row reads the seed); otherwise the asset, as the caller, and
@@ -1193,7 +1258,7 @@ def _export_program_state(reads: dict[str, str], program_id: str,
     urn = asset_inputs.dataset_urn()
     seeded = {fn: row.source_reason for fn in sorted(set(fns)) if (row := _seed_row(fn)) is not None}
     try:
-        state = _asset_state(urn, {"program_id": program_id})
+        state = _asset_state(urn, {"program_id": program_id}, receipts)
         if seeded:
             state = asset_inputs.with_uncarried_from(state, state_codec.narrow(STATE, program_id))
     except NotInModel as exc:
@@ -1201,18 +1266,21 @@ def _export_program_state(reads: dict[str, str], program_id: str,
     return state, {"kind": "asset", "urn": urn, **({"seeded": seeded} if seeded else {})}
 
 
-def _package_provenance(program_source: Optional[dict[str, Any]]) -> Optional[str]:
-    """The page's provenance line: the asset's, and each seed-sourced panel named with its reason,
+def _package_provenance(program_source: Optional[dict[str, Any]],
+                        receipts: list[dict[str, Any]]) -> Optional[str]:
+    """The page's provenance line: the asset's, citing the ticket of the program-state read
+    (`receipts`, from `_export_program_state`), and each seed-sourced panel named with its reason,
     so a seed figure in an asset package says it is notional."""
     if not program_source:
         return None
     seeded = program_source.get("seeded") or {}
-    return " ".join([asset_inputs.provenance(program_source["urn"])] + [
+    urn = program_source["urn"]
+    return " ".join([asset_inputs.provenance(urn, _the_receipt(receipts, urn))] + [
         f"{fn} reads the notional seed ({reason}): {notional_banner()}" for fn, reason in seeded.items()])
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
-    return name == "program_id"
+    return name == "program_id" or name in measure_verbs._VERSION_PARAMS
 
 
 @app.post("/measure/{fn}")
@@ -1264,14 +1332,8 @@ def _request_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _valid_as_of(v: Optional[str]) -> Optional[str]:
-    """`as_of` is a calendar date or absent. Shared by every export request."""
-    if v is None:
-        return v
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-        raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
-    date.fromisoformat(v)  # a ValueError here is a 422 too
-    return v
+_AS_OF_REFUSED = ("as_of is not accepted: an export's generated date is stamped by the server "
+                  "clock (ruling 2026-11-21); omit the field")
 
 
 class PackageExportRequest(BaseModel):
@@ -1284,8 +1346,11 @@ class PackageExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 @app.post("/package_export")
@@ -1314,7 +1379,9 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
     """
-    as_of = body.as_of or _request_date()  # RESOLVED ONCE; the manifest and page share it
+    # `generated_on` is the server's clock (a caller's date is refused at the model); the data's
+    # as-of comes from the source's receipt.
+    generated_on = _request_date()  # RESOLVED ONCE; the manifest and page share it
     try:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
@@ -1346,7 +1413,11 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
         _require_cell(fn, caller)
     reads = _asset_reads([fn for _p, fn in resolved])
     _require_asset_grants(reads.values())  # refusal 7, before ANY panel is measured
-    package_state, program_source = _export_program_state(reads, program_id, [fn for _p, fn in resolved])
+    program_receipts: list[dict[str, Any]] = []
+    package_state, program_source = _export_program_state(
+        reads, program_id, [fn for _p, fn in resolved], program_receipts)
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     panels: list[dict[str, Any]] = []
     for p, fn in resolved:
@@ -1393,8 +1464,8 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
             template_id=body.canvas.template_id, template_hash=body.canvas.template_hash,
             panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
             html_path=dist / html_name, duckdb_path=dist / duckdb_name,
-            as_of=as_of, program_source=program_source,
-            data_provenance=_package_provenance(program_source),
+            data_as_of=data_as_of, generated_on=generated_on, program_source=program_source,
+            data_provenance=_package_provenance(program_source, program_receipts),
         )
     except SourceUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1471,8 +1542,11 @@ class CdrlExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1558,14 +1632,21 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         _require_cell(fn, caller)
     reads = _asset_reads(profile.sources)
     _require_asset_grants(reads.values())
-    program_state, program_source = _export_program_state(reads, body.program_id, profile.sources)
-    as_of = body.as_of or _request_date()
+    # The program facts' read; each source cites its own read's ticket in its own envelope.
+    program_receipts: list[dict[str, Any]] = []
+    program_state, program_source = _export_program_state(
+        reads, body.program_id, profile.sources, program_receipts)
+    # `generated_on` is the server's clock; a caller's `as_of` is refused at the model.
+    generated_on = _request_date()
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     out_dir = _cdrl_out_dir()
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         path, envelope = cdrl.build_cdrl(
-            program_state, profile, program_id=body.program_id, as_of=as_of,
+            program_state, profile, program_id=body.program_id,
+            data_as_of=data_as_of, generated_on=generated_on,
             out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
             program_source=program_source,
         )
@@ -1587,7 +1668,8 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         "artifact_uri": _artifact_uri(path.name),
         "profile": profile.name,
         "program_id": body.program_id,
-        "as_of": as_of,
+        "data_as_of": data_as_of,
+        "generated_on": generated_on,
         "envelope": envelope,
     }
 
@@ -1796,12 +1878,31 @@ _RESOLVABLE: dict[str, tuple[str, str, str]] = {
 _NOT_ENUMERABLE = {FIN + "PerformanceMeasurementBaseline"}
 
 
+def _load_instances() -> tuple["instance_overlays.InstanceRow", ...]:
+    """The instances a deployment DECLARED as overlay rows (`FIN_INSTANCE_OVERLAY_DIRS`).
+
+    None declared is the default and the empty tuple. A malformed set RAISES. The seed's ids and
+    labels are passed in so a row cannot collide with them.
+    """
+    names = [getattr(i, f) for attr, idf, lf in _RESOLVABLE.values()
+             for i in getattr(STATE, attr) for f in (idf, lf)]
+    return instance_overlays.load_instances({u[len(FIN):]: u for u in _RESOLVABLE}, names)
+
+
+#: Declared instances. Loaded ONCE, here (it needs `_RESOLVABLE` and `STATE`, so it sits beside the
+#: map, not beside `DECLARED`). The routes read this name at call time, so a test that replaces it
+#: replaces what the engine serves. NEVER added to STATE or to any figure: a name, nothing more.
+INSTANCES: tuple["instance_overlays.InstanceRow", ...] = _load_instances()
+
+
 def _members_of(class_uri: str) -> list[dict[str, Any]]:
     """The distinct members of one class, deduped by identity, in a stable order.
 
     ONE IMPLEMENTATION FOR BOTH PROVIDERS. The resolver scores against these and the
     enumerator lists them; two separate walks of the same collections is how one of them
     ends up holding a stale idea of what this engine offers.
+
+    Plus the instances a deployment declared of this class (`INSTANCES`); the seed wins an id.
     """
     spec = _RESOLVABLE.get(class_uri)
     if spec is None:
@@ -1821,6 +1922,11 @@ def _members_of(class_uri: str) -> list[dict[str, Any]]:
                 "instance_id": ident,
                 "label": getattr(item, label_field),
                 "class_uri": class_uri,
+            }
+    for row in INSTANCES:
+        if row.class_uri == class_uri and row.instance_id not in seen:
+            seen[row.instance_id] = {
+                "instance_id": row.instance_id, "label": row.label, "class_uri": class_uri,
             }
     return [seen[k] for k in sorted(seen)]
 
@@ -1930,6 +2036,12 @@ def _program_of(class_uri: str, instance_id: str) -> str | None:
     attr, id_field, _label = spec
     item = next((i for i in getattr(STATE, attr) if getattr(i, id_field) == instance_id), None)
     if item is None:
+        # A DECLARED Program is its own program: its id IS the `program_members` key, so the
+        # membership check decides it like the seed program's. Any other declared class has
+        # no program here and stays withheld (deny by default).
+        if class_uri == FIN + "Program" and any(
+                r.class_uri == class_uri and r.instance_id == instance_id for r in INSTANCES):
+            return instance_id
         return None
     if class_uri == FIN + "Program":
         return item.program_id or None
@@ -2276,7 +2388,9 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
 
 
 def mesh_ticketed_read(urn: str):
-    """The LazyFrame of `urn`, read as THIS request's caller.
+    """`(LazyFrame, receipt)` of `urn`, read as THIS request's caller: the frame, and the receipt
+    of the broker ticket that authorized it (`ticket_id`, `as_of`; the client builds it by
+    allowlist, so it carries no credential). The answer cites it in `data_provenance` (ADR-0065:133).
 
     Raises rather than degrading if the caller's identity is absent: a read that cannot say
     who it is for must not be performed, because the narrowing that makes it safe is keyed on
@@ -2287,8 +2401,9 @@ def mesh_ticketed_read(urn: str):
     The caller is the SDK's, from the request's bearer (never the body: a `svc:` principal
     naming a user is refused, as a service holds no grant to lend). The client is built with
     the bearer and that caller and NOTHING else: no client id, no secret, so there is no rung to
-    fall to but a refusal. Called from `_asset_state` (only when `FIN_DATASET_URN` is set) and from
-    `_dataset_envelope` (always: a dataset-kind row names its own asset).
+    fall to but a refusal. Read through `_ticketed_reader` by `_asset_state` (only when
+    `FIN_DATASET_URN` is set) and by the dataset envelopes (always: a dataset-kind row names its
+    own asset); `_require_asset_grants` reads it for the refusal alone.
     """
     caller = _current_caller()
     bearer = asset_inputs.current_bearer()
@@ -2311,4 +2426,4 @@ def mesh_ticketed_read(urn: str):
         originator_email=authz_id,
         jwt_token=bearer,
     )
-    return client.get_dataframe(urn)
+    return client.get_dataframe_with_ticket(urn)

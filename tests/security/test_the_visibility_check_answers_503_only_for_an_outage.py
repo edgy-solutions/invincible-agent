@@ -85,6 +85,8 @@ def _raiser(exc):
 
 
 def _call_route(eo, monkeypatch, route, exc):
+    from tests._helpers.verified_caller import install
+    install(monkeypatch, eo, "a@b", [eo._notice_parts.DOMAIN])  # the VERIFIED caller, not the body
     monkeypatch.setattr(eo, "_filter_sustainment_candidates", _raiser(exc))
     if route == "resolve_instance":
         async def _sparql(*a, **kw):
@@ -102,6 +104,8 @@ def _call_notice_parts(eo, monkeypatch, exc):
         raise exc
     monkeypatch.setattr(eo._notice_parts, "read_notice_parts", _read)
     monkeypatch.setattr(eo, "_NEO4J_DRIVER", object())
+    from tests._helpers.verified_caller import install
+    install(monkeypatch, eo, "a@b", [eo._notice_parts.DOMAIN])  # the VERIFIED caller, not the body
     return asyncio.run(eo.notice_parts_route(eo.NoticePartsRequest(
         resolved_instance_id="PCN-D1", user_email="a@b", entitled_domains=[eo._notice_parts.DOMAIN])))
 

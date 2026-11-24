@@ -94,6 +94,7 @@ SUPERVISOR_REASONS = (
     "infra_error",
     "no_predicate_matched",
     "low_confidence",
+    "no_endpoint",
 )
 
 #: AND WHAT THE GATEWAY ITSELF CAN INVENT THAT NO SUPERVISOR PATH SETS.

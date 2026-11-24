@@ -929,7 +929,7 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.14.0"
+version = "0.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "clickhouse-connect" },
@@ -946,9 +946,9 @@ dependencies = [
     { name = "requests" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/87/2d0688b9c982e5dc5309d53abf6397d7a55077d3f3dcb3f88f5f1f8dbab5/edgy_dag_tools-0.14.0.tar.gz", hash = "sha256:54ed3e82f38afb93e7601ff646b77fc8c7d9b269ac0ce7c554e8261687ca3a58", size = 1651677, upload-time = "2026-11-11T04:50:28.852Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/28/6bc760b7325cd9d099f1b950b9ad3df876d2d641f965e55d2dec9f6641fb/edgy_dag_tools-0.17.0.tar.gz", hash = "sha256:28ee4ed9e10bdfe7a773798dc1eca6b9450f675c99ab46e57d38d1ed31a5a298", size = 2223486, upload-time = "2026-11-19T03:31:36.758Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/dd/e61e61dfba91926cd0439d5fdf52be100353f36f16ed839f3515dd4c7b48/edgy_dag_tools-0.14.0-py3-none-any.whl", hash = "sha256:62a4664028ea00a750cc106dfc9d5445127f079c6d8acce120ea8c85629c6ecf", size = 632366, upload-time = "2026-11-11T04:50:26.946Z" },
+    { url = "https://files.pythonhosted.org/packages/64/66/5172a303f4372dc1d12e2e3216c3ebfbd5544164fa2933bc198c5df78c58/edgy_dag_tools-0.17.0-py3-none-any.whl", hash = "sha256:5d58f30b18e701ebb283a4f147000a5e896887d5d61e050db06e25200fa958fe", size = 843137, upload-time = "2026-11-19T03:31:34.866Z" },
 ]
 
 [[package]]
@@ -1414,6 +1414,8 @@ dev = [
     { name = "dagster-webserver" },
     { name = "iagent-mesh" },
     { name = "lxml" },
+    { name = "packaging" },
+    { name = "polars" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-random-order" },
@@ -1433,7 +1435,7 @@ requires-dist = [
     { name = "dagster", specifier = ">=1.12.20" },
     { name = "dagster-postgres" },
     { name = "duckdb", marker = "extra == 'agent-fleet'", specifier = "==1.5.2" },
-    { name = "edgy-dag-tools", specifier = "==0.14.0" },
+    { name = "edgy-dag-tools", specifier = "==0.17.0" },
     { name = "fastapi" },
     { name = "fastapi", marker = "extra == 'agent-fleet'" },
     { name = "h2", marker = "extra == 'agent-fleet'" },
@@ -1441,7 +1443,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'agent-fleet'" },
     { name = "hypercorn", marker = "extra == 'agent-fleet'" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.26" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langchain-community", marker = "extra == 'agent-fleet'" },
     { name = "langchain-weaviate", marker = "extra == 'agent-fleet'" },
@@ -1485,8 +1487,10 @@ provides-extras = ["agent-fleet"]
 dev = [
     { name = "dagster-dg-cli" },
     { name = "dagster-webserver" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.26" },
     { name = "lxml", specifier = ">=6.1.1" },
+    { name = "packaging" },
+    { name = "polars", specifier = ">=1.20" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-random-order" },
@@ -1495,8 +1499,8 @@ dev = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.20"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20#1aa642393dedbc75741377042103a9def069ff6c" }
+version = "0.9.26"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.26#b9560dcf3965b8620f0cc342986cb5df5488f06b" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },

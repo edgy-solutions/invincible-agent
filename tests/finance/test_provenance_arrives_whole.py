@@ -1,4 +1,4 @@
-"""data_provenance arrives whole on the card: every fin verb drawn as a MULTI_SERIES, through the projector.
+"""data_provenance arrives whole on the card: every fin verb, whatever archetype its class is drawn as, through the projector.
 
 The architect, via Chris, 2026-11-08: the data_provenance seal flips. It "arrives whole: dataset
 URN, as-of, ticket id". Before 0.4.82 the projector named five envelope fields for MULTI_SERIES
@@ -10,14 +10,16 @@ Two halves, measured separately because they belong to different lanes:
   - THE HOP (Lane 1's, green). Every fin verb bound to MULTI_SERIES answers through its real
     `/measure/<fn>` route, and the real projector function carries `data_provenance` verbatim.
     The control removes it from the tuple and watches it drop.
-  - THE CONTENT (fin's). An asset answer's string is the operator's banner, "(ticket: pending)"
-    and " Source: <urn>" (asset_inputs.provenance / dataset_provenance). It names the dataset URN.
-    ADR-0065:133's as-of and ticket id are UNMET, ruled 2026-11-08. The broker's ticket carries
-    both from dag-tools 0.13.0 (#31), but engine-fin pins v0.10.0 and its client discards the
-    ticket, so the string says the ticket is pending and claims no as-of (green). The full rule
-    stays a strict xfail. Its ticket pattern now refuses "pending", which a bare `ticket` word
-    would accept; when fin threads the ticket through, the xfail turns XPASS and fails, and the
-    marker is deleted in that PR.
+  - THE CONTENT (fin's). An asset answer's string is the operator's banner, the ticket clause and
+    " Source: <urn>" (asset_inputs.provenance / dataset_provenance), and it names the dataset URN.
+    ADR-0065:133 also rules an as-of and a ticket id. The broker's ticket has carried both since
+    dag-tools 0.13.0 (#31), and engine-fin pins 0.14.0. engine-fin read through `get_dataframe`,
+    which discards the ticket, so until this PR the string said "(ticket: pending)" (ruled
+    2026-11-08) and the full rule was a strict xfail. engine-fin now reads through
+    `get_dataframe_with_ticket`, and the string carries the receipt's as-of and ticket id. The
+    receipt here is the client's own (`ticket_receipt`), built from a ticket as the broker issues
+    one. The control is a ticket that stamps neither: its answer still says "(ticket: pending)"
+    and claims no as-of. Each half alone is claimed only as far as the receipt says it.
 
 Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_provenance_arrives_whole.py
 """
@@ -28,11 +30,20 @@ import re
 import pytest
 
 from tests.finance.test_the_wire_carries_what_the_engine_declares import _envelope, _fin_bindings
+from tests.finance.test_variance_decomposition_over_the_ev_fixture import (  # noqa: F401
+    _clean_env, flow_rows, gate, members, post,
+)
 from tests.planning.test_planning_archetypes_are_projected import _fns
 
-ARCH = "MULTI_SERIES"
+DECLARED = "declared-measure-route"
 FIELD = "data_provenance"
 URN = "urn:li:dataset:(urn:li:dataPlatform:file,any_asset,TEST)"
+
+#: The archetypes a finance class is drawn as, 2026-11-23. The population is DERIVED from
+#: capabilities.py (fin subject_uri -> archetype -> the verbs producing that class); this set is
+#: only the floor the derivation must not fall under, so a dropped binding fails loudly.
+FIN_ARCHETYPES_FLOOR = {"MULTI_SERIES", "FLOW_DECOMPOSITION", "SHORTFALL_GRID", "VARIANCE_TREE",
+                        "CONTRIBUTION_RANKING", "COMPETING_MEASURES", "FORECAST_MEASURE"}
 
 
 @pytest.fixture(autouse=True)
@@ -41,64 +52,136 @@ def _member(monkeypatch):
     monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
 
 
-def _bound() -> list[str]:
-    return sorted(fn for fn, arch in _fin_bindings().items() if arch == ARCH)
+def _fin_archetypes() -> set[str]:
+    """Every archetype a `fin:` class is drawn as, read from the capability rows."""
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+    return {c["archetype"] for c in PRESENTATION_CAPABILITIES if c["subject_uri"].startswith("fin:")}
 
 
-def _project(ns, env):
+def _verbs() -> dict[str, list[str]]:
+    """archetype -> the fin verbs that produce a class drawn as it."""
+    out: dict[str, list[str]] = {}
+    for fn, arch in _fin_bindings().items():
+        out.setdefault(arch, []).append(fn)
+    # fin:DeclaredMeasureSeries is served by the declared-measure route, which has no OUTPUT_URI
+    # verb; its envelope comes from the same fixture test_the_flow_table_reaches_the_card uses.
+    for a in _fin_archetypes():
+        out.setdefault(a, [DECLARED] if a == "FLOW_DECOMPOSITION" else [])
+    return {a: sorted(v) for a, v in sorted(out.items())}
+
+
+def _cases() -> list[tuple[str, str]]:
+    return [(a, fn) for a, fns in _verbs().items() for fn in fns]
+
+
+#: A fin verb whose envelope carries no data_provenance is NOT fixed here (finance_agent is not
+#: this PR's); it is a strict xfail and reported by name.
+_NO_ENVELOPE_FIELD: set[str] = set()
+
+
+def _case_param(arch, fn):
+    marks = [pytest.mark.xfail(strict=True, reason="fin's envelope does not carry data_provenance")] \
+        if fn in _NO_ENVELOPE_FIELD else []
+    return pytest.param(arch, fn, id=f"{arch}-{fn}", marks=marks)
+
+
+def _env(fn, post):
+    if fn == DECLARED:
+        status, env = post()
+        assert status == 200, env
+        return env
+    return _envelope(fn)
+
+
+def _project(ns, arch, env):
     raw = [{"persona": "PROGRAM_FINANCE_ANALYST", "expert_response": env}]
-    return ns["_project_planning_archetype"](ARCH, raw, "PROGRAM_FINANCE_ANALYST", None)
+    return ns["_project_planning_archetype"](arch, raw, "PROGRAM_FINANCE_ANALYST", None)
 
 
 def test_the_population_is_inhabited():
-    assert len(_bound()) >= 2, f"derived {_bound()} -- the binding derivation is stale"
+    derived = _fin_archetypes()
+    assert FIN_ARCHETYPES_FLOOR <= derived, f"derived {sorted(derived)} -- the capability read is stale"
+    missing = {a for a, v in _verbs().items() if not v}
+    assert not missing, f"archetypes with no fin verb deriving to them: {sorted(missing)}"
 
 
-@pytest.mark.parametrize("fn", _bound())
-def test_THE_PROVENANCE_REACHES_THE_CARD_VERBATIM(fn):
-    env = _envelope(fn)
+@pytest.mark.parametrize("arch,fn", [_case_param(a, f) for a, f in _cases()])
+def test_THE_PROVENANCE_REACHES_THE_CARD_VERBATIM(arch, fn, post):
+    env = _env(fn, post)
     assert isinstance(env.get(FIELD), str) and env[FIELD], f"{fn} sent no {FIELD} (control)"
-    got = _project(_fns(), env)
-    assert got is not None and got["archetype"] == ARCH
+    got = _project(_fns(), arch, env)
+    assert got is not None and got["archetype"] == arch
     assert got[FIELD] == env[FIELD]
 
 
-def test_WITHOUT_THE_TUPLE_ENTRY_IT_DROPS():
+@pytest.mark.parametrize("arch", sorted(_verbs()))
+def test_WITHOUT_THE_TUPLE_ENTRY_IT_DROPS(arch, post):
     """The control: the same envelope through a projector whose tuple lacks the field."""
-    fn = _bound()[0]
-    env = _envelope(fn)
+    fn = next(f for f in _verbs()[arch] if f not in _NO_ENVELOPE_FIELD)
+    env = _env(fn, post)
     ns = _fns()
-    key, carried = ns["_PROJECTED_ARCHETYPES"][ARCH]
+    key, carried = ns["_PROJECTED_ARCHETYPES"][arch]
     assert FIELD in carried
     ns["_PROJECTED_ARCHETYPES"] = {**ns["_PROJECTED_ARCHETYPES"],
-                                   ARCH: (key, tuple(f for f in carried if f != FIELD))}
-    got = _project(ns, env)
+                                   arch: (key, tuple(f for f in carried if f != FIELD))}
+    got = _project(ns, arch, env)
     assert got is not None and FIELD not in got
 
 
-def _asset_strings(monkeypatch) -> dict[str, str]:
+TICKET_ID_VALUE = "7f3a9c01-5b2e-4d6a-9e8f-0a1b2c3d4e5f"
+AS_OF_VALUE = "2026-11-08T00:00:00Z"
+#: A ticket as the broker issues one, credential included; the receipt must carry none of it.
+TICKET = {"ticket_id": TICKET_ID_VALUE, "issued_at": "2026-11-12T09:00:00Z", "as_of": AS_OF_VALUE,
+          "as_of_source": "snapshot", "access_token": "hunter2-not-a-real-token"}
+
+
+def _receipt(**over):
+    from dag_tools.cortex_data.client import ticket_receipt
+    return ticket_receipt(URN, {**TICKET, **over})
+
+
+def _asset_strings(monkeypatch, receipt) -> dict[str, str]:
     from agent_fleet.finance_agent import asset_inputs
     monkeypatch.setenv(asset_inputs.BANNER_ENV, "SYNTHETIC TEST ASSET.")
-    return {"provenance": asset_inputs.provenance(URN),
-            "dataset_provenance": asset_inputs.dataset_provenance("SYNTHETIC TEST ASSET.", URN)}
+    return {"provenance": asset_inputs.provenance(URN, receipt),
+            "dataset_provenance": asset_inputs.dataset_provenance("SYNTHETIC TEST ASSET.", URN, receipt)}
 
 
 def test_AN_ASSET_ANSWER_NAMES_ITS_DATASET_URN(monkeypatch):
-    for name, s in _asset_strings(monkeypatch).items():
-        assert URN in s, f"{name}: {s!r}"
+    for receipt in (_receipt(), _receipt(ticket_id=None, as_of=None)):
+        for name, s in _asset_strings(monkeypatch, receipt).items():
+            assert URN in s, f"{name}: {s!r}"
+            assert s.endswith(f"Source: {URN}"), f"{name}: the live leg reads the URN as the suffix: {s!r}"
 
 
 AS_OF = re.compile(r"\bas[- ]of\b", re.I)
 TICKET_ID = re.compile(r"\bticket\b[:\s]+(?!pending\b)\w", re.I)
 
 
-def test_AN_ASSET_ANSWER_SAYS_ITS_TICKET_IS_PENDING_AND_CLAIMS_NO_AS_OF(monkeypatch):
+def test_AN_ASSET_ANSWER_CARRIES_ITS_AS_OF_AND_TICKET_ID(monkeypatch):
+    """ADR-0065:133, whole: the receipt's own as-of and ticket id, not merely the words."""
+    for name, s in _asset_strings(monkeypatch, _receipt()).items():
+        assert AS_OF.search(s), f"{name} names no as-of: {s!r}"
+        assert TICKET_ID.search(s), f"{name} names no ticket id: {s!r}"
+        assert TICKET_ID_VALUE in s and AS_OF_VALUE in s, f"{name} is not this ticket's: {s!r}"
+        assert "hunter2" not in s, f"{name} carries the ticket's credential: {s!r}"
+
+
+def test_THE_CONTROL_A_TICKET_THAT_STAMPS_NEITHER_STAYS_PENDING_AND_CLAIMS_NO_AS_OF(monkeypatch):
     # The ruled text, not asset_inputs.TICKET_PENDING: a seal that read the constant would pass it blank.
-    for name, s in _asset_strings(monkeypatch).items():
-        assert "ticket: pending" in s, f"{name}: {s!r}"
-        assert s.endswith(f"Source: {URN}"), f"{name}: the live leg reads the URN as the suffix: {s!r}"
+    for name, s in _asset_strings(monkeypatch, _receipt(ticket_id=None, as_of=None)).items():
+        assert "(ticket: pending)" in s, f"{name}: {s!r}"
         assert not AS_OF.search(s), f"{name} claims an as-of nothing measured: {s!r}"
         assert not TICKET_ID.search(s), f"{name} claims a ticket id nothing minted: {s!r}"
+
+
+@pytest.mark.parametrize("missing", ["ticket_id", "as_of"])
+def test_A_RECEIPT_MISSING_ONE_HALF_CLAIMS_ONLY_THE_OTHER(monkeypatch, missing):
+    for name, s in _asset_strings(monkeypatch, _receipt(**{missing: None})).items():
+        if missing == "as_of":
+            assert not AS_OF.search(s) and TICKET_ID_VALUE in s, f"{name}: {s!r}"
+        else:
+            assert AS_OF_VALUE in s and "ticket: pending" in s and not TICKET_ID.search(s), f"{name}: {s!r}"
 
 
 def test_THE_TICKET_ID_PATTERN_TELLS_PENDING_FROM_AN_ID():
@@ -107,13 +190,3 @@ def test_THE_TICKET_ID_PATTERN_TELLS_PENDING_FROM_AN_ID():
     assert TICKET_ID.search("BANNER (as of 2026-11-08T00:00Z, ticket 7f3a) Source: u")
     assert TICKET_ID.search("ticket: 7f3a") and AS_OF.search("as-of 2026-11-08")
 
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "ADR-0065:133 unmet (ruled 2026-11-08): the broker's ticket carries an id and an as-of from "
-    "dag-tools 0.13.0, but engine-fin pins v0.10.0 and its client discards the ticket, so the "
-    "string says '(ticket: pending)'. Clears when fin threads them through "
-    "(owner: invincible-agent/lane/fin)"))
-def test_AN_ASSET_ANSWER_CARRIES_ITS_AS_OF_AND_TICKET_ID(monkeypatch):
-    for name, s in _asset_strings(monkeypatch).items():
-        assert AS_OF.search(s), f"{name} names no as-of: {s!r}"
-        assert TICKET_ID.search(s), f"{name} names no ticket id: {s!r}"

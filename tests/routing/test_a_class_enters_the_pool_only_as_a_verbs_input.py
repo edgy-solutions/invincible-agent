@@ -145,7 +145,7 @@ def rig(monkeypatch):
     async def _served(domains, include_referents=False):
         return r.served_for(include_referents)
 
-    async def _verbs(query, domains, limit=10, user_email="", verb_iris=None):
+    async def _verbs(query, entitled_domains, limit=10, user_email="", verb_iris=None):
         if r.verb_exc is not None:
             raise r.verb_exc
         return r.rows
@@ -316,3 +316,12 @@ async def test_CONTROL_a_truly_empty_recall_keeps_its_message(rig, monkeypatch):
     resp = await rig.run(NAPOLEON)
     assert "No ontology classes found" in resp.reasoning
     assert "abstention_reason" not in (resp.provenance or {})
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name bob@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "bob@example.com", ["SUSTAINMENT"])

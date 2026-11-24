@@ -69,6 +69,8 @@ from collections import defaultdict
 
 import pytest
 
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 try:
     import weaviate
 except ImportError:

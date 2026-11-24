@@ -27,7 +27,7 @@ from typing import Any, Literal, Optional, get_args
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     from entities import (
-        PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
+        EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel, period_order,
         periods_in,
     )
     from measure_modules import (
@@ -36,7 +36,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     )
 except ImportError:
     from agent_fleet.finance_agent.entities import (
-        PERIOD_ORDER, EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel,
+        EACMethod, FinanceState, FiscalPeriod, MethodRequired, NotInModel, period_order,
         periods_in,
     )
     from agent_fleet.finance_agent.measure_modules import (
@@ -505,7 +505,7 @@ def _totals(
     """Cumulative (BCWS, BCWP, ACWP) over the given work packages and periods.
 
     CUMULATIVE IS COMPUTED, NEVER STORED. The seed holds period amounts only; every
-    to-date figure in this engine is a sum over `PERIOD_ORDER`. A stored cumulative field
+    to-date figure in this engine is a sum over the declared period order. A stored cumulative field
     beside them would be a second writer for a fact that already has one.
     """
     facts = state.facts_for(wp_ids, window)
@@ -1340,7 +1340,7 @@ def fin_funding_status(
         funding_grid.build(
             cells,
             verdict=_funding_state,
-            order=lambda period: PERIOD_ORDER[period],
+            order=period_order().__getitem__,
         ),
         money_fields=_FUNDING_MONEY_FIELDS,
     )

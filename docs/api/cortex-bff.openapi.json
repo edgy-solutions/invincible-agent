@@ -198,7 +198,7 @@
       },
       "ActPromotion": {
         "additionalProperties": false,
-        "description": "POST /human_tasks/{id}/act on a document_promotion; fact/origin only when promoted, swept only\nwhen rejected, the row_edits..extraction_defect keys only when the steward corrected.",
+        "description": "POST /human_tasks/{id}/act on a document_promotion; fact/origin only when promoted, swept only\nwhen rejected, the row_edits..extraction_defect keys only when the steward corrected, review\nonly when promoted and the kind declares a review workflow.",
         "properties": {
           "correction": {
             "anyOf": [
@@ -279,6 +279,16 @@
           "replayed": {
             "title": "Replayed",
             "type": "boolean"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PromotionReviewStart"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "row_edits": {
             "anyOf": [
@@ -550,6 +560,118 @@
           "id"
         ],
         "title": "ArtifactResponse",
+        "type": "object"
+      },
+      "AskableMeasure": {
+        "properties": {
+          "cells": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "example_ask": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Example Ask"
+          },
+          "group_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Label"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phrasings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Phrasings",
+            "type": "array"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shape"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "verb": {
+            "title": "Verb",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verb",
+          "name",
+          "description",
+          "phrasings",
+          "cells"
+        ],
+        "title": "AskableMeasure",
+        "type": "object"
+      },
+      "AskableMeasuresResponse": {
+        "properties": {
+          "composed": {
+            "title": "Composed",
+            "type": "boolean"
+          },
+          "invalid": {
+            "items": {
+              "$ref": "#/components/schemas/MenuBlockInvalid"
+            },
+            "title": "Invalid",
+            "type": "array"
+          },
+          "measures": {
+            "items": {
+              "$ref": "#/components/schemas/AskableMeasure"
+            },
+            "title": "Measures",
+            "type": "array"
+          }
+        },
+        "required": [
+          "composed",
+          "measures",
+          "invalid"
+        ],
+        "title": "AskableMeasuresResponse",
         "type": "object"
       },
       "Attestation": {
@@ -2926,15 +3048,8 @@
             "title": "Summary"
           },
           "task_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Id"
+            "title": "Task Id",
+            "type": "string"
           },
           "title": {
             "anyOf": [
@@ -4227,6 +4342,92 @@
         "title": "LineageEdgesProxyBody",
         "type": "object"
       },
+      "MenuBlock": {
+        "properties": {
+          "archetype": {
+            "title": "Archetype",
+            "type": "string"
+          },
+          "declared_by": {
+            "title": "Declared By",
+            "type": "string"
+          },
+          "domain_fit": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Domain Fit",
+            "type": "array"
+          },
+          "persona_fit": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Persona Fit",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "archetype",
+          "persona_fit",
+          "domain_fit",
+          "declared_by"
+        ],
+        "title": "MenuBlock",
+        "type": "object"
+      },
+      "MenuBlockInvalid": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "reason"
+        ],
+        "title": "MenuBlockInvalid",
+        "type": "object"
+      },
+      "MenuBlocksResponse": {
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/MenuBlock"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "composed": {
+            "title": "Composed",
+            "type": "boolean"
+          },
+          "invalid": {
+            "items": {
+              "$ref": "#/components/schemas/MenuBlockInvalid"
+            },
+            "title": "Invalid",
+            "type": "array"
+          }
+        },
+        "required": [
+          "composed",
+          "blocks",
+          "invalid"
+        ],
+        "title": "MenuBlocksResponse",
+        "type": "object"
+      },
       "MineListing": {
         "additionalProperties": false,
         "description": "GET /ingest/mine: the caller's drops, newest first; next is the cursor `{created_at}|{id}` or null.",
@@ -4724,6 +4925,71 @@
           "kinds"
         ],
         "title": "ProcessableKindsBody",
+        "type": "object"
+      },
+      "PromotionReviewStart": {
+        "additionalProperties": false,
+        "description": "What a promotion did about its kind's declared review workflow: started or retried (with the\nworkflow, its request key and the start's own status), not_restarted or failed (with a reason).\nAbsent when the kind declares no such workflow.",
+        "properties": {
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "request_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Key"
+          },
+          "status": {
+            "enum": [
+              "started",
+              "retried",
+              "not_restarted",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PromotionReviewStart",
         "type": "object"
       },
       "QueueListing": {
@@ -5355,6 +5621,17 @@
             "title": "Notice Id",
             "type": "string"
           },
+          "reissue_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reissue Of"
+          },
           "request_key": {
             "anyOf": [
               {
@@ -5394,6 +5671,35 @@
           "impacted_parts"
         ],
         "title": "ReviewStartRequest",
+        "type": "object"
+      },
+      "RevokeAccessGrantRequest": {
+        "description": "Revoke one reader grant: which grant (subject, asset, kind) and WHY.",
+        "properties": {
+          "asset": {
+            "title": "Asset",
+            "type": "string"
+          },
+          "kind": {
+            "default": "dataset",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "asset",
+          "reason"
+        ],
+        "title": "RevokeAccessGrantRequest",
         "type": "object"
       },
       "RowEditCounts": {
@@ -6262,6 +6568,48 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/access_grants/revoke": {
+      "post": {
+        "description": "Revoke a reader grant by RECORDING the revocation in the decision ledger (who revoked it,\nwhen, why). Nothing is deleted: the grant's own row, if it was approved at runtime, stays. The\ngrant may come from committed policy or from the ledger; a revocation removes it from the\neffective set whichever it was. Who may revoke is a capability row (`mesh:revokeAccessGrant`\nin capability_grants.yaml), asked of the directory like every other effect.\n\nThe act is recorded first and stands. The route then removes that ONE reader from the\ndirectory (never a listing, never a prune: the seed stays the one pruner). Removed: 200\n`effective: now`. Not removed (the directory could not be reached): 202 `effective: not yet`\nwith `removed: false`, the act still recorded; it is retried at the next start, by repeating\nthis request, and by the seed's next sync. It is never shown as done. Idempotent: a grant\nalready revoked answers `already_revoked` (and retries the removal), and the first revoker\nstays on record.",
+        "operationId": "revoke_access_grant_access_grants_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeAccessGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Revoke Access Grant"
+      }
+    },
     "/access_requests": {
       "post": {
         "description": "Case-1: a caller denied read on an asset requests access. ASYNC — creates a\nrequest HumanTask routed to the domain's access-grant approvers and RETURNS\nIMMEDIATELY. Nothing suspends (no Restate workflow, no held state) — the DoS\nruling for query denials. The grant SUBJECT is the caller's authz_id (recorded\nin the payload for the fulfillment); an approver later writes the grant.",
@@ -6639,6 +6987,30 @@
         "tags": [
           "artifacts"
         ]
+      }
+    },
+    "/askable_measures": {
+      "get": {
+        "description": "The declared measures this caller can ask, for discovery. One entry per declared measure\nrow (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),\nwhether or not the row carries a `menu:` block. An entry is listed only when the caller holds\na domain in the row's declared cells, the same comparison the engine that declares the\nmeasure refuses on, so the list never names a measure the caller would be refused. The\nengine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's\n`declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the\nrow declares none). `example_ask` and `group_label` are served as declared, null otherwise.\n\nBuilt-in measures are listed from their listing rows, through the measure's engine's own\nloader. They declare no shape (`shape` is null).\n\nBuilt-ins are listed whatever the overlay env; declared rows are read only when\n`MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed\nload is named in `invalid` and logged at ERROR); it never means \"none\".",
+        "operationId": "get_askable_measures_askable_measures_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskableMeasuresResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Askable Measures"
       }
     },
     "/bpmn/catalog": {
@@ -9682,6 +10054,30 @@
         "summary": "Get My Queue"
       }
     },
+    "/menu_blocks": {
+      "get": {
+        "description": "The menu placements the overlay rows declare, sorted by (subject, archetype, verb). Two\nsources: `<overlay>/menu_blocks/*.yaml`, and the in-row `menu:` blocks of declared measure rows\n(`MEASURE_VERB_OVERLAY_DIRS`). A placement is keyed by its declaring verb: distinct verbs may\nshare a (subject, archetype) and are all served; a verb declared twice is left out and named.\nThe 2026-11-07 ruling: the row declares its placement, the BFF serves it, cortex reads it.\n\nNOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,\nand `persona_fit` / `domain_fit` only RANK, they never gate.\n\nNOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay\ndir configured, or one is unreadable); it never means \"no blocks\". `composed: true` with\n`blocks: []` means this deployment declares none. A client replaces a hand-written row only\nwith a served block for the SAME subject. A row that does not validate, or that\ndeclares a verb another row declares, is left out of `blocks`, named in `invalid`, and logged at\nERROR.",
+        "operationId": "get_menu_blocks_menu_blocks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuBlocksResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Menu Blocks"
+      }
+    },
     "/mesh/config": {
       "get": {
         "description": "Proxy the dynamic UI configuration from the Ontology Service.",
@@ -10435,6 +10831,49 @@
           }
         ],
         "summary": "Get Review Batch"
+      }
+    },
+    "/reviews/{workflow_id}/provenance": {
+      "get": {
+        "description": "The review card's evidence, resolved from the review's OWN source reference (the\n`artifact_uri` the workflow kept), never from a fixed prefix. Same gate as the batch route: the\ncaller must hold this grouped task in their own pending queue.",
+        "operationId": "review_provenance_reviews__workflow_id__provenance_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Review Provenance"
       }
     },
     "/seed/portfolio_canvas": {

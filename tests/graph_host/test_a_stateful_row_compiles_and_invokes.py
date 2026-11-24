@@ -291,6 +291,7 @@ needs_dsn = pytest.mark.skipif(
 
 
 @needs_dsn
+@pytest.mark.live
 def test_a_thread_written_by_ONE_saver_RESUMES_in_ANOTHER():
     """Driven by an explicit Runner rather than `pytest.mark.asyncio` — see `_run_on_a_loop_psycopg_can_use`."""
     _run_on_a_loop_psycopg_can_use(_resume_body())

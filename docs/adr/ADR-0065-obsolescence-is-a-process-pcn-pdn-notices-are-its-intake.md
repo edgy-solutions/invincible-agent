@@ -130,7 +130,7 @@ review shapes. Neither is an OpenAPI enum.
   | `stock` | the part's stock on hand for that program |
   | `configuration` | the configuration the row was answered from |
   | `as_of` | when the data the row was answered from was current (ruling 3) |
-  | `data_provenance` | where the row came from: dataset URN, as-of and ticket id, as on every served table. **Unmet** (ruled 2026-11-08): the broker's ticket carries an id and an as-of from dag-tools 0.13.0, but engine-fin pins v0.10.0 and discards the ticket, so a served string carries the URN and `ticket: pending` |
+  | `data_provenance` | where the row came from: dataset URN, as-of and ticket id, as on every served table. **Met** in 0.4.88: engine-fin pins dag-tools 0.14.0 and reads through `get_dataframe_with_ticket`, so a served string carries the URN and that read's as-of and ticket id. A ticket that stamps neither still says `ticket: pending` and claims no as-of (ruled 2026-11-08). Until 0.4.88, engine-fin read through `get_dataframe`, which discards the ticket, so every string said pending |
 
 - **Absent is not zero.** `population` and `stock` have no source today. A row with no source for them says so, and
   is never served as 0.
@@ -217,6 +217,12 @@ The draft raised four places where the brief and what is on disk disagreed. The 
    - **Ruled:** `ImpactRow = {end_item, program, component, qty_per, population, stock, configuration, as_of,
      data_provenance}`, with `end_item` an identity (section 4). ca reshapes to it.
    - "Absent is not zero" stands as written.
+   - **Amended 2026-11-19, as SDK v0.9.26 ships it:** `ImpactRow = {end_item, program, component, qty_per,
+     population, stock, configuration, as_of, data_provenance, absent_reason}`. `absent_reason` is the row's own
+     `{field: short phrase}` for an absent `population`, `stock` or `as_of`. Each `data_provenance` entry is one
+     input and carries its own reasons. Source: the architect's ruling of 11-19, via Chris, that the provenance
+     entry "must be able to carry what is served", and the order of the same night to pin the served row to
+     v0.9.26. The row-level field was lane 74's ask to ca. Recorded for the architect to confirm.
 
 ## What this does not establish
 
