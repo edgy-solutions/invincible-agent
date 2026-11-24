@@ -875,6 +875,35 @@ def list_verbs() -> dict[str, Any]:
     ]}
 
 
+def _answer_sources(urn: Optional[str], receipt: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The `sources` of an answer: the one dataset it was computed over, with its as-of (ruled
+    2026-11-23). Empty when the answer read no asset (the seed). Built from the receipt the answer's
+    `data_provenance` cites, never from a second read. The label is the name part of a
+    `urn:li:dataset:(<platform>,<name>,<env>)` URN, else the whole URN."""
+    if not urn or receipt is None:
+        return []
+    label = urn
+    if urn.startswith("urn:li:dataset:(") and urn.endswith(")"):
+        parts = urn[len("urn:li:dataset:("):-1].split(",")
+        if len(parts) == 3 and parts[1]:
+            label = parts[1]
+    as_of = export_dates.data_as_of(receipt)
+    return [{
+        "type": "catalog_asset",
+        "label": label,
+        "uri": urn,
+        "snippet": f"Data as of: {as_of}. {asset_inputs.ticket_clause(receipt)}",
+        "data_as_of": as_of,
+    }]
+
+
+def _source_sources(source: Optional[dict[str, str]], receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`_answer_sources` for the state builders, whose `source` is None, a seed or an asset."""
+    if source and source["kind"] == "asset":
+        return _answer_sources(source["urn"], _the_receipt(receipts, source["urn"]))
+    return []
+
+
 def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[str, Any]:
     """Execute one verb and build the envelope `/measure/{fn}` serves.
 
@@ -970,6 +999,7 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
         # into a deck, and a docstring is not visible from a screenshot.
         "data_provenance": _source_provenance(source, receipts),
         **({} if source is None else {"data_source": source}),
+        **({"sources": _src} if (_src := _source_sources(source, receipts)) else {}),
         # COMPUTED FROM THE ROWS, so it is emitted here rather than declared in a table — and
         # ABSENT WHEN THERE IS NOTHING TO SAY. A verdict key holding None would make the card
         # render an empty caption slot; omission is the honest-absence rule this envelope
@@ -1034,6 +1064,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
         **({"reference": dict(row.reference)} if row.reference else {}),
         "data_provenance": _source_provenance(source, receipts),
         **({} if source is None else {"data_source": source}),
+        **({"sources": _src} if (_src := _source_sources(source, receipts)) else {}),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.declared_verdict(row, rows)) is not None else {}),
@@ -1166,6 +1197,7 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
                    "other_label": importlib.import_module(row.resolved_module).OTHER_LABEL},
         "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
         "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
@@ -1212,6 +1244,7 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
         **({"status_period": read.status} if row.status_column else {}),
         "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
         "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.dataset_series_verdict(row, rows, read.status))
