@@ -91,7 +91,7 @@ three groups:
 | group | rule ids | raised by |
 |---|---|---|
 | **every contract** | `duplicate_key`, `missing_column`, `not_determined_by`, `personal_data`, `wrong_type` | the shared reader, on every read of every contract |
-| **every finance read** | `non_finite`, `null_value`, `other_program_rows`, `period_outside_calendar`, `varies_within_path` | engine-fin, on its reads of any finance dataset |
+| **every finance read** | `non_finite`, `null_value`, `other_program_rows`, `period_outside_calendar`, `varies_within_path`, `version_outside_list` | engine-fin, on its reads of any finance dataset (the last only over a contract that declares a `version_dimension`) |
 | **the earned-value shape only** | `program_name_not_unique`, `program_bac_not_unique`, `work_package_in_two_accounts`, `duplicate_work_package_period` | engine-fin's built-in read only |
 
 **The last four are the sample's own key and dependencies,** checked under fin's own ids:
@@ -104,6 +104,17 @@ them too. In your own contract, declare your key as `grain` and your dependencie
 `dependencies`; the shared reader then refuses those as `duplicate_key` and `not_determined_by`.
 
 `interval_overlap` and `orphan_reference` are checked by the producer, not the engine.
+
+### Comparing two versions
+
+If your dataset carries several versions of one figure (a baseline and two estimates, say), the
+contract declares them: `version_dimension: {column: version, values: [PMB, EAC-CTR, EAC-GOV]}`. A flow row
+then compares two with `value: {compare: {column: amount, by: version}}` and lists `version_a` and
+`version_b` in `inputs.params`. The person picks them from the declared list, never from the data.
+The paths are summed per version and subtracted (a path in one version only counts as zero in the
+other), and the verdict says how many paths only one version holds. A row that reads one version
+lists `version`; over a versioned contract a row that lists none is refused at load. Full contract:
+`docs/contracts/finance-overlays.md` section 2.
 
 ## 3. How it is checked
 

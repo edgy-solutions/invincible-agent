@@ -24,6 +24,13 @@ contract at its join, as engine-fin does.
 PERIOD CALENDAR. `period.calendar` (optional) names the declared period calendar the dataset's
 period values are drawn from. The reader resolves it, not this module.
 
+VERSION DIMENSION. `version_dimension` (optional) declares `{column, values}`: the versions
+(baselines, estimates) the dataset's rows carry in `column`, in declared order. It is NOT the
+top-level `version`, which is the contract's own revision and is not read here. The values are
+strings, ever: an identifier of this kind is never read as a number. A reader refuses a row whose
+version is not in the list (`version_outside_list`), and a row compares or filters on versions
+only as this list names them.
+
 PERSONAL DATA. A column marked `personal_data: true` records a FACT about the column; the
 classification level and who may see it are the deployment's, applied through its dimensions
 (gov's rail), never written in a contract. This reader holds the fact: a personal column is
@@ -106,6 +113,8 @@ class DatasetContract:
     rules: dict[str, str] = field(default_factory=dict)      # rule id -> the contract's message for it
     personal: frozenset[str] = frozenset()                   # the columns marked personal_data
     calendar: str | None = None                              # `period.calendar`, else None
+    version_column: str | None = None                        # `version.column`, else None
+    versions: tuple[str, ...] = ()                           # `version.values`, in declared order
 
     @property
     def scoped(self) -> bool:
@@ -241,9 +250,37 @@ def _parse(raw: dict) -> DatasetContract:
             calendar = period["calendar"]
             if not isinstance(calendar, str) or not calendar.strip():
                 raise ValueError(f"period.calendar is a non-empty string; {calendar!r} is not")
+    version_column, versions = _parse_version(raw.get("version_dimension"), types)
     return DatasetContract(contract_id=contract_id, types=types, required=tuple(required),
                            key=key, scope=scope, dependencies=dependencies, rules=dict(rules),
-                           personal=frozenset(personal), calendar=calendar)
+                           personal=frozenset(personal), calendar=calendar,
+                           version_column=version_column, versions=versions)
+
+
+def _parse_version(version: Any, types: dict[str, str]) -> tuple[str | None, tuple[str, ...]]:
+    """`(column, values)` of the optional `version_dimension` block, else `(None, ())`. ValueError."""
+    if version is None:
+        return None, ()
+    if not isinstance(version, dict):
+        raise ValueError(f"version_dimension is a mapping of column and values; {version!r} is not")
+    unknown = sorted(str(k) for k in set(version) - {"column", "values"})
+    if unknown:
+        raise ValueError(f"version_dimension carries {unknown}; it holds column and values only")
+    column, values = version.get("column"), version.get("values")
+    if not isinstance(column, str) or column not in types:
+        raise ValueError(f"version_dimension.column {column!r} is not a declared column")
+    if types[column] != "string":
+        raise ValueError(f"version_dimension.column {column!r} is declared {types[column]!r}; a version column is a string")
+    if not isinstance(values, list) or not values:
+        raise ValueError("version_dimension.values is a non-empty list of strings")
+    for v in values:
+        if isinstance(v, int) and not isinstance(v, bool):
+            raise ValueError(f"version_dimension.values holds the number {v!r}; a version is a string, so quote it")
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("version_dimension.values holds only non-empty strings")
+    if len(set(values)) != len(values):
+        raise ValueError("version_dimension.values repeats a value")
+    return column, tuple(values)
 
 
 class ContractViolation(Exception):
