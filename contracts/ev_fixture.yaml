@@ -7,31 +7,50 @@
 # (`inputs.dataset.contract: ev_fixture`) and every read of the row's asset is held to it: the
 # required columns, each column's type, the key (`grain`) and the dependencies, by
 # agent_fleet/utils/dataset_contracts.py and its check_contract_*. The FIN_DATASET_URN read
-# (`asset_inputs.state_from_rows`) still holds its own constants, and
-# tests/finance/test_the_ev_contract_agrees_with_the_reader.py keeps those in agreement with this file.
+# (`asset_inputs.state_from_rows`, the built-in measures' asset) does NOT yet read this file for
+# everything: its column names, its row cap and its URN and banner are still the reader's own
+# constants, and tests/finance/test_the_ev_contract_agrees_with_the_reader.py keeps those in
+# agreement with this file. Its fiscal calendar is not a constant: it is the deployment's declared
+# calendar (docs/contracts/finance-overlays.md, the fin_calendar section).
 # The sandbox's refusal probes read dag-tools' planted-refusal assets under this contract too: they
 # are built to its shape and to break it.
 #
 # A SAMPLE, NOT A CUSTOMER'S SHAPE: the synthetic earned-value fixture dag-tools ships for the
 # sandbox. A deployment's own contract is its own file; nothing in engine code names this one.
 # Lane 1 registers it.
-contract_id: ev_fixture
-version: "1.0.0"
-status: sample
-ratified_by: owner
 
-dataset:
+# HOW TO READ THIS FILE: FORMAT AND INSTANCE. Each line ends with tags.
+#   A KEY's tag says whether every contract has it:
+#     [format]    every contract has this key; the reader refuses a contract without it.
+#     [optional]  a contract may carry this key; the reader reads it when it is present.
+#     [unread]    the format carries this key, but no reader reads it yet: it documents.
+#   A VALUE's tag says whose it is:
+#     [ev_fixture] this value is this dataset's own; your contract writes its own.
+#     [general]    every contract writes this value the same way.
+#   A RULE id's tag says which reads raise it (docs/contracts/adding-a-measure-by-declaration.md §2):
+#     [shared]     the shared reader, on every read of every contract.
+#     [engine-fin] engine-fin, on its reads of any finance dataset.
+#     [ev_fixture] engine-fin's built-in read only: the earned-value shape's own key and
+#                  dependencies, checked under fin's own ids.
+# The tags are sealed by tests/finance/test_the_ev_contract_marks_format_from_instance.py.
+
+contract_id: ev_fixture  # [format] [ev_fixture]
+version: "1.0.0"  # [unread] [ev_fixture]
+status: sample  # [unread] [ev_fixture]
+ratified_by: owner  # [unread] [ev_fixture]
+
+dataset:  # [unread]
   # DERIVED, never typed: materialize, then read what the broker registered or the catalog shows.
-  urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
-  producer: {repo: dag-tools, asset: ev_fixture}
+  urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"  # [unread] [ev_fixture]
+  producer: {repo: dag-tools, asset: ev_fixture}  # [unread] [ev_fixture]
   # File-backed (parquet). A table-backed asset runs SELECT * before the frame exists.
-  storage: file
-  banner: "SYNTHETIC earned-value fixture, not a real program."
+  storage: file  # [unread] [ev_fixture]
+  banner: "SYNTHETIC earned-value fixture, not a real program."  # [unread] [ev_fixture]
 
 # The key: one row per grain tuple. A read holding two rows for one tuple refuses `duplicate_key`.
 # A read filters to one scope value and holds no other.
-grain: [work_package, period]
-scope: program_id
+grain: [work_package, period]  # [format] [ev_fixture]
+scope: program_id  # [format] [ev_fixture]
 
 # DETERMINED BY (ruled 2026-11-10): inside a read, each value of `by` carries one value of each
 # `determines` column. One that carries two refuses `not_determined_by`, naming both columns, never
@@ -39,18 +58,19 @@ scope: program_id
 # `status_period` is determined by `program_id` (ruled 2026-11-11). `bac` and `eac` are NOT a
 # dependency of `work_package` (ruled 2026-11-11): eac changes every period and bac can be
 # rebaselined, and `grain` already holds one row per work package and period.
-dependencies:
-  - {by: program_id, determines: [program_name, program_bac, status_period]}
-  - {by: work_package, determines: [control_account]}
+dependencies:  # [optional]
+  - {by: program_id, determines: [program_name, program_bac, status_period]}  # [ev_fixture]
+  - {by: work_package, determines: [control_account]}  # [ev_fixture]
 
-period:
-  column: period
-  # The engine's vocabulary (agent_fleet/finance_agent/entities.py), FY26-01..FY26-12. FY26 only
-  # today, so a real source's FY27 row is refused: a fork listed for the architect on 2026-11-03.
-  vocabulary: FISCAL_PERIODS
+period:  # [optional]
+  column: period  # [unread] [ev_fixture]
+  # The periods come from the declared calendar this names (the `fin_calendar` overlay kind,
+  # docs/contracts/finance-overlays.md section 8). A period outside it refuses `period_outside_calendar`.
+  # With exactly one calendar declared, a contract may omit `calendar` and the one declared is used.
+  calendar: us_federal_fy26  # [optional] [ev_fixture]
 # The period the program is reported through. Named here so a time-phased row can mark it from
 # data; never a constant in a measure row.
-status_period: status_period
+status_period: status_period  # [unread] [ev_fixture]
 
 # `required`: every governed read selects it (the reader's fixed set). Otherwise a column is read
 # only when a measure row names it.
@@ -61,67 +81,69 @@ status_period: status_period
 # the reader enforces is declared under `dependencies` instead.
 # `additive_over`: the axes along which summing the column is meaningful. An amount repeated on
 # a path's rows is taken once per path before it is added (a measure row's `per_path: once`).
-columns:
-  - {name: program_id, type: string, required: true, produced_since: "0.11.0"}
-  - {name: program_name, type: string, required: true, produced_since: "0.11.0"}
-  - {name: program_bac, type: numeric, unit: USD, required: true, produced_since: "0.11.0",
+# Column keys: name, type [format]; required, personal_data [optional]; unit, produced_since, additive_over, constant_within [unread].
+columns:  # [format]
+  - {name: program_id, type: string, required: true, produced_since: "0.11.0"}  # [ev_fixture]
+  - {name: program_name, type: string, required: true, produced_since: "0.11.0"}  # [ev_fixture]
+  - {name: program_bac, type: numeric, unit: USD, required: true, produced_since: "0.11.0",  # [ev_fixture]
      additive_over: []}
   # Declared as a string: `1.1` infers as a float.
-  - {name: control_account, type: string, required: true, produced_since: "0.11.0"}
-  - {name: work_package, type: string, required: true, produced_since: "0.11.0"}
-  - {name: period, type: string, required: true, produced_since: "0.11.0"}
+  - {name: control_account, type: string, required: true, produced_since: "0.11.0"}  # [ev_fixture]
+  - {name: work_package, type: string, required: true, produced_since: "0.11.0"}  # [ev_fixture]
+  - {name: period, type: string, required: true, produced_since: "0.11.0"}  # [ev_fixture]
   # Period amounts, never cumulative. A cumulative series is computed by a measure, not stored.
-  - {name: bcws, type: numeric, unit: USD, required: true, produced_since: "0.11.0",
+  - {name: bcws, type: numeric, unit: USD, required: true, produced_since: "0.11.0",  # [ev_fixture]
      additive_over: [work_package, period]}
-  - {name: bcwp, type: numeric, unit: USD, required: true, produced_since: "0.11.0",
+  - {name: bcwp, type: numeric, unit: USD, required: true, produced_since: "0.11.0",  # [ev_fixture]
      additive_over: [work_package, period]}
-  - {name: acwp, type: numeric, unit: USD, required: true, produced_since: "0.11.0",
+  - {name: acwp, type: numeric, unit: USD, required: true, produced_since: "0.11.0",  # [ev_fixture]
      additive_over: [work_package, period]}
   # Completion figures (dag-tools #11, ruling (a)): one per work package, repeated on each of its
   # period rows, so a sum over its rows overcounts by the number of periods.
-  - {name: bac, type: integer, unit: USD, required: false, produced_since: "0.11.0",
+  - {name: bac, type: integer, unit: USD, required: false, produced_since: "0.11.0",  # [ev_fixture]
      constant_within: [work_package], additive_over: [work_package]}
-  - {name: eac, type: integer, unit: USD, required: false, produced_since: "0.11.0",
+  - {name: eac, type: integer, unit: USD, required: false, produced_since: "0.11.0",  # [ev_fixture]
      constant_within: [work_package], additive_over: [work_package]}
   # Ruled 2026-11-05 (ADR-0065/0066 dispatch); in the fixture from dag-tools 0.12.0.
-  - {name: status_period, type: string, required: false, produced_since: "0.12.0"}
+  - {name: status_period, type: string, required: false, produced_since: "0.12.0"}  # [ev_fixture]
   # The EAC as stated at each period's status: a stock, so it adds across work packages at one
   # period and never across periods. A new column, because `eac` must stay constant per work
   # package for the rows that read it once per path.
-  - {name: eac_reported, type: integer, unit: USD, required: false, produced_since: "0.12.0",
+  - {name: eac_reported, type: integer, unit: USD, required: false, produced_since: "0.12.0",  # [ev_fixture]
      additive_over: [work_package]}
 
 # Every rule the reader refuses on, by the id its 502 `asset_contract_violation` names. A broken
 # rule refuses the whole answer, and its message names the rule and the column, never a value.
 # The four naming a column are the FIN_DATASET_URN read's; a dataset row's read refuses the same
 # rows as `duplicate_key` and `not_determined_by`.
-rules:
-  missing_column: "a required column, or a column a measure row names, is absent"
-  wrong_type: "a column is not of the type the contract declares"
-  null_value: "a null in a column that is read"
-  non_finite: "a NaN or infinity in a numeric column that is read"
-  other_program_rows: "a read holds rows of another program (the asset may; a read that kept them forgot its filter)"
-  program_name_not_unique: "more than one program_name for the program"
-  program_bac_not_unique: "program_bac differs between the program's rows"
-  work_package_in_two_accounts: "a work_package appears under more than one control_account"
-  duplicate_work_package_period: "more than one row for a (work_package, period)"
-  period_outside_calendar: "a period outside the vocabulary"
-  varies_within_path: "under `per_path: once`, a path's rows carry different amounts"
-  duplicate_key: "more than one row for one grain tuple"
-  not_determined_by: "one value of a dependency's `by` column carries two values of a column it determines"
+rules:  # [optional]
+  missing_column: "a required column, or a column a measure row names, is absent"  # [shared]
+  wrong_type: "a column is not of the type the contract declares"  # [shared]
+  null_value: "a null in a column that is read"  # [engine-fin]
+  non_finite: "a NaN or infinity in a numeric column that is read"  # [engine-fin]
+  other_program_rows: "a read holds rows of another program (the asset may; a read that kept them forgot its filter)"  # [engine-fin]
+  program_name_not_unique: "more than one program_name for the program"  # [ev_fixture]
+  program_bac_not_unique: "program_bac differs between the program's rows"  # [ev_fixture]
+  work_package_in_two_accounts: "a work_package appears under more than one control_account"  # [ev_fixture]
+  duplicate_work_package_period: "more than one row for a (work_package, period)"  # [ev_fixture]
+  period_outside_calendar: "a period outside the vocabulary"  # [engine-fin]
+  varies_within_path: "under `per_path: once`, a path's rows carry different amounts"  # [engine-fin]
+  version_outside_list: "a row whose version is not in the contract's declared `version_dimension` values"  # [engine-fin]
+  duplicate_key: "more than one row for one grain tuple"  # [shared]
+  not_determined_by: "one value of a dependency's `by` column carries two values of a column it determines"  # [shared]
 
-limits:
+limits:  # [unread]
   # Counted on the rows read, after the scope and window filter: a 422 `asset_too_large`.
-  max_rows: {env: FIN_ASSET_MAX_ROWS, default: 100000}
+  max_rows: {env: FIN_ASSET_MAX_ROWS, default: 100000}  # [unread] [general]
 
-cadence:
+cadence:  # [unread]
   # The engine sets none and caches nothing: the next read after a materialization sees it.
-  set_by: producer
+  set_by: producer  # [unread] [ev_fixture]
   # The IO manager writes overwrite_or_ignore; a smaller rewrite can leave an old part file,
   # which reads as duplicate rows and a refusal.
-  write: whole_table
+  write: whole_table  # [unread] [ev_fixture]
 
-tags:
-  required: []
+tags:  # [unread]
+  required: []  # [unread] [general]
   # The broker takes `datahub/urn` over the derived URN, so it is set only to the true one.
-  datahub/urn: only_if_true
+  datahub/urn: only_if_true  # [unread] [general]

@@ -120,7 +120,8 @@ agentFleet:
     LANGFUSE_TRACING_ENVIRONMENT: "sandbox"
     # A MEASURE IS AN OVERLAY ROW (proposal docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md).
     # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
-    # invented to prove the contract. engine-fin reads the first, cortex-bff the second; the
+    # invented to prove the contract. engine-fin reads the first, cortex-bff the second
+    # (and also MEASURE_VERB_OVERLAY_DIRS, for the measures' menu placements); the
     # shared agentFleet configmap carries both and each service reads only its own.
     # The second directory holds the refusal probes: rows over dag-tools' planted-refusal assets,
     # which exist only so the live leg can see each reader rule refuse. Nothing else names it.
@@ -129,6 +130,9 @@ agentFleet:
     # A PROGRAM IS AN INSTANCE ROW (docs/contracts/finance-overlays.md section 7). SANDBOX ONLY: the
     # three planted refusal programs, declared so a question can name them. engine-fin reads it.
     FIN_INSTANCE_OVERLAY_DIRS: "/app/policy/overlays/sandbox/fin_instances"
+    # A FISCAL CALENDAR IS DECLARED BY THE DEPLOYMENT (docs/contracts/finance-overlays.md section 8). This
+    # is the sample FY26 calendar, so the sandbox's periods are unchanged. engine-fin reads it.
+    FIN_CALENDAR_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_calendar"
     CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.
@@ -340,6 +344,14 @@ engineO:
   enabled: true
   image:
     tag: ""
+  # Reasoning effort on engine O's three routing calls, at low (the architect,
+  # 2026-11-24: "The speed setting passed and stays on ... Put the three
+  # routing-effort keys at low in the sandbox values for 0.4.92"). Perf's run 2
+  # measured it on the sandbox. The chart default stays off (values.yaml).
+  env:
+    IAGENT_ROUTING_EFFORT_SUBJECT: "low"
+    IAGENT_ROUTING_EFFORT_VERB: "low"
+    IAGENT_ROUTING_EFFORT_SLOTS: "low"
   resources:
     requests:
       cpu: 100m

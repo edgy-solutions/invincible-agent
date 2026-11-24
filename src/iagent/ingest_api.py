@@ -23,7 +23,7 @@ INGEST_V1_TAG = "ingest-v1"
 # (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
 # the /orchestrate handler but is NOT in this set.
 MCP_TAG = "mcp"
-INGEST_API_VERSION = "1.10.0"
+INGEST_API_VERSION = "1.10.1"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -494,7 +494,7 @@ class HumanTask(_Strict):
     """One pending task row of the caller's queue, with its kind's declaration."""
     id: Any
     kind: str | None
-    task_id: str | None
+    task_id: str
     workflow_id: str | None
     audience: str | None
     status: str

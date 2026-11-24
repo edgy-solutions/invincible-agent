@@ -1,0 +1,6 @@
+# A built-in's row: it lists the measure in the askable list. `source: asset` is where it reads
+# under FIN_DATASET_URN; cells and phrasings are the engine's own.
+measure_id: fin_variance_analysis
+source: asset
+name: Variance analysis
+description: A cost or schedule variance broken into the parts that produced it, each explained down to a materiality floor.

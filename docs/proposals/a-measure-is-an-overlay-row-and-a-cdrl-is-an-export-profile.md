@@ -156,11 +156,11 @@ returned, joined on `key`. A column naming a field the source does not return re
 at load. A template whose bytes do not match `template.sha256` refuses the profile at load.
 
 **The output.** `fin-cdrl-<name>-<program_id>.xlsx`, written into the template (the template's
-styling, column widths and header rows are kept), plus the §4 envelope: `{schema: "fin-export/1",
+styling, column widths and header rows are kept), plus the §4 envelope: `{schema: "fin-export/2",
 kind: "cdrl", profile, template_sha256, sources[{fn, params, method, rows_sha256}], cells_sha256,
-as_of}`. `cells_sha256` is the hash of every written cell (sheet, coordinate, value) in canonical
+data_as_of, generated_on}`. `cells_sha256` is the hash of every written cell (sheet, coordinate, value) in canonical
 JSON; it is the reproducibility claim. **The file's own bytes are not claimed reproducible** (an
-xlsx is a zip with write times in it).
+xlsx is a zip with write times in it). `generated_on` is the server's clock (a request carrying `as_of` is refused with a 422); a seed-sourced export's `data_as_of` reads `sample data (notional seed): no as-of`.
 
 **Who may export.** The program-visibility check (#130), same 403 envelope, before anything is
 measured.

@@ -46,6 +46,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       # --extra agent-fleet: see suite-order-independence.yml for why.
       - run: uv sync --locked --extra agent-fleet
+      # The pinned Pyodide runtime, fetched the same way build-containers.yml fetches it for the
+      # image. Without `.pyodide-cache/pyodide.js` the export-package seals (tests/cost/*,
+      # tests/finance/* that build a page) SKIP, so the advisory counted them as skipped and
+      # never ran them. continue-on-error: a CDN outage must not cost the rest of the
+      # advisory; the seals then skip as before, and this step shows as failed.
+      - name: the pinned Pyodide runtime, so the package seals run instead of skipping
+        continue-on-error: true
+        run: uv run python scripts/build_cost_package.py --fetch-runtime --runtime-dir .pyodide-cache
       - name: suite
         id: suite
         run: |

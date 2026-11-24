@@ -313,14 +313,24 @@ def test_a_person_stating_someone_is_themselves_and_alice_learns_nothing(client,
 def test_the_bound_log_line_labels_the_delegation_and_names_no_one(client, resolve_instance_spy, held,
                                                                    tmp_path, monkeypatch, caplog):
     _delegate_file(monkeypatch, tmp_path, ROW)
-    with caplog.at_level(logging.INFO, logger="engine-o.caller_binding"):
-        _resolve_instance(client, _bearer(SVC), on_behalf_of=ALICE)
+    lg = logging.getLogger("engine-o.caller_binding")
+    lg.addHandler(caplog.handler)                  # the logger does not propagate: attach, then detach
+    try:
+        with caplog.at_level(logging.INFO, logger="engine-o.caller_binding"):
+            _resolve_instance(client, _bearer(SVC), on_behalf_of=ALICE)
+    finally:
+        lg.removeHandler(caplog.handler)
     text = " ".join(r.getMessage() for r in caplog.records if r.name == "engine-o.caller_binding")
     assert "delegation=delegated" in text and ALICE not in text and "FINANCE" not in text
 
 
 def test_the_audit_logger_arrives_on_its_own_handler_and_does_not_propagate():
     lg = logging.getLogger("engine-o.audit.delegation")
+    assert lg.handlers and lg.level == logging.INFO and lg.propagate is False
+
+
+def test_the_binding_logger_arrives_on_its_own_handler_and_does_not_propagate():
+    lg = logging.getLogger("engine-o.caller_binding")
     assert lg.handlers and lg.level == logging.INFO and lg.propagate is False
 
 

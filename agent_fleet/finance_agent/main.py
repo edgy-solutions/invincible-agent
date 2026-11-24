@@ -32,9 +32,8 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
-import re
 import threading
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import httpx
@@ -46,13 +45,14 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import asset_inputs
     import cdrl
     import export
+    import export_dates
     import export_profiles
     import instance_overlays
     import measure_verbs
     import measures
     import state_codec
     from entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
@@ -60,13 +60,14 @@ except ImportError:
     from agent_fleet.finance_agent import asset_inputs
     from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import export_dates
     from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import instance_overlays
     from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
     from agent_fleet.finance_agent.entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from agent_fleet.finance_agent.seed import build_seed, check_consistency, notional_banner
     from agent_fleet.finance_agent.slots import (
@@ -504,8 +505,18 @@ def _declared_input_uri() -> str:
 def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]:
     """`program_id` / `window` slots EQUAL to `fin_performance_indices`'s, filtered to the row's
     params. Derived, never hand-written: a slot typed here is a second declaration of a fact
-    the signature already makes."""
-    return [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+    the signature already makes.
+
+    A dataset row that lists a version param (`version`, `version_a`, `version_b`) gets one more
+    slot each, with the shape of `fin_eac_calculation`'s `method`, an existing required enum: its
+    `values` are the row's contract's declared versions, in declared order. The list is the
+    contract's, never read from the data."""
+    slots = [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+    if row.contract is not None and row.contract.versions:
+        (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
+        slots += [{**enum, "name": n, "values": list(row.contract.versions)}
+                  for n in measure_verbs._VERSION_PARAMS if n in row.params]
+    return slots
 
 
 def _registration_calls() -> list[dict[str, Any]]:
@@ -514,7 +525,7 @@ def _registration_calls() -> list[dict[str, Any]]:
     seal that pins what is registered -- the loop that registered and the test that checked it
     were two copies of one fact. Each carries the measure's `fn` rather than a URL: the lifespan
     builds `endpoint_url` from it, so the verb is in the path where the registration is made."""
-    periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
+    periods = [p for p in fiscal_periods() if any(f.period == p for f in STATE.facts)]
     plan = [
         (v, v["input_uri"], "engine_fin_finance") for v in VERBS
     ] + [
@@ -997,7 +1008,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
     if missing:
         raise HTTPException(status_code=422, detail={
             "needs_slots": missing, "question": refusal_for(
-                "fin_performance_indices", [s for s in slots_for("fin_performance_indices")
+                "fin_performance_indices", [s for s in _declared_slots(row)
                                             if s["name"] in missing]),
         })
     if row.kind == measure_verbs.KIND_DATASET:
@@ -1113,9 +1124,19 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     receipts: list[dict[str, Any]] = []
     try:
         with _asset_read_errors(urn):
-            paths = asset_inputs.read_dataset_rows(
+            read = asset_inputs.read_dataset_rows(
                 _ticketed_reader(receipts), urn, row.levels, row.value_columns, row.value_op,
-                row.per_path, program_id, row.contract)
+                row.per_path, program_id, row.contract,
+                **{n: params.get(n) for n in measure_verbs._VERSION_PARAMS if n in row.params},
+                version_column=row.contract.version_column, versions=row.contract.versions)
+            compare = None
+            if isinstance(read, asset_inputs.CompareRead):
+                paths = read.paths
+                compare = {"version_a": params["version_a"], "version_b": params["version_b"],
+                           "total_a_exact": format(read.total_a, "f"), "total_b_exact": format(read.total_b, "f"),
+                           "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
+            else:
+                paths = read
             try:
                 rows = measure_verbs.run_dataset(paths, row, program_id=program_id)
             except ValueError as exc:
@@ -1139,10 +1160,19 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         "data_source": {"kind": "asset", "urn": urn},
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
-        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows)) is not None else {}),
+        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
+        **({"version": params["version"]} if "version" in row.params else {}),
+        **({"compare": compare} if compare is not None else {}),
         "rows": rows,
     }
     return envelope
+
+
+def _row_calendar_labels(row: "measure_verbs.MeasureVerbRow") -> Optional[tuple[str, ...]]:
+    """The labels of the calendar the row's contract resolved to at load, in the CURRENT
+    composition; None when that id is no longer declared (the env changed after load)."""
+    cal = measure_verbs._fiscal_calendar.declared_calendars().get(row.calendar_id)
+    return cal.labels if cal is not None else None
 
 
 def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
@@ -1158,7 +1188,7 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
                 _ticketed_reader(receipts), urn, scope=row.scope_column, period=row.period_column,
                 status=row.status_column, per_period=tuple(row.per_period.values()),
                 per_program=tuple(row.per_program.values()), program_id=program_id,
-                contract=row.contract)
+                contract=row.contract, calendar=_row_calendar_labels(row))
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
     rows = measure_verbs.run_dataset_series(read, row)
@@ -1250,7 +1280,7 @@ def _package_provenance(program_source: Optional[dict[str, Any]],
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
-    return name == "program_id"
+    return name == "program_id" or name in measure_verbs._VERSION_PARAMS
 
 
 @app.post("/measure/{fn}")
@@ -1302,14 +1332,8 @@ def _request_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _valid_as_of(v: Optional[str]) -> Optional[str]:
-    """`as_of` is a calendar date or absent. Shared by every export request."""
-    if v is None:
-        return v
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-        raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
-    date.fromisoformat(v)  # a ValueError here is a 422 too
-    return v
+_AS_OF_REFUSED = ("as_of is not accepted: an export's generated date is stamped by the server "
+                  "clock (ruling 2026-11-21); omit the field")
 
 
 class PackageExportRequest(BaseModel):
@@ -1322,8 +1346,11 @@ class PackageExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 @app.post("/package_export")
@@ -1352,7 +1379,9 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
     """
-    as_of = body.as_of or _request_date()  # RESOLVED ONCE; the manifest and page share it
+    # `generated_on` is the server's clock (a caller's date is refused at the model); the data's
+    # as-of comes from the source's receipt.
+    generated_on = _request_date()  # RESOLVED ONCE; the manifest and page share it
     try:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
@@ -1387,6 +1416,8 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     program_receipts: list[dict[str, Any]] = []
     package_state, program_source = _export_program_state(
         reads, program_id, [fn for _p, fn in resolved], program_receipts)
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     panels: list[dict[str, Any]] = []
     for p, fn in resolved:
@@ -1433,7 +1464,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
             template_id=body.canvas.template_id, template_hash=body.canvas.template_hash,
             panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
             html_path=dist / html_name, duckdb_path=dist / duckdb_name,
-            as_of=as_of, program_source=program_source,
+            data_as_of=data_as_of, generated_on=generated_on, program_source=program_source,
             data_provenance=_package_provenance(program_source, program_receipts),
         )
     except SourceUnavailable as exc:
@@ -1511,8 +1542,11 @@ class CdrlExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1599,14 +1633,20 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     reads = _asset_reads(profile.sources)
     _require_asset_grants(reads.values())
     # The program facts' read; each source cites its own read's ticket in its own envelope.
-    program_state, program_source = _export_program_state(reads, body.program_id, profile.sources, [])
-    as_of = body.as_of or _request_date()
+    program_receipts: list[dict[str, Any]] = []
+    program_state, program_source = _export_program_state(
+        reads, body.program_id, profile.sources, program_receipts)
+    # `generated_on` is the server's clock; a caller's `as_of` is refused at the model.
+    generated_on = _request_date()
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     out_dir = _cdrl_out_dir()
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         path, envelope = cdrl.build_cdrl(
-            program_state, profile, program_id=body.program_id, as_of=as_of,
+            program_state, profile, program_id=body.program_id,
+            data_as_of=data_as_of, generated_on=generated_on,
             out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
             program_source=program_source,
         )
@@ -1628,7 +1668,8 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         "artifact_uri": _artifact_uri(path.name),
         "profile": profile.name,
         "program_id": body.program_id,
-        "as_of": as_of,
+        "data_as_of": data_as_of,
+        "generated_on": generated_on,
         "envelope": envelope,
     }
 

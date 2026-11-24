@@ -383,6 +383,17 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "expected_fields": ["rows", "series", "value_label", "scope_label"],
         "description": "Renders fin:BurnRateSeries as a MULTI_SERIES — spend and the phased plan as two declared USD series over periods, with no cap",
     },
+    # The declared dataset measures (#255). Every declared measure registers as ONE output class
+    # (fin:DeclaredMeasureSeries, ruled 2026-11-02), so this row binds that class to the flow
+    # card rather than naming a measure. If each finance row is later given its own subject
+    # (the open menu-keying fork), this row is the one that changes.
+    {
+        "subject_uri": "fin:DeclaredMeasureSeries",
+        "object_uri": "mesh:FlowDecomposition",
+        "archetype": "FLOW_DECOMPOSITION",
+        "expected_fields": ["rows", "value_label", "render", "verdict", "data_provenance"],
+        "description": "Renders fin:DeclaredMeasureSeries as a FLOW_DECOMPOSITION — the edge table root edge first, with `render` carrying the unit and the other-label",
+    },
     {
         "subject_uri": "fin:FundingStatusGrid",
         "object_uri": "mesh:ShortfallGrid",
