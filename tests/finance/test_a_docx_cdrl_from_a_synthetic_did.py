@@ -138,9 +138,10 @@ def test_3_the_delivered_file_holds_each_fact_the_header_row_and_one_row_per_per
     program = next(p for p in engine.STATE.programs if p.program_id == PROGRAM)
     raw = _raw()
     t1 = _cells(doc.tables[0])
-    assert [row[1] for row in t1] == [program.name, PROGRAM, NO_SOURCE_AS_OF, raw["cdrl"]["item"],
-                                      raw["cdrl"]["data_item"]]
-    assert [row[0] for row in t1] == ["Program", "Program id", "As of", "CDRL item", "Data item"]
+    assert [row[1] for row in t1] == [program.name, PROGRAM, NO_SOURCE_AS_OF, AS_OF,
+                                      raw["cdrl"]["item"], raw["cdrl"]["data_item"]]
+    assert [row[0] for row in t1] == ["Program", "Program id", "Data as of", "Generated", "CDRL item",
+                                      "Data item"]
 
     tpl = docx.Document(str(TEMPLATE))
     t2, tpl2 = _cells(doc.tables[1]), _cells(tpl.tables[1])
