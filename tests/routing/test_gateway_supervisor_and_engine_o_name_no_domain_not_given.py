@@ -1,4 +1,9 @@
-"""NO CALLER IS NAMED A DOMAIN IT WAS NOT GIVEN (architect, via Chris, 2026-11-24).
+"""THE GATEWAY, THE SUPERVISOR AND ENGINE O NAME NO DOMAIN A CALLER WAS NOT GIVEN (architect,
+via Chris, 2026-11-24).
+
+Scope (narrowed by the architect's ruling on #554): these three sites only. Engines N and W
+still apply their own default when no domain is sent; there it is a graph label and search
+filter as well as prompt text, and it is a recorded follow-up, not sealed here.
 
 The legacy single `domain` used to default to a literal in the gateway's run config, the
 supervisor's fallback and engine O's request models. A caller with no entitled domains was
