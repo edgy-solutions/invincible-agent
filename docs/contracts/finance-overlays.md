@@ -54,6 +54,12 @@ A measure row declares a number computed per month from a program's earned-value
 loads, a user can ask for it in chat ("What is the to-complete performance index for NP-MERIDIAN?")
 and it can be a source for an export profile (section 3). The row declares; it never calculates.
 
+**Check the folder before a roll.** `scripts/check_measure_verbs.py <policy-repo>/measure_verbs` builds every row file in the
+folder with the engine's own loader and prints `REFUSED <path>: <message>` for each row the release would refuse at boot
+(a module version that does not match, a bad `depth`, a duplicate id), not only the first. Run it from the checkout of the
+release you are about to roll to, before the roll; it needs no cluster and no secret. It exits 0 when every row loads, 1 when
+any is refused, and 2 for a usage error (a directory that is not there).
+
 Top-level keys. Required unless marked optional. A key not in this table is refused at load (a
 `formula`, for example), so nothing you put there can look as if it took effect.
 
@@ -119,6 +125,9 @@ differences under `inputs` and `render`:
   number of levels below the root (`len(levels) - 1`), never a bool, refused at load otherwise. The
   paths are cut to their first `depth` levels after `per_path` has been applied, so totals are
   unchanged, and the verdict says `over k of n levels`; absent, the flow is drawn at full depth.
+  The depth is the row's, not the caller's: `program_id` stays the dataset kind's only parameter.
+  A person choosing the level of detail when asking is a later step, part of parity with how
+  finance teams work, and it needs its own slot, census and refusal (ruled 2026-11-24).
 - **A version is a declared dimension.** A contract may carry `version_dimension: {column: <string column>,
   values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
   declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is
