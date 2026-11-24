@@ -371,3 +371,51 @@ def test_the_chart_gives_engine_fin_a_fin_calendar_overlay_row():
     rows = values["policyOverlay"]["components"]["engine-fin"]
     mine = [r for r in rows if r["dir"] == "fin_calendar"]
     assert len(mine) == 1 and mine[0]["env"] == ENV and mine[0]["optional"] is True
+
+
+# -- 6a. gov's surviving mutants, killed under program B ---------------------------------------------
+# Each of these sites ordered or listed periods correctly under the sample only because the sample's
+# labels sort lexically. Under program B, P10 sorts before P2, so a plain sort, a lexical index or a
+# hard-coded FY26 list gives a different answer. The relabelling puts the six seed periods on P7..P12,
+# the stretch where the lexical and the declared order disagree.
+
+_LATE_B = ["P7", "P8", "P9", "P10", "P11", "P12"]
+
+
+def _seed_on_late_b():
+    """The sample seed with its six reported periods relabelled onto program B's P7..P12."""
+    import dataclasses
+    mapping = dict(zip(seed.REPORTED_PERIODS, _LATE_B))
+    state = seed.build_seed()
+    state.facts[:] = [dataclasses.replace(f, period=mapping[f.period]) for f in state.facts]
+    state.funding[:] = [dataclasses.replace(f, period=mapping[f.period]) for f in state.funding]
+    return state
+
+
+def test_under_program_b_an_out_of_order_window_comes_back_in_declared_order(monkeypatch):
+    # gov E8: `periods_in` sorts by the declared order, not by the label.
+    _declared(PROGRAM_B, monkeypatch)
+    assert periods_in(["P10", "P2"]) == ["P2", "P10"]
+    assert periods_in(["P12", "P1", "P9", "P10"]) == ["P1", "P9", "P10", "P12"]
+
+
+def test_under_program_b_the_funding_grid_orders_periods_as_declared(monkeypatch):
+    # gov E16: the grid's `order` is the declared index, not a lexical one.
+    from agent_fleet.finance_agent import measures
+    state = _seed_on_late_b()
+    _declared(PROGRAM_B, monkeypatch)
+    rows = measures.fin_funding_status(state, program_id=state.funding[0].program_id)
+    by_line: dict[str, list[str]] = {}
+    for r in rows:
+        by_line.setdefault(r["subject_id"], []).append(r["period"])
+    assert by_line and all(ps == _LATE_B for ps in by_line.values()), by_line
+
+
+def test_under_program_b_registration_offers_the_declared_periods_the_state_carries(monkeypatch):
+    # gov E12: `_registration_calls` reads the declared calendar, filtered to the state's periods.
+    from agent_fleet.finance_agent import main as engine
+    monkeypatch.setattr(engine, "STATE", _seed_on_late_b())
+    _declared(PROGRAM_B, monkeypatch)
+    window_values = [s["values"] for c in engine._registration_calls() for s in c["slots"]
+                     if s["name"] in slots._PERIOD_SLOTS]
+    assert window_values and all(v == _LATE_B for v in window_values), window_values[:2]
