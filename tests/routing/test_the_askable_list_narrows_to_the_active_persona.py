@@ -20,7 +20,7 @@ from iagent import menu_blocks  # noqa: E402
 from iagent.auth import User  # noqa: E402
 from iagent.authz.topaz_client import EntitlementCell, Entitlements  # noqa: E402
 
-_X, _Y = "CELL_X", "CELL_Y"
+_X, _Y, _Z = "CELL_X", "CELL_Y", "CELL_Z"
 
 
 def _entry(verb, cell):
@@ -32,6 +32,7 @@ def _entry(verb, cell):
 
 
 _VERB_X, _VERB_Y = "mesh:measureInX", "mesh:measureInY"
+_VERB_Z = "mesh:measureInZ"
 _CALLS: list[int] = []
 _CELLS = [EntitlementCell(persona="A", domain=_X), EntitlementCell(persona="B", domain=_Y)]
 
@@ -43,7 +44,7 @@ def _the_list(monkeypatch):
     def _askable():
         _CALLS.append(1)
         return menu_blocks.AskableMeasures(
-            True, [_entry(_VERB_X, _X), _entry(_VERB_Y, _Y)], [])
+            True, [_entry(_VERB_X, _X), _entry(_VERB_Y, _Y), _entry(_VERB_Z, _Z)], [])
 
     monkeypatch.setattr(menu_blocks, "askable", _askable)
 
@@ -208,3 +209,36 @@ def test_the_pick_is_checked_under_the_cell_the_ask_runs_under(stream):
     r = _post({**pick, "active_persona": "B", "active_domains": [_Y]})
     assert r.status_code == 200
     assert stream == [1]
+
+
+_TWO_DOMAIN_A = [
+    EntitlementCell(persona="A", domain=_X),
+    EntitlementCell(persona="A", domain=_Z),
+    EntitlementCell(persona="B", domain=_Y),
+]
+
+
+def test_the_default_cell_lists_its_own_domain_not_the_personas_domains():
+    """Persona A holds two domains, so the default cell's domain and the persona's domains differ."""
+    r = _get(user=_caller(cells=_TWO_DOMAIN_A))
+    assert _verbs(r) == [_VERB_X]
+    assert _cell(r) == ("A", [_X], "default")
+
+
+def test_the_default_cell_asks_under_its_own_domain_not_the_personas_domains(monkeypatch):
+    """Persona A holds two domains, so the default cell's domain and the persona's domains differ."""
+    seen: list = []
+
+    async def _empty():
+        if False:
+            yield b""
+
+    def _gen(*a, **k):
+        seen.append(k)
+        return _empty()
+
+    monkeypatch.setattr(gw, "generate_dagster_stream", _gen)
+    assert _post(user=_caller(cells=_TWO_DOMAIN_A)).status_code == 200
+    assert len(seen) == 1
+    assert seen[0]["user_persona"] == "A"
+    assert seen[0]["entitled_domains"] == [_X]
