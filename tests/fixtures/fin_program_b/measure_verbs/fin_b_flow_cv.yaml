@@ -33,6 +33,7 @@ render:
   shape: FLOW_DECOMPOSITION
   value_label: Cost variance
   unit: USD
+  walk_labels: {start: "Actual cost", end: "Earned value"}
 menu:
   subject: "fin:DeclaredMeasureSeries"
   archetype: "mesh:FlowDecomposition"

@@ -13,11 +13,16 @@ Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:ca
 """
 from __future__ import annotations
 
+import copy
+import os
 import shutil
+import subprocess
+import sys
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import yaml
 
 pl = pytest.importorskip("polars")
 
@@ -31,7 +36,7 @@ from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
     MeshUnavailable, NotEntitled, _clean_env, token,
 )
 from tests.finance.test_the_version_is_a_declared_dimension import (  # noqa: E402,F401
-    GOV, PMB, PROG_B as PROG_VB, URN_B as URN_VB, world as compare_world,
+    B_COMPARE, GOV, PMB, PROG_B as PROG_VB, URN_B as URN_VB, load as load_rows, world as compare_world,
 )
 from tests.finance.test_variance_decomposition_eac_row import frame as ev_frame  # noqa: E402
 from tests.finance.test_variance_decomposition_over_the_ev_fixture import (  # noqa: E402
@@ -41,6 +46,7 @@ from tests.finance.test_variance_decomposition_over_the_ev_fixture import (  # n
 REPO = Path(__file__).resolve().parents[2]
 SAMPLE_ROWS = REPO / "policy" / "overlays" / "sample" / "measure_verbs"
 FN_B_CV = "fin_b_flow_cv"
+EV_URN = "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
 FN_CV, FN_EAC = "fin_flow_cost_variance", "fin_flow_eac_variance"
 SIGN = {"positive": 1, "negative": -1, "zero": 0}
 
@@ -70,7 +76,7 @@ def b_cv_frame():
                           .round(2).alias("bcwp"))
 
 
-def test_b_cost_variance_walks_from_acwp_to_bcwp(post, gate, rows):
+def test_b_cost_variance_walks_from_actual_cost_to_earned_value(post, gate, rows):
     frame = b_cv_frame()
     assert all(Decimal(str(v)).as_tuple().exponent >= -2 for v in frame["bcwp"]), "control: bcwp has <= 2 decimals"
     assert frame["bcwp"].sum() != frame["acwp"].sum()
@@ -82,7 +88,7 @@ def test_b_cost_variance_walks_from_acwp_to_bcwp(post, gate, rows):
     want_end = sum((Decimal(str(v)) for v in frame["bcwp"]), Decimal(0))
     assert want_start != want_end
     walk = env["walk"]
-    assert walk["start"]["label"] == "acwp" and walk["end"]["label"] == "bcwp"
+    assert walk["start"]["label"] == "Actual cost" and walk["end"]["label"] == "Earned value"
     assert Decimal(walk["start"]["value_exact"]) == want_start
     assert Decimal(walk["end"]["value_exact"]) == want_end
     assert walk["start"]["value"] == float(want_start.quantize(Decimal("0.01")))
@@ -203,3 +209,107 @@ def test_once_refuses_a_pair_that_varies_while_its_difference_holds(epost, ev_wo
     assert status == 502 and body["detail"]["error"] == "asset_contract_violation", body
     assert body["detail"]["rule"] == "varies_within_path"
     assert body["detail"]["message"] == "eac, bac vary within one terminal path"
+
+
+# -- 6. render.walk_labels -----------------------------------------------------------------------
+
+def test_a_declared_walk_label_replaces_the_column_name_and_its_absence_keeps_it(post, gate, rows, tmp_path,
+                                                                                  monkeypatch):
+    # one session: program B's cv row (declared labels) and the sample cv row (none), over their own assets
+    sample = tmp_path / "sample_cv"
+    sample.mkdir()
+    shutil.copyfile(SAMPLE_ROWS / f"{FN_CV}.yaml", sample / f"{FN_CV}.yaml")
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", os.pathsep.join(
+        [os.environ["MEASURE_VERB_OVERLAY_DIRS"], str(sample)]))
+    declared = engine._load_declared()
+    monkeypatch.setattr(engine, "DECLARED", declared)
+    for fn, row in declared.items():
+        monkeypatch.setitem(engine.VERB_TO_FN, "mesh:" + row.verb, fn)
+    gate.frames[URN_B_FLAT] = b_cv_frame().lazy()
+    gate.frames[EV_URN] = ev_frame().lazy()
+    status, b_env = post(FN_B_CV)
+    assert status == 200, b_env
+    status, cv = post(FN_CV, program=PROGRAM)
+    assert status == 200, cv
+    assert declared[FN_B_CV].render["walk_labels"] == {"start": "Actual cost", "end": "Earned value"}
+    assert "walk_labels" not in declared[FN_CV].render
+    assert (b_env["walk"]["start"]["label"], b_env["walk"]["end"]["label"]) == ("Actual cost", "Earned value")
+    assert (cv["walk"]["start"]["label"], cv["walk"]["end"]["label"]) == ("acwp", "bcwp")
+    # the same structure either way, and each walk holds
+    assert {k: set(v) for k, v in b_env["walk"].items()} == {k: set(v) for k, v in cv["walk"].items()}
+    assert_walk_holds(b_env, "Actual cost", "Earned value")
+    assert_walk_holds(cv, "acwp", "bcwp")
+
+
+LABELS = {"start": "Start label", "end": "End label"}
+
+
+def _declared_with(tmp_path, monkeypatch, name, edit):
+    raw = yaml.safe_load((SAMPLE_ROWS / f"{name}.yaml").read_text(encoding="utf-8"))
+    edit(raw)
+    overlay = tmp_path / "wl"
+    overlay.mkdir(exist_ok=True)
+    (overlay / f"{name}.yaml").write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(overlay))
+    return engine._load_declared()
+
+
+def test_the_sample_minus_row_loads_with_labels(tmp_path, monkeypatch):
+    got = _declared_with(tmp_path, monkeypatch, FN_CV, lambda r: r["render"].update(walk_labels=dict(LABELS)))
+    assert got[FN_CV].render["walk_labels"] == LABELS
+
+
+@pytest.mark.parametrize("which, match", [
+    ("column", r"walk_labels.*not \{minus.*column row serves no walk"),
+    ("compare", r"walk_labels.*not \{minus.*compare row's ends are the two versions the caller names"),
+])
+def test_walk_labels_are_refused_where_the_row_does_not_subtract(which, match, tmp_path, monkeypatch):
+    if which == "column":
+        with pytest.raises(ValueError, match=match):
+            _declared_with(tmp_path, monkeypatch, FN_SAMPLE, lambda r: r["render"].update(walk_labels=dict(LABELS)))
+    else:
+        row = copy.deepcopy(B_COMPARE)
+        row["render"]["walk_labels"] = dict(LABELS)
+        with pytest.raises(ValueError, match=match):
+            load_rows(tmp_path, monkeypatch, {"fin_flow_b_compare": row})
+
+
+BAD = [
+    ("end missing", {"start": "S"}, r"exactly start and end"),
+    ("extra key", {"start": "S", "end": "E", "middle": "M"}, r"exactly start and end"),
+    ("empty start", {"start": "", "end": "E"}, r"start must be a non-empty string"),
+    ("blank start", {"start": "   ", "end": "E"}, r"start must be a non-empty string"),
+    ("int start", {"start": 3, "end": "E"}, r"start must be a non-empty string"),
+    ("a list", ["S", "E"], r"must be a mapping"),
+]
+
+
+@pytest.mark.parametrize("labels, match", [b[1:] for b in BAD], ids=[b[0] for b in BAD])
+def test_bad_walk_labels_are_refused_at_load(labels, match, tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match=match):
+        _declared_with(tmp_path, monkeypatch, FN_CV, lambda r: r["render"].update(walk_labels=copy.deepcopy(labels)))
+
+
+def test_the_folder_check_names_a_row_with_bad_walk_labels(tmp_path, monkeypatch):
+    script = REPO / "scripts" / "check_measure_verbs.py"
+    b_dir = REPO / "tests" / "fixtures" / "fin_program_b"
+    cdir = tmp_path / "contracts"
+    cdir.mkdir()
+    shutil.copyfile(REPO / "contracts" / "ev_fixture.yaml", cdir / "ev_fixture.yaml")
+    shutil.copyfile(b_dir / "contracts" / "program_b.yaml", cdir / "program_b.yaml")
+    env = dict(os.environ, DATASET_CONTRACT_DIR=str(cdir), FIN_CALENDAR_OVERLAY_DIRS=os.pathsep.join(
+        [str(REPO / "policy" / "overlays" / "sample" / "fin_calendar"), str(b_dir / "fin_calendar")]))
+    env.pop("MEASURE_VERB_OVERLAY_DIRS", None)
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    raw = yaml.safe_load((b_dir / "measure_verbs" / "fin_b_flow_cv.yaml").read_text(encoding="utf-8"))
+    run = lambda: subprocess.run([sys.executable, str(script), str(folder)], env=env, cwd=REPO,  # noqa: E731
+                                 capture_output=True, text=True, timeout=300)
+    (folder / "fin_b_flow_cv.yaml").write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    p = run()
+    assert p.returncode == 0, p.stdout + p.stderr         # control: the declared labels load
+    raw["render"]["walk_labels"] = {"start": "Actual cost"}
+    (folder / "fin_b_flow_cv.yaml").write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    p = run()
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "fin_b_flow_cv.yaml" in p.stdout and "walk_labels" in p.stdout, p.stdout

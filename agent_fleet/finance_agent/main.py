@@ -1146,7 +1146,9 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
                            "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
             elif isinstance(read, asset_inputs.MinusRead):
                 paths = read.paths
-                walk = _walk(row.value_columns[1], read.total_b, row.value_columns[0], read.total_a)
+                labels = row.render.get("walk_labels") or {}
+                walk = _walk(labels.get("start", row.value_columns[1]), read.total_b,
+                             labels.get("end", row.value_columns[0]), read.total_a)
             else:
                 paths = read
             try:

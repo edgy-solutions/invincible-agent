@@ -174,7 +174,7 @@ differences under `inputs` and `render`:
 - A flow row whose value is `{minus: [a, b]}` or `{compare: ...}` also serves the envelope key `walk`:
   `{start: {label, value, value_exact}, end: {label, value, value_exact}}`; a row of a single column
   has no `walk` key. For `minus` the `start` is the program's total of column `b` and the `end` that
-  of column `a`, labelled by the two column names (`render.walk_labels` is not a key). For `compare`
+  of column `a`, labelled by the two column names unless the row declares `render.walk_labels`. For `compare`
   the `start` is version `b`'s total and the `end` version `a`'s, labelled by the two versions chosen;
   `compare` does not change, and its totals equal `compare.total_b_exact` and `total_a_exact`.
   `value_exact` is the exact total as a plain decimal string, never in exponent form and not
@@ -183,6 +183,13 @@ differences under `inputs` and `render`:
   `per_path: once` a `minus` row's `(a, b)` PAIR must not vary within a path (rule
   `varies_within_path`, naming both columns), since a constant `a - b` would otherwise leave the two
   totals ambiguous. The card does not carry `walk` until the projector's declared tuple does.
+- `render.walk_labels` is optional: `{start: <label>, end: <label>}`, on a `{minus: [a, b]}` row only.
+  Both keys are required and no other key is allowed; each value is a non-empty string. When declared,
+  the `start` end is labelled with `start` and the `end` end with `end`, in place of the column names
+  (use it when a column name is not something a person reads). A row without it keeps the column
+  names. It is refused at load on a column row (which serves no walk) and on a `compare` row (whose
+  ends are the two versions the caller names, so a fixed label would be wrong for any other pair).
+  Nothing else in the envelope changes; `render` still travels whole to the card.
 - A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
   with rule `refused_by_module`; the message names no row value.
 
