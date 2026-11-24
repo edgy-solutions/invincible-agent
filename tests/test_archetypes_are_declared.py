@@ -161,3 +161,40 @@ def test_the_universal_archetype_is_declared():
     class is missing, the ONE archetype that must always be available is the one that cannot
     register."""
     assert _expand("mesh:KnowledgeDocument") in _declared_classes(_graph())
+
+
+# ── ADDED 2026-11-24: AN ADMITTED NAME IS A DECLARED CLASS (a ratchet) ────────────────
+#
+# `KNOWN_ARCHETYPES` (capability_admission.py) admits a shape "HERE FIRST, before cortex
+# renders it", and its ontology class is added beside it. Nothing compared the two: the
+# test above reads PRESENTATION_CAPABILITIES, so an admitted name with no capability row
+# could lose its class unnoticed (measured: deleting mesh:Waterfall left every seal green).
+# Six admitted names had no `mesh:<CamelCase>` class when this was written; they are pinned
+# below so the set can only shrink. A NEW admitted name must declare its class.
+_ADMITTED_WITHOUT_A_CLASS_2026_11_24 = frozenset({
+    "DIGITAL_TWIN_3D", "ELICITATION", "ILLUSTRATION",
+    "MODEL_EXPLANATION", "TRIAGE_TASK", "WORKFLOW_CASE",
+})
+
+
+def _camel(name: str) -> str:
+    return "".join(part.capitalize() for part in name.split("_"))
+
+
+def test_every_newly_admitted_ARCHETYPE_is_declared():
+    from agent_fleet.presentation_agent.capability_admission import KNOWN_ARCHETYPES
+
+    declared = _declared_classes(_graph())
+    missing = sorted(
+        n for n in KNOWN_ARCHETYPES - _ADMITTED_WITHOUT_A_CLASS_2026_11_24
+        if f"{_MESH}{_camel(n)}" not in declared
+    )
+    assert not missing, (
+        f"admitted in capability_admission.KNOWN_ARCHETYPES with no mesh:<CamelCase> class: "
+        f"{missing}. Declare the class in setup/ontologies/mesh_system.ttl beside the admission."
+    )
+    stale = sorted(
+        n for n in _ADMITTED_WITHOUT_A_CLASS_2026_11_24
+        if n not in KNOWN_ARCHETYPES or f"{_MESH}{_camel(n)}" in declared
+    )
+    assert not stale, f"no longer an exception; remove from the pinned set: {stale}"

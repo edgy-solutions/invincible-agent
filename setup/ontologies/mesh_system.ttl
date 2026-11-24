@@ -565,6 +565,17 @@ mesh:FlowDecomposition a owl:Class ;
   rdfs:label "Flow Decomposition" ;
   rdfs:comment "One total split into the parts it flows into, level by level, drawn as a flow from the whole to its pieces. The payload is a table of edges: each row names where the quantity came from and where it went by full path, how much moved, and in which direction, so a part that offsets the total is shown as offsetting rather than folded into a net. The first row is the whole itself. Small parts at one level are gathered into a single labelled remainder rather than dropped, so every level still adds up to the level above it. The unit is stated once for the table. A LIVE VIEW." .
 
+# ── WATERFALL (2026-11-24) ───────────────────────────────────────────────────────────
+#
+# The walk over a FLOW_DECOMPOSITION payload's first-level edges, plus a `walk` key naming
+# the two totals. Declared here ahead of its binding, menu row and projector row; no
+# binding names it yet.
+
+mesh:Waterfall a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Waterfall" ;
+  rdfs:comment "A walk from a starting total to an ending total through the signed steps between them. The steps are the first level of a flow decomposition: each one is shown as moving the quantity up or down, so a step that offsets the others is shown as offsetting rather than folded into a net. The start plus the steps equals the end exactly, so a walk that does not balance is refused rather than drawn. The two totals are served with the payload, never inferred by the renderer, and a walk that does not name them is refused. A LIVE VIEW." .
+
 mesh:VarianceTree a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Variance Tree" ;
