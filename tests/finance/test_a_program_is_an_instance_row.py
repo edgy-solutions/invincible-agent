@@ -1,8 +1,9 @@
 """A program the seed lacks is an INSTANCE ROW a deployment declares, not code.
 
-Arms: the loader (unset is empty, each refusal names the file); the resolver answers the sandbox's
-declared programs by name at 1.0 and, with the overlay empty, does not (the control); the
-enumerator lists one to a member and not to a non-member; every declared Program has a
+Arms: the loader (unset is empty, each refusal names the file, a real seed name is refused through
+the engine's wiring); the resolver answers the sandbox's declared programs by name at 1.0 and, with
+the overlay empty, does not (the control); the enumerator lists one to a member and not to a
+non-member; a declared non-Program is withheld from everyone; every declared Program has a
 program_members row; values-sandbox.yaml points at a directory that exists; the seed is unchanged.
 No program id is typed here: they are read from the sandbox yaml.
 
@@ -137,6 +138,27 @@ def test_the_sandbox_set_clears_the_real_seed_names(monkeypatch):
     assert {r.instance_id for r in got} == {r["instance_id"] for r in _rows(SANDBOX)}
 
 
+def _seed_names() -> list[tuple[str, str]]:
+    """Names the engine's seed really has, read from it: the Program's id and label, and one control
+    account's. A row naming one of these is the collision the loader exists to refuse."""
+    p, ca = engine.STATE.programs[0], engine.STATE.control_accounts[0]
+    return [("instance_id", p.program_id), ("label", p.name), ("instance_id", ca.ca_id), ("label", ca.name)]
+
+
+@pytest.mark.parametrize("field,value", _seed_names())
+def test_a_real_seed_name_is_refused_through_the_engines_wiring(tmp_path, monkeypatch, field, value):
+    """Gov's #468 follow-up 1: the collision check reached through `engine._load_instances`, with a
+    name the seed has. The made-up-seed seal above cannot see the engine hand the loader no names;
+    this one can. The control: the same file with names the seed lacks loads."""
+    d = _write(tmp_path, ("c.yaml", {"instances": [_row(**{field: value})]}))
+    monkeypatch.setenv(ENV, str(d))
+    with pytest.raises(io.InstanceOverlayError) as e:
+        engine._load_instances()
+    assert "c.yaml" in str(e.value) and "the seed" in str(e.value)
+    monkeypatch.setenv(ENV, str(_write(tmp_path, ("c.yaml", {"instances": [_row()]}), sub="ok")))
+    assert [r.instance_id for r in engine._load_instances()] == [_row()["instance_id"]]
+
+
 # -- the resolver --------------------------------------------------------------------------------
 
 @pytest.fixture
@@ -192,6 +214,35 @@ def test_a_declared_program_is_listed_to_a_member_and_not_to_a_non_member(monkey
 
     assert set(ids) <= listed(member)
     assert not set(ids) & listed(outsider)
+
+
+def test_a_declared_non_program_is_withheld_from_a_caller_who_can_view_every_program(
+        tmp_path, monkeypatch, client, allow_all):
+    """Gov's #468 follow-up 2, and §7 of docs/contracts/finance-overlays.md: a declared row of any
+    class but Program has no program to check, so it is withheld from everyone, even a caller every
+    program admits. It fails closed. The control: a declared Program row in the same file is listed
+    and resolved to the same caller, and so are the seed's own control accounts."""
+    ca_row = _row(**{"class": "ControlAccount", "instance_id": "X-CA-ONE", "label": "Declared account one"})
+    prog_row = _row(instance_id="X-PROG-ONE", label="Declared program one")
+    monkeypatch.setenv(ENV, str(_write(tmp_path, ("c.yaml", {"instances": [ca_row, prog_row]}))))
+    monkeypatch.setattr(engine, "INSTANCES", engine._load_instances())
+    assert {(r.class_uri, r.instance_id) for r in engine.INSTANCES} == {
+        (engine.FIN + "ControlAccount", "X-CA-ONE"), (engine.FIN + "Program", "X-PROG-ONE")}
+
+    def listed(cls):
+        r = client.post("/enumerate_instances", json={
+            "class_uri": engine.FIN + cls, "limit": 100, "user_email": ALICE})
+        assert r.status_code == 200, r.text
+        return {m["instance_id"] for m in r.json()["members"]}
+
+    def resolved(iid):
+        return [c for c in _resolve(client, iid) if c["instance_id"] == iid]
+
+    assert "X-CA-ONE" not in listed("ControlAccount")
+    assert not resolved("X-CA-ONE")
+    # CONTROL: the same caller sees the declared Program and the seed's accounts
+    assert "X-PROG-ONE" in listed("Program") and resolved("X-PROG-ONE")
+    assert {c.ca_id for c in engine.STATE.control_accounts} <= listed("ControlAccount")
 
 
 def test_members_of_adds_no_state(monkeypatch):
