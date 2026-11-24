@@ -114,6 +114,13 @@ logger = logging.getLogger("cortex")
 # fix, it carries the original measurement, and a second copy would drift.
 _ensure_the_audit_line_actually_ARRIVES(logger)
 
+# httpx logs "HTTP Request: GET <full url>" at INFO, and the shape proxy's upstream URL carries the
+# Electric API secret as `secret=`. Today nothing leaks only because the boot-time basicConfig() leaves the
+# root at WARNING, which is an accident and not a guard: pin both loggers here (sealed in
+# tests/test_the_shape_proxy_serves_only_its_allow_list.py).
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 # ── Env ───────────────────────────────────────────────────
 load_dotenv()
 
@@ -18818,6 +18825,18 @@ _ELECTRIC_FORWARD_HEADERS = {
 }
 
 
+# The query parameters the proxy forwards to Electric: the ones @electric-sql/client's ShapeStream
+# sends (its protocol params, plus `table`, and `columns` in the UI's summaries mode). Everything
+# else is dropped. `table` is forwarded only after the policy/electric_shapes.yaml check below.
+# `where` is NOT here: the server injects it. `secret` is NOT here: only the server's own is sent.
+_ELECTRIC_FORWARD_PARAMS = frozenset({
+    "table", "columns", "offset", "handle", "live", "cursor", "expired_handle", "log",
+    "live_sse", "experimental_live_sse", "cache-buster",
+})
+# The env var holding the BFF's own Electric API secret (a secretKeyRef in the chart).
+_ELECTRIC_SHAPE_SECRET_ENV = "ELECTRIC_SHAPE_SECRET"
+
+
 @app.get("/electric/shape")
 async def electric_shape_proxy(
     request: Request,
@@ -18844,8 +18863,11 @@ async def electric_shape_proxy(
     #    table first — the WHERE column is per-table.
     upstream_params: dict[str, str] = {}
     for key, value in request.query_params.multi_items():
-        if key.lower() == "where":
-            # Client cannot influence the WHERE clause. Silently drop.
+        if key not in _ELECTRIC_FORWARD_PARAMS:
+            # An ALLOW-LIST, not a deny-list: `where` (always overridden below), `replica`,
+            # `secret`, `api_secret` and any key not named in _ELECTRIC_FORWARD_PARAMS are dropped
+            # silently (never a 400: a client library adding a protocol param must not break the
+            # stream, and nothing dropped reaches Electric).
             continue
         upstream_params[key] = value
     table = upstream_params.get("table") or "answer_artifact_projection"
@@ -18900,6 +18922,10 @@ async def electric_shape_proxy(
             missing_binding=f"electric_shape_filter({table})",
             message="this table has no per-caller filter on the shape proxy")
     upstream_params["where"] = server_where
+    # The BFF's own secret, from its env; a client never supplies it (not in the allow-list).
+    _shape_secret = os.getenv(_ELECTRIC_SHAPE_SECRET_ENV)
+    if _shape_secret:
+        upstream_params["secret"] = _shape_secret
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
 
@@ -18911,7 +18937,8 @@ async def electric_shape_proxy(
         try:
             upstream_resp = await client.get(upstream_url, params=upstream_params)
         except httpx.HTTPError as exc:
-            logger.error("electric proxy upstream error: %s", exc)
+            # the exception class only: an httpx error's text may carry the upstream URL, which holds `secret=`
+            logger.error("electric proxy upstream error: %s", type(exc).__name__)
             raise HTTPException(
                 status_code=502, detail="electric upstream unavailable"
             ) from exc

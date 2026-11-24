@@ -148,6 +148,16 @@ spec:
               value: "http://{{ .Release.Name }}-electric{{ include "invincible-agent.svcDomain" . }}:{{ .Values.electric.port | default 3000 }}"
             {{- end }}
             {{- end }}
+            {{- if .Values.electric.enabled }}
+            # The BFF's own Electric API secret: the SAME Secret and key Electric reads as
+            # ELECTRIC_SECRET (one pair of helpers), by reference, never a literal. The proxy adds it
+            # as `secret=` on the upstream call; a client-supplied `secret` is dropped.
+            - name: ELECTRIC_SHAPE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "invincible-agent.electricApiSecretName" . }}
+                  key: {{ include "invincible-agent.electricApiSecretKey" . }}
+            {{- end }}
             {{- if .Values.dagster.runMonitoring.maxRuntimeSeconds }}
             # The identity vault's reference lives as long as the run's budget, from the one
             # source that bounds a run (docs/plans/identity-propagation-must-not-cross-run-storage.md,
