@@ -58,7 +58,9 @@ and it can be a source for an export profile (section 3). The row declares; it n
 folder with the engine's own loader and prints `REFUSED <path>: <message>` for each row the release would refuse at boot
 (a module version that does not match, a bad `depth`, a duplicate id), not only the first. Run it from the checkout of the
 release you are about to roll to, before the roll; it needs no cluster and no secret. It exits 0 when every row loads, 1 when
-any is refused, and 2 for a usage error (a directory that is not there).
+any is refused, and 2 for a usage error (a directory that is not there). It checks rows, not data: a rule the engine applies to the
+frame it reads, such as a `minus` row's `varies_within_path` under `per_path: once`, refuses when the row is asked,
+and the check cannot see it.
 
 Top-level keys. Required unless marked optional. A key not in this table is refused at load (a
 `formula`, for example), so nothing you put there can look as if it took effect.
