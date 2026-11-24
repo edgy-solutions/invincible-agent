@@ -1047,7 +1047,11 @@ def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]], *,
     if compare is not None:
         a, b = compare["version_a"], compare["version_b"]
         text += (f" comparing {a} with {b}: {compare['paths_only_in_a']} path(s) only in {a}, "
-                 f"{compare['paths_only_in_b']} only in {b}")
+                 f"{compare['paths_only_in_b']} only in {b}; "
+                 f"{a} less {b} is {compare['difference_exact']}, ")
+        pct = compare["difference_percent_of_b"]
+        text += (f"{pct} of {b}" if pct is not None
+                 else f"its percent of {b} undefined because {b}'s total is zero")
     return text
 
 
