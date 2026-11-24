@@ -65,6 +65,19 @@ def _body_text(body) -> str:
     return _body_bytes(body).decode("utf-8", "replace")
 
 
+def _reply_text(log, resp_json):
+    """The reply itself: what `output` carries with the setting on. Never the whole response
+    body, whose per-call `id` and `created` would make two identical replies hash apart."""
+    out = getattr(log, "raw_llm_response", None)
+    if isinstance(out, str):
+        return out
+    try:
+        content = resp_json["choices"][0]["message"]["content"]
+        return content if isinstance(content, str) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _json(text):
     try:
         v = json.loads(text)
@@ -102,12 +115,14 @@ def build_record(name, collector, *, exc=None, latency_ms=None, with_text=False)
         if resp is not None:
             resp_text = _body_text(resp.body)
             resp_json = _json(resp_text)
-            rec["reply_sha256"] = _sha(resp_text)
             mv = resp_json.get("model")
             if mv:
                 fp = resp_json.get("system_fingerprint")
                 mv = f"{mv}@{fp}" if fp else mv
             rec["model_version"] = mv or None
+        reply = _reply_text(log, resp_json) if resp is not None else None
+        if reply is not None:
+            rec["reply_sha256"] = _sha(reply)
         u = call.usage
         usage = {}
         for k in ("input_tokens", "output_tokens", "cached_input_tokens"):
@@ -120,8 +135,7 @@ def build_record(name, collector, *, exc=None, latency_ms=None, with_text=False)
         if with_text:
             if req_json is not None:
                 rec["input"] = req_json.get("messages")
-            out = getattr(log, "raw_llm_response", None)
-            rec["output"] = out if out is not None else resp_text
+            rec["output"] = reply if reply is not None else resp_text
     except Exception:  # noqa: BLE001 -- a record is never load-bearing
         pass
     return rec

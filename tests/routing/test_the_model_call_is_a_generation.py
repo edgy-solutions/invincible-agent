@@ -127,8 +127,39 @@ def test_the_record_has_model_parameters_usage_and_both_hashes():
         "temperature": 0.2, "reasoning_effort": "high", "max_tokens": 900, "top_p": 0.9, "seed": 7}
     assert r["usage"] == {"input_tokens": 120, "output_tokens": 33, "cached_input_tokens": 10}
     assert r["prompt_sha256"] == _sha(REQ)
-    assert r["reply_sha256"] == _sha(RESP)
+    assert r["reply_sha256"] == _sha(f"answer {REPLY_MARK}")
     assert r["client_name"] == "Ollama" and "latency_ms" in r
+
+
+def _reply_body(content, *, call_id, created):
+    return json.dumps({
+        "id": call_id, "created": created, "model": "gpt-oss:120b-2026-01",
+        "choices": [{"message": {"content": content}}],
+    })
+
+
+def _record_for(resp, *, raw=True):
+    c = _Collector()
+    _fill(c, resp=resp)
+    content = json.loads(resp)["choices"][0]["message"]["content"]
+    c.last.raw_llm_response = content if raw else None
+    return mg.build_record("ClassifyDomainIntent", c)
+
+
+@pytest.mark.parametrize("raw", [True, False], ids=["raw_llm_response", "choices_content"])
+def test_the_reply_hash_compares_two_runs_whose_bodies_differ_only_in_id_and_created(raw):
+    """gov on #544: a hash of the whole body carries the per-call id and created time, so two
+    identical replies never compare. The hash is of the reply itself."""
+    a = _record_for(_reply_body("answer X", call_id="chatcmpl-1", created=1700000000), raw=raw)
+    b = _record_for(_reply_body("answer X", call_id="chatcmpl-2", created=1700000099), raw=raw)
+    assert a["reply_sha256"] == b["reply_sha256"] == _sha("answer X")
+
+
+@pytest.mark.parametrize("raw", [True, False], ids=["raw_llm_response", "choices_content"])
+def test_control_a_different_reply_hashes_apart(raw):
+    a = _record_for(_reply_body("answer X", call_id="chatcmpl-1", created=1700000000), raw=raw)
+    b = _record_for(_reply_body("answer Y", call_id="chatcmpl-1", created=1700000000), raw=raw)
+    assert a["reply_sha256"] != b["reply_sha256"]
 
 
 def test_the_prompt_hash_is_the_coalescers_key_without_the_name_prefix():
