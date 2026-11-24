@@ -3178,7 +3178,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             resolution = {**resolution, **bound_resolution}
 
     _fill_slots_outcome = ""
-    if config.message_is_label:
+    if getattr(config, "message_is_label", False):
         # THE QUERY IS A LABEL (a measure picked from the askable list): never slot-filled.
         # An unbound mandatory parameter becomes the ask at the disposition point below.
         pass
