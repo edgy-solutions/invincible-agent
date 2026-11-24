@@ -28,6 +28,8 @@
 
 - **Neither Electric nor the BFF writes the Electric secret to a log** (saf, found by the coordinator and gov on #486). Electric 1.0.13 takes the secret only as `?secret=` and logs the query string at `info` (its default), so the chart now sets `ELECTRIC_LOG_LEVEL` from `electric.logLevel` (default `warning`). On the BFF, httpx logs the full upstream URL at INFO; nothing leaked only because boot's `basicConfig()` leaves the root at WARNING, so the `httpx` and `httpcore` loggers are pinned to WARNING explicitly, and the proxy's upstream-error line logs the exception class only. `electric.insecure: true` crashloops Electric by design (insecure plus a secret refuses to boot); do not make the secret conditional on it. Sealed, each with a mutant.
 
+- **`/search_predicates`' routing row records the verified caller** (74; the architect, 11-24: "a routing row records the verified caller, never a user_id from the request body"). Both of its rows, the no-match row and the picked row, now write `user_id` from the verified binding, as `/classify_predicate`'s row already does. Until now they wrote the request body's `user_id`, a label nothing verified. The request keeps that field, but it is no longer written to the row. **No chart change**: engine O's image.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
