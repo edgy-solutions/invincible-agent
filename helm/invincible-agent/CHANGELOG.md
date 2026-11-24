@@ -32,6 +32,8 @@
 
 - **The "All other" edge of a flow decomposition carries its `members`** (fin; step 4). The sink edge (`node_kind: "other"`) now carries `members`: one `{target, value, value_exact, sign}` per collapsed child, each child's path and absolute signed net, ordered by value descending then target. Their signed values sum to the sink's signed value exactly; an `item` edge has no `members` key, and the rows reach the card verbatim, so no gateway change. `variance_decomposition` goes to 1.4.0. **Upgrade:** a deployment's own flow row that names `variance_decomposition` must change `version: "1.3.0"` to `"1.4.0"`. Otherwise the engine refuses the row at load, naming both versions, and does not boot.
 
+- **A flow row that subtracts serves the walk's two ends** (fin; step 5). A `{minus: [a, b]}` row, and a `{compare: ...}` row, gain an envelope key `walk: {start, end}`, each end `{label, value, value_exact}`: for `minus` the start is column `b`'s total and the end column `a`'s; for `compare` the start is version `b`'s and the end version `a`'s. `value_exact` is a plain decimal, and start plus the signed level-1 edges equals end exactly. A column row has no `walk`. Under `per_path: once` a `minus` row's `(a, b)` pair must now not vary within a path (it was only `a - b`): a frame that varied both while `a - b` held used to load and is now a 502 `varies_within_path`. The card does not show `walk` until the projector carries it. No chart change.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
