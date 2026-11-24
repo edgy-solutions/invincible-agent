@@ -128,6 +128,7 @@ rules:  # [optional]
   duplicate_work_package_period: "more than one row for a (work_package, period)"  # [ev_fixture]
   period_outside_calendar: "a period outside the vocabulary"  # [engine-fin]
   varies_within_path: "under `per_path: once`, a path's rows carry different amounts"  # [engine-fin]
+  version_outside_list: "a row whose version is not in the contract's declared `version_dimension` values"  # [engine-fin]
   duplicate_key: "more than one row for one grain tuple"  # [shared]
   not_determined_by: "one value of a dependency's `by` column carries two values of a column it determines"  # [shared]
 
