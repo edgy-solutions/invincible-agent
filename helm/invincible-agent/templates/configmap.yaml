@@ -23,14 +23,19 @@ data:
   AGENT_HTTP_TIMEOUT: "300"
 
   {{- /* NO THIRD-PARTY CALLS HOME.
-  Two libraries reach the public internet by default, from every pod that imports them.
+  Four libraries reach the public internet by default, from every pod that imports them.
   mem0 sends usage events to its vendor's analytics service. LiteLLM fetches its model cost
   map from GitHub at import, and on a cluster with no route out it waits for the handshake
-  timeout before using the copy it ships with. Neither call is ours to make. A container
-  env beats this envFrom, so one workload can still opt back in. (A template comment, so the
-  rendered ConfigMap carries only the two keys.) */}}
+  timeout before using the copy it ships with. The DataHub client library uploads a usage
+  event (with an anonymous client id) to its vendor's product-analytics service. The Hugging
+  Face client library's telemetry switch stops its usage ping to the model hub and the
+  installed-framework versions it adds to its user agent. None of these calls is ours to make.
+  A container env beats this envFrom, so one workload can still opt back in. (A template
+  comment, so the rendered ConfigMap carries only the four keys.) */}}
   MEM0_TELEMETRY: "False"
   LITELLM_LOCAL_MODEL_COST_MAP: "True"
+  DATAHUB_TELEMETRY_ENABLED: "false"
+  HF_HUB_DISABLE_TELEMETRY: "1"
 
   # LangGraph checkpointer
   LANGGRAPH_POSTGRES_URI: {{ include "invincible-agent.pgUri" . | quote }}

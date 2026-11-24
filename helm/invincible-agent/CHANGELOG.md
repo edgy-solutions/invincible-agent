@@ -18,6 +18,8 @@
 
 - **The as-of setting (chart half).** New key `userDeployments.dag-tools.broker.asOf.readers`, default `[]`: the source types the broker reads a data as-of for. The chart refuses a type the pinned broker does not register, and at this pin it registers none. A non-empty list renders `DAG_TOOLS_AS_OF_READERS`, which dag-tools' broker is to read. **The roll:** nothing renders differently; the default is today's 'as-of unavailable'.
 
+- **Two more libraries stop calling home** (74; follow-up to the "No pod's libraries call the public internet" bullet above). **Chart change:** the release ConfigMap gains `DATAHUB_TELEMETRY_ENABLED: "false"` (the DataHub client library uploaded a usage event with an anonymous client id to its vendor's analytics service) and `HF_HUB_DISABLE_TELEMETRY: "1"` (the Hugging Face client library pinged its hub and added installed-framework versions to its user agent). Seals replace the HTTP send and show no request with the rendered value and a request to the host each library names without it.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
