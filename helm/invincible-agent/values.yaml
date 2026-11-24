@@ -2075,11 +2075,34 @@ electric:
     repository: "electricsql/electric"
     tag: "1.0.13"
   port: 3000
-  insecure: true
   # Ingress to Electric admits only the cortex-bff (templates/networkpolicy-electric.yaml). Its OWN switch,
   # not the fleet gate `networkPolicy.enabled`. A policy the CNI ignores cannot fire: verify at the roll.
   networkPolicy:
     enabled: false
+  # false: Electric requires `secret=` on every request (ELECTRIC_SECRET). Never default true.
+  # `true` CRASHLOOPS Electric by design (upstream config.ex:407: insecure plus a secret refuses to boot) and
+  # the chart always renders the secret. Do NOT make ELECTRIC_SECRET conditional on insecure to "fix" it:
+  # that re-opens Electric.
+  insecure: false
+  # Electric 1.0.13 takes the secret ONLY as the `secret=` query parameter, and at `info` it logs the whole
+  # query string (serve_shape_plug.ex:27), i.e. the secret, on every shape request. Keep this at warning or
+  # above; the chart sets ELECTRIC_LOG_LEVEL from it (sealed: not info, not debug). Related, not rendered
+  # today: upstream copies every query param, `secret` included, into span attributes (utils.ex:87,93) and
+  # the process label (label_process_plug.ex:47-48); spans leave the pod only if ELECTRIC_OTLP_ENDPOINT is
+  # set, and the chart sets none. Do not set it without scrubbing `secret`.
+  logLevel: warning
+  # Electric API secret lives in a Secret, never in values. Empty name = the chart generates
+  # `<release>-electric-api` on first install and keeps it on upgrade; name a pre-made Secret to use it.
+  # KEPT-ON-UPGRADE NEEDS THE CLUSTER: it works through `lookup`, which needs `get` on Secrets in the release
+  # namespace for the identity running `helm install`/`upgrade` (without it `lookup` is empty and the value
+  # regenerates). A deploy that renders WITHOUT cluster access (GitOps, ArgoCD, `helm template | kubectl apply`)
+  # has no `lookup` at all: it MUST set `name` to a pre-made Secret, or the secret rotates on every sync and
+  # Electric and the BFF can roll onto different values.
+  # The generated Secret carries `helm.sh/resource-policy: keep` so a later move to a create-if-absent hook
+  # cannot delete it (a silent rotation). Trade-off: `helm uninstall` leaves it behind; delete it by hand.
+  apiSecret:
+    name: ""
+    key: secret
   resources:
     requests:
       cpu: 100m
