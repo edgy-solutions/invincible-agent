@@ -607,6 +607,9 @@ def _start_ingest_watchdog() -> "Optional[asyncio.Task]":
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup/shutdown lifecycle — verify DB connection on boot."""
+    # IAGENT_ANSWER_PATH: a value other than the two names refuses the start (ADR-0072 §4, amended
+    # 2026-11-24), so a mistyped flag can never quietly measure the Dagster path.
+    _answer_path()
     await init_db()
     # A content kind's `on_promotion` row must name a workflow that declares a start this BFF can
     # build; a misdeclared row refuses the start (rows without it are skipped).
@@ -10091,14 +10094,21 @@ def _trace_headers(trace_id: str, session_id: str = "") -> dict:
 _DURABLE_ANSWERS = None
 
 
-def _answer_path() -> str:
-    # IAGENT_ANSWER_PATH: "dagster" (default) or "durable"; read per request.
-    raw = os.getenv("IAGENT_ANSWER_PATH", "dagster")
-    val = (raw or "").strip().lower() or "dagster"
-    if val not in ("dagster", "durable"):
-        logger.warning("IAGENT_ANSWER_PATH=%r is not 'dagster' or 'durable'; using 'dagster'", raw)
+_ANSWER_PATHS = ("dagster", "durable")
+
+
+def _answer_path(environ=None) -> str:
+    """IAGENT_ANSWER_PATH (ADR-0072 §4, amended 2026-11-24). Unset is "dagster"; exactly "dagster"
+    or "durable" is accepted; anything else (empty, other case, whitespace, another word) raises.
+    The lifespan calls it first, so a mistyped value refuses the BFF's start instead of quietly
+    answering on Dagster. Still read per request."""
+    env = os.environ if environ is None else environ
+    if "IAGENT_ANSWER_PATH" not in env:
         return "dagster"
-    return val
+    v = env["IAGENT_ANSWER_PATH"]
+    if v in _ANSWER_PATHS:
+        return v
+    raise ValueError('IAGENT_ANSWER_PATH must be unset, "dagster" or "durable"')
 
 
 def _answer_backend():

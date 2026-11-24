@@ -1935,6 +1935,10 @@ cortexBff:
     name: cortex-bff
     tag: ""
   port: 8090
+  # The answer path (ADR-0072 §4): unset (the default) answers on Dagster. "dagster" or "durable" only;
+  # the chart refuses any other value, and refuses "durable" unless supervisorService.enabled.
+  # Set only by a measurement window's overlay, never in a shipped values file.
+  answerPath: null
   resources:
     requests:
       cpu: 100m
