@@ -17,6 +17,8 @@ import logging
 
 import pytest
 
+from agent_fleet.ontology_service.caller_binding import NO_GRANT
+
 pytest.importorskip("rdflib")
 
 VAR = "IAGENT_SUBJECT_PROMPT_DOMAINS"
@@ -143,7 +145,7 @@ def test_a_bad_value_is_off_with_one_warning_naming_the_variable(drive, real_raw
 
 
 # 4 -----------------------------------------------------------------------------------------------
-@pytest.mark.parametrize("domains", [[], None, ["", ""]])
+@pytest.mark.parametrize("domains", [[], None, ["", ""], [NO_GRANT]])
 def test_on_with_no_domains_returns_the_domain(eo, monkeypatch, domains):
     monkeypatch.setenv(VAR, "caller")
     assert eo.subject_prompt_domain(LEGACY, domains) == LEGACY
@@ -168,3 +170,19 @@ def test_on_changes_only_the_subject_call(drive, monkeypatch):
     assert kw_on["domain"] != kw_off["domain"]
     assert {k: v for k, v in kw_on.items() if k not in ("domain", "baml_options")} == \
            {k: v for k, v in kw_off.items() if k not in ("domain", "baml_options")}
+
+
+def test_the_no_grant_sentinel_counts_as_no_domain(eo, monkeypatch):
+    monkeypatch.setenv(VAR, "caller")
+    assert eo.subject_prompt_domain(LEGACY, [NO_GRANT, "A_DOM"]) == "A_DOM"
+
+
+# 6 -----------------------------------------------------------------------------------------------
+def test_an_unbound_caller_never_puts_the_sentinel_in_the_prompt(drive, real_raw, eo, monkeypatch):
+    """No verified caller binds (NO_GRANT,); the prompt must name the legacy domain instead."""
+    monkeypatch.setenv(VAR, "caller")
+    monkeypatch.setattr(eo, "_current_caller", lambda: None)
+    kw, _ = drive()
+    text = _render(real_raw, monkeypatch, kw)
+    assert NO_GRANT not in text
+    assert f"for the {LEGACY} domain" in text
