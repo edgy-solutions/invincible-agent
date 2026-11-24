@@ -46,8 +46,14 @@ def _run(tmp_path, *plugin):
     b = tmp_path / "test_b_consume.py"
     a.write_text(_A, encoding="utf-8")
     b.write_text(_B, encoding="utf-8")
+    # The inner pytest gets its own ini and rootdir. Without them, its rootdir is the common
+    # ancestor of the repo and tmp_path (the home directory), and collection walks all of the
+    # temp directory, so a temp dir another process removes mid-walk is a random red.
+    ini = tmp_path / "pytest.ini"
+    ini.write_text("[pytest]\n", encoding="utf-8")
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *plugin, str(a), str(b)],
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-c", str(ini),
+         "--rootdir", str(tmp_path), *plugin, str(a), str(b)],
         cwd=ROOT, capture_output=True, text=True,
     )
 
