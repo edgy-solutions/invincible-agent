@@ -14,6 +14,8 @@
 
 - **`/askable_measures` serves the list of askable measures** (74; the architect, 2026-11-22: "A served list of askable measures, through the same mechanism, so a person can discover them", and 2026-11-23: "The askable list names nothing finance-specific and is filtered by the caller's cells"). It is a new BFF route with the same gate and overlay switch as `/menu_blocks`. It lists each declared measure row the caller's cells hold, and each built-in measure from its listing row, through the measure engine's own loader. Each entry carries its verb, name, phrasings and cells, plus `shape`, `unit`, `example_ask` and `group_label` exactly as declared. A built-in declares no shape, and nothing is defaulted. A verb declared on both sides is left out and named in `invalid`, and an unreadable built-in listing is named there too, while the declared rows are still served. Without `MEASURE_VERB_OVERLAY_DIRS` the list is empty and says `composed: false`. **No chart change**: the BFF's image only. **Before the roll:** nothing.
 
+- **The as-of setting (chart half).** New key `userDeployments.dag-tools.broker.asOf.readers`, default `[]`: the source types the broker reads a data as-of for. The chart refuses a type the pinned broker does not register, and at this pin it registers none. A non-empty list renders `DAG_TOOLS_AS_OF_READERS`, which dag-tools' broker is to read. **The roll:** nothing renders differently; the default is today's 'as-of unavailable'.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
