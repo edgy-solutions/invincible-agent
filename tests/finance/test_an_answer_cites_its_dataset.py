@@ -26,6 +26,9 @@ from tests.finance.test_a_dataset_series_row_draws_from_the_asset import (  # no
 from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
     ALICE, AS_OF, URN, _clean_env, client, declared, flag, frame_of, measure, on, seam,
 )
+from tests.finance.test_variance_decomposition_over_the_ev_fixture import (  # noqa: E402,F401
+    ALLOWED as FLOW_CALLER, FN as FLOW_FN, Gate, ROW_URN as FLOW_URN, flow_rows, token,
+)
 
 
 @pytest.fixture
@@ -34,6 +37,20 @@ def members(monkeypatch):
     monkeypatch.setattr(engine, "can_view_program",
                         lambda program, caller_id, **kw: program == PROGRAM and caller_id == ALICE)
     monkeypatch.setattr(engine, "_held_domains", lambda caller: frozenset({"PROGRAM_FINANCE"}))
+
+
+@pytest.fixture
+def flow_post(flow_rows, members, tmp_path, monkeypatch):
+    """The shipped flow row `fin_flow_acwp` (a contribution ranking, NOT a series) through `/measure`."""
+    from fastapi.testclient import TestClient
+    path = tmp_path / "ev.parquet"
+    frame_of().write_parquet(path)
+    monkeypatch.setattr(engine.asset_inputs, "_load_client", Gate(pl.scan_parquet(path)).load)
+    monkeypatch.setenv("CENTRAL_GATEWAY_URL", "http://gateway.test")   # FIN_DATASET_URN stays UNSET
+    with TestClient(engine.app) as c:
+        r = c.post(f"/measure/{FLOW_FN}", json={"params": {"program_id": PROGRAM}, "user_email": FLOW_CALLER},
+                   headers={"Authorization": f"Bearer {token(FLOW_CALLER)}"})
+        yield r.status_code, r.json()
 
 
 NAME = "fin_test_asset"  # the NAME PART of the resolver's URN, asserted against the label below
@@ -82,6 +99,19 @@ def test_a_dataset_series_answer_cites_its_dataset(post, gate):
     assert src["data_as_of"] in src["snippet"]
     assert AS_OF in src["data_as_of"]
     assert "tkt-0001" in src["snippet"]
+
+
+def test_a_dataset_row_answer_cites_its_dataset(flow_post):
+    """Gov's mutant: `_dataset_envelope` dropped its `sources` line and the series row alone was driven."""
+    status, env = flow_post
+    assert status == 200, env
+    assert "series" not in env  # the NON-series dataset envelope: a contribution ranking, not `_dataset_series_envelope`
+    assert len(env["sources"]) == 1
+    src = env["sources"][0]
+    assert (src["type"], src["uri"]) == ("catalog_asset", FLOW_URN)
+    assert src["label"] == FLOW_URN.split(",")[1] == "ev_fixture"
+    assert "Data as of:" in src["snippet"]
+    assert src["data_as_of"] in src["snippet"]
 
 
 # 2. the as-of cases, through the answer's source
