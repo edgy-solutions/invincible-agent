@@ -117,7 +117,11 @@ differences under `inputs` and `render`:
   `{compare: {column: <amount>, by: <version column>}}`: the amount summed (or taken once, per
   `per_path`) per path in each of two versions, the paths joined on the full path, and the second
   version subtracted from the first. A path in one version only counts as zero in the other, and the
-  verdict counts such paths. `by` is the contract's version column and neither it nor `column` is a
+  verdict counts such paths. The served `compare` block also holds `difference_exact` (a less b, an exact
+  Decimal string) and `difference_percent_of_b` (that difference over `abs(b's total)`, a string holding a
+  FRACTION: 0.25 is 25%, as `percent_complete` is). The `abs` keeps the percent's sign equal to the
+  difference's when b's total is negative; it is null, never 0, where b's total is zero, and the verdict
+  then says it is undefined. Both are plain decimals, never in exponent form. `by` is the contract's version column and neither it nor `column` is a
   level; the row lists `version_a` and `version_b` (never `version`) in `inputs.params`, and the
   person chooses them as slots. `per_path` is `sum` (the default: every row of
   the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
