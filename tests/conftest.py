@@ -35,6 +35,7 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ["tests.flat_engine_modules"]
 # The engine holds no fiscal calendar: a deployment declares one. The suite declares the sample,
 # exactly as the sandbox chart does (a test that wants another calendar monkeypatches the env).
 os.environ.setdefault(

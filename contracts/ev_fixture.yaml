@@ -124,6 +124,7 @@ rules:  # [optional]
   other_program_rows: "a read holds rows of another program (the asset may; a read that kept them forgot its filter)"  # [engine-fin]
   period_outside_calendar: "a period outside the vocabulary"  # [engine-fin]
   varies_within_path: "under `per_path: once`, a path's rows carry different amounts"  # [engine-fin]
+  version_outside_list: "a row whose version is not in the contract's declared `version_dimension` values"  # [engine-fin]
   duplicate_key: "more than one row for one grain tuple"  # [shared]
   not_determined_by: "one value of a dependency's `by` column carries two values of a column it determines"  # [shared]
 

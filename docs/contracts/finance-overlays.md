@@ -98,17 +98,34 @@ with an edge table (below); drawn as `MULTI_SERIES`, it answers with a row per p
 Design: `docs/plans/fin-variance-decomposition.md`. It uses the same top-level keys, with these
 differences under `inputs` and `render`:
 
-- `inputs.params` is `program_id` only (`window` is refused: this kind has no period axis).
+- `inputs.params` is `program_id` (`window` is refused: this kind has no period axis), plus
+  `version`, or `version_a` and `version_b`, when the row's contract declares a version dimension (below).
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
   not consulted), `banner` (required, shown beside every answer), `contract` (required, below),
   `levels` (at least two distinct column names, root first; the root column is selected by
   `program_id`), `value` and optionally `per_path`. `value` is a numeric column that is not one of the levels, or exactly
   `{minus: [a, b]}`: two distinct numeric columns, neither a level, whose difference `a - b` is the
-  row's amount (computed per row in exact Decimal). `per_path` is `sum` (the default: every row of
+  row's amount (computed per row in exact Decimal), or exactly
+  `{compare: {column: <amount>, by: <version column>}}`: the amount summed (or taken once, per
+  `per_path`) per path in each of two versions, the paths joined on the full path, and the second
+  version subtracted from the first. A path in one version only counts as zero in the other, and the
+  verdict counts such paths. `by` is the contract's version column and neither it nor `column` is a
+  level; the row lists `version_a` and `version_b` (never `version`) in `inputs.params`, and the
+  person chooses them as slots. `per_path` is `sum` (the default: every row of
   the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
   group, and a group whose rows disagree is a 502 `asset_contract_violation` with rule
   `varies_within_path`, naming the column(s) and never a value). Anything else is refused at load.
   The row cap counts rows read, before any reduction.
+- **A version is a declared dimension.** A contract may carry `version_dimension: {column: <string column>,
+  values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
+  declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is
+  a 502 `asset_contract_violation` with rule `version_outside_list`, naming the column and never a
+  value; a null version is `null_value`. Over such a contract, a row whose value is a column or
+  `minus` lists `version` in `inputs.params` (else it would sum every version together, and the row
+  is refused at load), and a compare row lists `version_a` and `version_b`. A row over a contract
+  with no version lists none of them, and a `MULTI_SERIES` dataset row cannot read a versioned
+  contract (a series by version is a later step). The slot values are the declared list; a value
+  outside it, or `version_a` equal to `version_b`, is a 422.
 - `contract` names the dataset contract the asset is read under: `contracts/<contract>.yaml`
   (`contracts/ev_fixture.yaml` is the worked example; the engine reads that directory, or
   `DATASET_CONTRACT_DIR`). At load, every column the row names must be one the contract declares,
