@@ -260,40 +260,30 @@ def test_documents_follow_board_order(world):
     assert body["documents"][1]["status"] == "exists"
 
 
-# -- as_of is an input, resolved ONCE per request and forwarded on every engine call ----------
+# -- RULED 2026-11-23: a cost export takes no caller date; the BFF forwards none ----------------
 
 
-@pytest.fixture
-def request_date(monkeypatch):
-    days = iter(["2031-03-04", "2031-03-05", "2031-03-06"])
-    calls = []
-
-    def _fake():
-        calls.append(1)
-        return next(days)
-
-    monkeypatch.setattr(gateway, "_export_request_date", _fake)
-    return calls
+def test_a_cost_only_board_sends_engine_cost_no_as_of(world):
+    r = world.post([COST1, COST2])
+    assert r.status_code == 200, r.text
+    assert len(world.posts) == 1
+    assert all("as_of" not in p["params"] for p in world.posts)
 
 
-def test_an_absent_as_of_is_resolved_once_and_reaches_the_cost_engine_single_path(
-        world, request_date):
-    assert world.post([COST1, COST2]).status_code == 200
-    assert len(request_date) == 1
-    assert [p["params"]["as_of"] for p in world.posts] == ["2031-03-04"]
-
-
-def test_an_absent_as_of_reaches_the_cost_section_of_the_split_path(world, request_date):
+def test_the_cost_section_of_the_split_path_sends_engine_cost_no_as_of(world):
     r = world.post([COST1, FIN1])
     assert r.status_code == 200, r.text
-    assert len(request_date) == 1
-    assert [p["params"]["as_of"] for p in world.posts] == ["2031-03-04"]
+    assert len(world.posts) == 1
+    assert all("as_of" not in p["params"] for p in world.posts)
 
 
-def test_an_explicit_as_of_is_forwarded_verbatim_on_both_cost_paths(world, request_date):
-    assert world.post([COST1], as_of="2026-01-02").status_code == 200
-    assert world.post([COST1, FIN1], as_of="2026-01-02").status_code == 200
-    assert [p["params"]["as_of"] for p in world.posts] == ["2026-01-02", "2026-01-02"]
+@pytest.mark.parametrize("cards", [[COST1], [COST1, FIN1]])
+def test_a_cost_export_refuses_a_caller_as_of_and_calls_no_engine(world, cards):
+    r = world.post(cards, as_of="2026-01-02")
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["error"] == "as_of_not_accepted" and detail["field"] == "as_of"
+    assert world.posts == []
 
 
 @pytest.mark.parametrize("bad", ["2026-13-01", "yesterday", "2026-1-2"])

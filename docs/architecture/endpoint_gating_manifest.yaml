@@ -2416,7 +2416,8 @@ services:
           BFF serves it, cortex reads it). Returns, per declared row, a subject class, an
           archetype class, the verb that declared it and the personas/domains it RANKS for:
           the SHAPE of the menu, never an answer, a row or a task. Nothing is read from the
-          substrate; the source is `<overlay>/menu_blocks/*.yaml`.
+          substrate; the sources are `<overlay>/menu_blocks/*.yaml` and the `menu:`
+          blocks of declared measure rows (`MEASURE_VERB_OVERLAY_DIRS`).
 
           NOT ENTITLEMENT-SCOPED ON PURPOSE, for /task_kinds' reason: persona_fit and
           domain_fit only rank, the picker stays entitlement-driven, and the verb behind each
@@ -2424,6 +2425,27 @@ services:
 
           WHAT WOULD CHANGE THIS ROW: a block carrying anything deployment-specific beyond a
           class name — a customer or programme name in a subject. Then it becomes `gated`.
+      - method: GET
+        path: /askable_measures
+        identity: get_current_user
+        gate: "auth + the caller's domains against each row's declared cells"
+        exposes: schema
+        consumers: [cortex-ui]
+        class: gated
+        justification: |
+          The declared measures a caller can ask, for discovery: per declared measure row
+          (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and loader as /menu_blocks) its verb, name,
+          description, phrasings, cells, shape and unit. SCOPED, unlike /menu_blocks: a measure's name,
+          description and phrasings are deployment-written text (see the /menu_blocks row's
+          "WHAT WOULD CHANGE THIS ROW"), so an entry is listed only when the caller holds a domain
+          in the row's cells, the comparison the measure's own engine refuses on (the cell gate,
+          upper-cased both sides). `shape` and `unit` are served from the row's render block
+          (`unit` is null when the row declares none). Built-in measures are listed from their
+          listing rows, through the measure's engine's own loader, and declare no shape.
+          `example_ask` and `group_label` are served as declared (null when undeclared). The list
+          never names a measure the caller
+          would be refused. The engine still refuses on its own gate; the BFF filter is for
+          discovery, not authority.
       - method: POST
         path: /plan/measure/{fn}
         identity: get_current_user
