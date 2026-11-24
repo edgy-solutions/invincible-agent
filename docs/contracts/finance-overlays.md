@@ -103,7 +103,7 @@ differences under `inputs` and `render`:
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
   not consulted), `banner` (required, shown beside every answer), `contract` (required, below),
   `levels` (at least two distinct column names, root first; the root column is selected by
-  `program_id`), `value` and optionally `per_path`. `value` is a numeric column that is not one of the levels, or exactly
+  `program_id`), `value` and optionally `per_path` and `depth`. `value` is a numeric column that is not one of the levels, or exactly
   `{minus: [a, b]}`: two distinct numeric columns, neither a level, whose difference `a - b` is the
   row's amount (computed per row in exact Decimal), or exactly
   `{compare: {column: <amount>, by: <version column>}}`: the amount summed (or taken once, per
@@ -115,7 +115,10 @@ differences under `inputs` and `render`:
   the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
   group, and a group whose rows disagree is a 502 `asset_contract_violation` with rule
   `varies_within_path`, naming the column(s) and never a value). Anything else is refused at load.
-  The row cap counts rows read, before any reduction.
+  The row cap counts rows read, before any reduction. `depth` is optional: an integer from 1 to the
+  number of levels below the root (`len(levels) - 1`), never a bool, refused at load otherwise. The
+  paths are cut to their first `depth` levels after `per_path` has been applied, so totals are
+  unchanged, and the verdict says `over k of n levels`; absent, the flow is drawn at full depth.
 - **A version is a declared dimension.** A contract may carry `version_dimension: {column: <string column>,
   values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
   declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is
@@ -168,7 +171,7 @@ worked examples. The differences from a flow row:
 - `inputs.dataset` holds `urn`, `banner`, `contract` (as for a flow row), `scope` (the column the
   read filters to `program_id`, and the contract's `scope`),
   `period` (the x axis), optionally `status` (the column naming the period the program is reported
-  through), `per_period` and `per_program`. `levels`, `value`, `per_path` and
+  through), `per_period` and `per_program`. `levels`, `value`, `per_path`, `depth` and
   `inputs.other_threshold` are refused.
 - `per_period` maps a function keyword to a numeric column, summed exactly over the program's rows
   at each period. It must have at least one entry. `per_program` maps a keyword to a numeric column

@@ -28,6 +28,8 @@
 
 - **Neither Electric nor the BFF writes the Electric secret to a log** (saf, found by the coordinator and gov on #486). Electric 1.0.13 takes the secret only as `?secret=` and logs the query string at `info` (its default), so the chart now sets `ELECTRIC_LOG_LEVEL` from `electric.logLevel` (default `warning`). On the BFF, httpx logs the full upstream URL at INFO; nothing leaked only because boot's `basicConfig()` leaves the root at WARNING, so the `httpx` and `httpcore` loggers are pinned to WARNING explicitly, and the proxy's upstream-error line logs the exception class only. `electric.insecure: true` crashloops Electric by design (insecure plus a secret refuses to boot); do not make the secret conditional on it. Sealed, each with a mutant.
 
+- **A flow row may declare `inputs.dataset.depth`** (fin; step 3). An integer from 1 to the number of levels below the root cuts each path to its first k levels after `per_path` is applied, so totals are unchanged; the verdict states `over k of n levels`. Absent, the flow is drawn at full depth as before. **No chart change.**
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
