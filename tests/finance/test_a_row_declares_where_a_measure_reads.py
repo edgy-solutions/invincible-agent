@@ -70,7 +70,7 @@ def _state_row(**changes):
 # ── the seed layer ───────────────────────────────────────────────────────────────────────────
 
 def test_the_seed_layer_ships_funding_on_the_seed_as_ruled():
-    (row,) = _sources([])
+    (row,) = [r for r in _sources([]) if r.measure_id == "fin_funding_status"]
     assert (row.measure_id, row.source, row.source_reason, row.ratified_by) == tuple(FUNDING.values())
 
 
@@ -83,19 +83,19 @@ def test_a_source_only_row_declares_no_measure_verb(tmp_path):
 
 def test_an_overlay_row_saying_asset_replaces_the_seed_row(tmp_path):
     d = _dir(tmp_path, [{"measure_id": "fin_funding_status", "source": "asset"}])
-    (row,) = _sources([d])
+    (row,) = [r for r in _sources([d]) if r.measure_id == "fin_funding_status"]
     assert (row.source, row.source_reason, row.ratified_by) == ("asset", "", "")
 
 
 def test_a_tombstone_leaves_funding_with_no_row_so_it_reads_the_asset(tmp_path):
     d = _dir(tmp_path, [{"measure_id": "fin_funding_status", "deleted": True}])
-    assert _sources([d]) == []
+    assert "fin_funding_status" not in {r.measure_id for r in _sources([d])}
 
 
 # ── refusals, one each, each naming the file ─────────────────────────────────────────────────
 
 def test_a_built_in_row_carrying_any_other_key_is_refused(tmp_path):
-    _refused(tmp_path, {**FUNDING, "name": "Funding"}, "built-in finance verb", "name")
+    _refused(tmp_path, {**FUNDING, "cells": ["X"]}, "built-in finance verb", "cells")
 
 
 def test_a_built_in_row_without_a_source_is_refused(tmp_path):
@@ -155,8 +155,10 @@ def test_a_declared_seed_row_without_a_reason_is_refused(tmp_path):
 # ── the engine reads the row ─────────────────────────────────────────────────────────────────
 
 def test_the_engine_loaded_the_seed_layers_source_rows():
-    assert {fn: (r.source, r.source_reason, r.ratified_by) for fn, r in engine.SOURCES.items()} == {
-        FUNDING["measure_id"]: (FUNDING["source"], FUNDING["reason"], FUNDING["ratified_by"])}
+    got = {fn: (r.source, r.source_reason, r.ratified_by) for fn, r in engine.SOURCES.items()}
+    assert got.pop(FUNDING["measure_id"]) == (FUNDING["source"], FUNDING["reason"], FUNDING["ratified_by"])
+    # every other built-in has a listing row (test_a_builtin_measure_is_askable.py) that says `asset`
+    assert set(got.values()) == {("asset", "", "")}
 
 
 def test_a_seed_row_is_what_seed_row_reads_and_an_asset_row_is_not(monkeypatch):

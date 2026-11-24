@@ -125,13 +125,17 @@ _ID_RE = re.compile(r"^fin_[a-z0-9_]+$")
 _TOP_KEYS = frozenset({
     "measure_id", "verb", "name", "description", "synonyms", "anti_synonyms",
     "inputs", "computation", "outputs", "render", "policy", "menu",
-    "source", "reason", "ratified_by",
+    "source", "reason", "ratified_by", "example_ask", "group_label",
 })
 #: `source` values. Under `FIN_DATASET_URN`, `asset` is the default and `seed` the declared exception.
 SOURCE_ASSET, SOURCE_SEED = "asset", "seed"
 _SOURCES = frozenset({SOURCE_ASSET, SOURCE_SEED})
 #: Every key a row naming a BUILT-IN may carry: it says where the built-in reads, and nothing else.
 _SOURCE_KEYS = frozenset({"measure_id", "source", "reason", "ratified_by"})
+#: A built-in's row may also list it (`name` and `description`, together): the askable list.
+_BUILTIN_ROW_KEYS = _SOURCE_KEYS | {"name", "description", "example_ask", "group_label"}
+#: Optional listing fields, on a declared row and on a built-in's listing row: a non-empty string.
+_LISTING_KEYS = ("example_ask", "group_label")
 #: The render shapes this engine's runner fills: one declared series per period. A MECHANISM list,
 #: not a vocabulary: the archetype vocabulary is `capability_admission.KNOWN_ARCHETYPES`, which the
 #: flattened image cannot import, so a test ties this set to it (this set must be a subset).
@@ -207,6 +211,10 @@ class SourceRow:
     source: str
     source_reason: str = ""
     ratified_by: str = ""
+    name: str = ""  # a row with no name is source-only and is not listed
+    description: str = ""
+    example_ask: str = ""
+    group_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -258,6 +266,8 @@ class MeasureVerbRow:
     source: str = SOURCE_ASSET
     source_reason: str = ""
     ratified_by: str = ""
+    example_ask: str = ""     # optional: a question that routes to this measure; "" = undeclared
+    group_label: str = ""     # optional: the heading the measure is grouped under; "" = undeclared
 
     @property
     def series_key(self) -> str:
@@ -539,18 +549,43 @@ def _check_series(rnd: dict, *, single: bool) -> tuple[tuple[dict[str, Any], ...
     return series, dict(target)
 
 
+def _listing_fields(raw: dict) -> dict[str, str]:
+    """`example_ask` and `group_label` as written, stripped; only those present. ValueError."""
+    out = {}
+    for k in _LISTING_KEYS:
+        if k in raw:
+            if not isinstance(raw[k], str) or not raw[k].strip():
+                raise ValueError(f"`{k}` must be a non-empty string")
+            out[k] = raw[k].strip()
+    return out
+
+
 def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow | SourceRow:
     # Raises ValueError: `compose_rows` re-raises it as MeasureVerbError WITH THE FILE NAMED.
     fns, verbs = _names(builtins)
     if raw.get("measure_id") in fns:
-        extra = sorted(set(raw) - _SOURCE_KEYS)
+        extra = sorted(set(raw) - _BUILTIN_ROW_KEYS)
         if extra:
             raise ValueError(
                 f"measure_id {raw['measure_id']!r} is a built-in finance verb; a row naming it may "
-                f"carry only {sorted(_SOURCE_KEYS)} (where it reads), never {extra}: a row cannot "
-                f"replace code")
+                f"carry only {sorted(_BUILTIN_ROW_KEYS)} (where it reads, and how it is listed), "
+                f"never {extra}: a row cannot replace code, and its cells and phrasings are the "
+                f"engine's own")
         _need(raw, "source")
-        return SourceRow(raw["measure_id"], *_source(raw))
+        listed = [k for k in ("name", "description") if k in raw]
+        if listed and len(listed) != 2:
+            raise ValueError(f"a built-in's row carries `name` and `description` together or "
+                             f"neither; this one has only {listed}")
+        for k in listed:
+            if not isinstance(raw[k], str) or not raw[k].strip():
+                raise ValueError(f"`{k}` must be a non-empty string")
+        extras = _listing_fields(raw)
+        if extras and not listed:
+            raise ValueError(f"a built-in's row carries {', '.join('`'+k+'`' for k in sorted(extras))} only with `name` and "
+                             f"`description`: they describe a listing, and this row lists nothing")
+        return SourceRow(raw["measure_id"], *_source(raw),
+                         name=raw.get("name", "").strip(), description=raw.get("description", "").strip(),
+                         **extras)
     moved = sorted(k for k in _MOVED_OUTPUT_KEYS if isinstance(raw.get("outputs"), dict)
                    and k in raw["outputs"])
     if moved:
@@ -750,6 +785,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         per_program=dataset.get("per_program", {}), contract=dataset.get("contract"),
         menu=menu,
         source=source, source_reason=source_reason, ratified_by=ratified_by,
+        **_listing_fields(raw),
     )
 
 
@@ -780,12 +816,46 @@ def load_measure_sources(
     return [r for r in _compose(policy_dir, overlay_dirs, builtins) if isinstance(r, SourceRow)]
 
 
+def _engine_main():
+    try:
+        from agent_fleet.finance_agent import main as _main
+    except ImportError:  # pragma: no cover -- flat image: main always passes its own
+        import main as _main
+    return _main
+
+
+def load_askable_builtins(
+    policy_dir: Path | str | None = None,
+    overlay_dirs: list[Path] | None = None,
+    *,
+    builtins: tuple[Iterable[str], Iterable[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """The built-ins a row lists (a row with a `name`), in the shape of the askable list.
+
+    `phrasings` are the verb's routing synonyms and `cells` the engine's own `DOMAINS`, both read
+    from `main`: a built-in is not cell-gated, and a phrasing offered here routes to its own verb.
+    """
+    _main = _engine_main()
+    by_fn = {v["fn"]: v for v in _main.VERBS}
+    out = []
+    for r in load_measure_sources(policy_dir, overlay_dirs, builtins=builtins):
+        if not r.name:
+            continue
+        entry = {"verb": by_fn[r.measure_id]["verb"], "name": r.name, "description": r.description,
+                 "phrasings": list(by_fn[r.measure_id]["synonyms"]), "cells": sorted(_main.DOMAINS)}
+        # Optional keys, present only with a value. A built-in declares no shape, so none is served;
+        # a unit is the engine's own (`VALUE_UNIT`), declared and never inferred.
+        for k, v in (("example_ask", r.example_ask), ("group_label", r.group_label),
+                     ("unit", _measures.VALUE_UNIT.get(r.measure_id, ""))):
+            if v:
+                entry[k] = v
+        out.append(entry)
+    return sorted(out, key=lambda e: e["verb"])
+
+
 def _compose(policy_dir, overlay_dirs, builtins) -> list[MeasureVerbRow | SourceRow]:
     if builtins is None:
-        try:
-            from agent_fleet.finance_agent import main as _main
-        except ImportError:  # pragma: no cover -- flat image: main always passes its own
-            import main as _main
+        _main = _engine_main()
         builtins = (_measures.OUTPUT_URI, [v["verb"].split(":", 1)[-1] for v in _main.VERBS])
     d = Path(policy_dir) if policy_dir is not None else MEASURE_VERB_POLICY_DIR()
     ov = overlay_dirs if overlay_dirs is not None else MEASURE_VERB_OVERLAY_DIRS()

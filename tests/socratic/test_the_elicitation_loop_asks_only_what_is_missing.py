@@ -3504,8 +3504,6 @@ def test_an_answer_to_the_ask_writes_both_fields_and_clears_it():
 
 # ── a stage with no steps is asked as a stage, never as a path (architect, 2026-11-04) ───────
 
-REC = "workflows/pcn_record.yaml"
-
 
 @pytest.mark.parametrize("how", ["absent", "empty"])
 def test_a_stage_with_no_steps_is_asked_in_the_persons_words_under_the_stage_key(how):

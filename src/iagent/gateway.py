@@ -2040,9 +2040,11 @@ class MenuBlocksResponse(_BaseModel):
 
 @app.get("/menu_blocks", response_model=MenuBlocksResponse)
 async def get_menu_blocks(current_user: User = Depends(get_current_user)):
-    """The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by
-    (subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves
-    it, cortex reads it.
+    """The menu placements the overlay rows declare, sorted by (subject, archetype, verb). Two
+    sources: `<overlay>/menu_blocks/*.yaml`, and the in-row `menu:` blocks of declared measure rows
+    (`MEASURE_VERB_OVERLAY_DIRS`). A placement is keyed by its declaring verb: distinct verbs may
+    share a (subject, archetype) and are all served; a verb declared twice is left out and named.
+    The 2026-11-07 ruling: the row declares its placement, the BFF serves it, cortex reads it.
 
     NOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,
     and `persona_fit` / `domain_fit` only RANK, they never gate.
@@ -2050,8 +2052,8 @@ async def get_menu_blocks(current_user: User = Depends(get_current_user)):
     NOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay
     dir configured, or one is unreadable); it never means "no blocks". `composed: true` with
     `blocks: []` means this deployment declares none. A client replaces a hand-written row only
-    with a served block for the SAME subject. A row that does not validate, or that shares its
-    (subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at
+    with a served block for the SAME subject. A row that does not validate, or that
+    declares a verb another row declares, is left out of `blocks`, named in `invalid`, and logged at
     ERROR.
     """
     from starlette.concurrency import run_in_threadpool
@@ -2061,6 +2063,52 @@ async def get_menu_blocks(current_user: User = Depends(get_current_user)):
     for bad in result.invalid:
         logger.error("menu block %s is invalid: %s", bad["source"], bad["reason"])
     return {"composed": result.composed, "blocks": result.blocks, "invalid": result.invalid}
+
+
+class AskableMeasure(_BaseModel):
+    verb: str
+    name: str
+    description: str
+    phrasings: list[str]
+    cells: list[str]
+    shape: str | None = None
+    unit: str | None = None
+    example_ask: str | None = None
+    group_label: str | None = None
+
+
+class AskableMeasuresResponse(_BaseModel):
+    composed: bool
+    measures: list[AskableMeasure]
+    invalid: list[MenuBlockInvalid]
+
+
+@app.get("/askable_measures", response_model=AskableMeasuresResponse)
+async def get_askable_measures(current_user: User = Depends(get_current_user)):
+    """The declared measures this caller can ask, for discovery. One entry per declared measure
+    row (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),
+    whether or not the row carries a `menu:` block. An entry is listed only when the caller holds
+    a domain in the row's declared cells, the same comparison the engine that declares the
+    measure refuses on, so the list never names a measure the caller would be refused. The
+    engine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's
+    `declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the
+    row declares none). `example_ask` and `group_label` are served as declared, null otherwise.
+
+    Built-in measures are listed from their listing rows, through the measure's engine's own
+    loader. They declare no shape (`shape` is null).
+
+    `composed: false` means the rows were NOT READ (no overlay dir configured, or the load
+    failed, named in `invalid` and logged at ERROR); it never means "none".
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import menu_blocks
+
+    result = await run_in_threadpool(menu_blocks.askable)
+    for bad in result.invalid:
+        logger.error("askable measures are unreadable (%s): %s", bad["source"], bad["reason"])
+    return {"composed": result.composed,
+            "measures": menu_blocks.visible_to(result.measures, current_user.entitled_domains),
+            "invalid": result.invalid}
 
 
 @app.get("/task_kinds")
@@ -3544,8 +3592,9 @@ class ExportPackageRequest(_BaseModel):
     # `canvas_seed`), because `validate_bindings` and `panel_dispatch` are the identical
     # functions that call reads. Ignored on the cost path.
     bindings: Optional[dict[str, Any]] = None
-    # THE DATE THE PACKAGE CLAIMS, `YYYY-MM-DD`. Absent, `export_package` takes the request date
-    # once and forwards it to every engine call, so identical input gives an identical page.
+    # NEVER ACCEPTED. The field exists so a caller's value is REFUSED (422 `as_of_not_accepted`,
+    # ruled 2026-11-23) on every export path, not silently dropped: engine-fin and engine-cost
+    # each stamp their own dates, and the BFF forwards none.
     as_of: Optional[str] = None
 
     @field_validator("as_of")
@@ -3557,11 +3606,6 @@ class ExportPackageRequest(_BaseModel):
             raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
         _date.fromisoformat(v)  # a ValueError here is a 422 too
         return v
-
-
-def _export_request_date() -> str:
-    """TODAY (UTC), AS THE DATE A REQUEST CLAIMS. One place, so a test can pin it."""
-    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
@@ -4009,7 +4053,7 @@ async def export_package_offer(
 
 
 async def _export_package_from_template(
-    body: "ExportPackageRequest", request: Request, current_user: "User", as_of: str,
+    body: "ExportPackageRequest", request: Request, current_user: "User",
 ) -> dict:
     """ITEM 3's path: `body.template_id` names a ratified, packageable canvas template and
     `body.bindings` supplies its shared slots — the SAME shape `/canvas/seed` takes, because
@@ -4111,7 +4155,7 @@ async def _export_package_from_template(
         async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
             rr = await client.post(
                 f"{_ENGINE_FIN_URL}/package_export",
-                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of,
+                json={"recipient_scope": recipient_scope, "canvas": canvas,
                       "user_email": current_user.authz_id},
                 headers={"Authorization": f"Bearer {bearer}"},
             )
@@ -4266,11 +4310,16 @@ async def export_package(
             ),
         )
 
-    # RESOLVED ONCE, then forwarded on every engine call below.
-    as_of = body.as_of or _export_request_date()
+    # RULED 2026-11-22/23 (architect): an export's dates are stamped by the engine's own clock
+    # (engine-fin, engine-cost); the BFF sends none and refuses a caller's, on every path.
+    if body.as_of is not None:
+        raise HTTPException(status_code=422, detail={
+            "error": "as_of_not_accepted", "field": "as_of",
+            "reason": ("an export's dates are stamped by the server (engine-fin or engine-cost "
+                       "clock); the caller cannot supply one.")})
 
     if body.template_id:
-        return await _export_package_from_template(body, request, current_user, as_of)
+        return await _export_package_from_template(body, request, current_user)
 
     # RULED 2026-10-17: a request naming no answers (and no template) is refused. An empty
     # list used to export the recipient's whole program -- a disclosure path nothing in the
@@ -4352,7 +4401,7 @@ async def export_package(
     if not has_fin:
         # ONLY engine-cost's answers: today's path and today's response, unchanged
         # -- unless the engine REFUSED some of them (RULED 2026-10-16), below.
-        params: dict = {"recipient_scope": recipient_scope, "as_of": as_of}
+        params: dict = {"recipient_scope": recipient_scope}
         params["canvas"] = {"answers": parts[0][1]}
         cost_first = await _call_engine_cost_package(
             params, bearer, recipient_scope=recipient_scope, template_id=body.template_id,
@@ -4371,8 +4420,7 @@ async def export_package(
         else:
             try:
                 section = await _call_engine_cost_package(
-                    {"recipient_scope": recipient_scope, "canvas": {"answers": answers},
-                     "as_of": as_of},
+                    {"recipient_scope": recipient_scope, "canvas": {"answers": answers}},
                     bearer, recipient_scope=recipient_scope, template_id=None,
                 )
             except HTTPException as exc:

@@ -727,7 +727,7 @@ def built(monkeypatch):
 
     def fake_build(**kw):
         calls.append(kw)
-        return {"manifest": {"recipient_scope": f"program_office.{PROGRAM}", "as_of": "t",
+        return {"manifest": {"recipient_scope": f"program_office.{PROGRAM}", "generated_on": "t",
                              "algorithm_sha": "0" * 40, "template_id": "program_finance",
                              "template_hash": "h", "panels": [{"artifact_id": "a"}]},
                 "html_sha256": "sha256:" + "a" * 64, "html_bytes": 1,
@@ -1245,7 +1245,7 @@ def _built_ins():
 
 def test_the_shipped_source_rows_are_the_ruled_ones():
     assert {fn: {"kind": r.source, "reason": r.source_reason, "ratified_by": r.ratified_by}
-            for fn, r in engine.SOURCES.items()} == _SEED_SOURCED
+            for fn, r in engine.SOURCES.items() if r.source == "seed"} == _SEED_SOURCED
 
 
 @pytest.mark.parametrize("fn", _built_ins())

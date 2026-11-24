@@ -2066,6 +2066,10 @@ electric:
     tag: "1.0.13"
   port: 3000
   insecure: true
+  # Ingress to Electric admits only the cortex-bff (templates/networkpolicy-electric.yaml). Its OWN switch,
+  # not the fleet gate `networkPolicy.enabled`. A policy the CNI ignores cannot fire: verify at the roll.
+  networkPolicy:
+    enabled: false
   resources:
     requests:
       cpu: 100m
@@ -2697,6 +2701,8 @@ policyOverlay:
       - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
       - {dir: exports, env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
       - {dir: menu_blocks, env: MENU_BLOCK_OVERLAY_DIRS, optional: true}
+      # the same measure rows engine-fin reads: their in-row `menu:` blocks are served by /menu_blocks
+      - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS, optional: true}
 
 # STARTUP sync for task_grant_sync ONLY (task_audience `actor` relations —
 # policy/sync/task_grant_sync.py), as a post-install/post-upgrade helm hook Job. Narrower than

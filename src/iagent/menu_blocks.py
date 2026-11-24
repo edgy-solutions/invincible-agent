@@ -1,4 +1,7 @@
-"""The menu-block registry: `<overlay>/menu_blocks/<stem>.yaml`, one row per menu placement.
+"""The menu-block registry, keyed by VERB. Two sources, one row per menu placement:
+`<overlay>/menu_blocks/<stem>.yaml`, and the `menu:` block of each declared measure row
+(`MEASURE_VERB_OVERLAY_DIRS`, loaded by finance's `load_measure_verbs`; its verb is the one the
+engine registers, `"mesh:" + verb`). Architect ruling 2026-11-22: "/menu_blocks is keyed by verb."
 
 Architect ruling 2026-11-07: "the overlay row declares its menu placement, the BFF serves it,
 cortex reads it." A row is exactly two top-level keys, `declared_by` and `menu`; `menu` holds
@@ -9,12 +12,17 @@ There is NO seed directory. `MENU_BLOCK_OVERLAY_DIRS` (os.pathsep-separated) say
 
 * unset or empty -> `composed: False` ("nobody said where to look", which is not "no blocks");
 * a listed dir that does not exist or cannot be listed -> `composed: False`;
-* an existing empty dir -> `composed: True, blocks: []`.
+* an existing empty dir -> `composed: True, blocks: []`;
+* `MEASURE_VERB_OVERLAY_DIRS` set and readable also makes `composed: True`; unset, it is not a
+  source; a measure load that raises makes `composed: False` with one invalid entry
+  `{"source": "measure_verbs", "reason": "unreadable: <ExceptionType>"}`. A measure row with no
+  `menu:` is not a placement (and not invalid).
 
 A later dir's file with the same stem REPLACES an earlier one (as `review_shapes` composes).
 A row that does not validate is an `invalid` entry naming the field, never an exception, so one
-bad row cannot take `GET /menu_blocks` down. Two valid rows with the same (subject, archetype)
-are BOTH left out and both named invalid: the registry will not pick a winner.
+bad row cannot take `GET /menu_blocks` down. Distinct verbs may share (subject, archetype); all
+are served, sorted by (subject, archetype, verb). A verb declared by two sources is BOTH left out
+and both named invalid: the registry will not pick a winner.
 
 The prefix check is the point of the CURIE rule: an unknown prefix passes verbatim elsewhere
 and never matches, so a row with one would be served and silently dead. Keys of
@@ -25,7 +33,8 @@ PERSONA AND DOMAIN VOCABULARY IS NOT CHECKED HERE. `policy/personas.yaml` and
 never gate: a stale value mis-ranks and cannot widen access. The shipped rows are checked
 against the vocabularies by the repo test (tests/test_menu_blocks_are_served.py).
 
-Cached per overlay list; `clear_cache()` drops it.
+Cached per the three env values (menu dirs, measure overlay dirs, measure seed dir);
+`clear_cache()` drops it.
 """
 from __future__ import annotations
 
@@ -36,11 +45,15 @@ from pathlib import Path
 import yaml
 
 _OVERLAY_ENV = "MENU_BLOCK_OVERLAY_DIRS"
+_MEASURE_OVERLAY_ENV = "MEASURE_VERB_OVERLAY_DIRS"
+_MEASURE_SEED_ENV = "MEASURE_VERB_POLICY_DIR"
 _ROW_KEYS = frozenset({"declared_by", "menu"})
 _MENU_KEYS = frozenset({"subject", "archetype", "persona_fit", "domain_fit"})
 _CURIE_FIELDS = ("subject", "archetype")
 _LIST_FIELDS = ("persona_fit", "domain_fit")
 _CACHE: dict = {}
+_ROWS_CACHE: dict = {}
+_BUILTINS_CACHE: dict = {}
 
 
 @dataclass(frozen=True)
@@ -113,46 +126,169 @@ def _read_dir(d: Path, prefixes) -> dict[str, dict]:
     return out
 
 
+def _measure_verb(row) -> str:
+    """The verb the finance engine registers for a declared measure row: `"mesh:" + row.verb`
+    (`agent_fleet/finance_agent/main.py`, the declared-row registration and `/verbs`). The join
+    seal in tests/test_menu_blocks_are_keyed_by_verb.py keeps this honest."""
+    return "mesh:" + row.verb
+
+
+def _measure_rows() -> list:
+    """The declared measure rows: ONE `load_measure_verbs()` per `_cache_key()`, shared by
+    `compose` (placements) and `askable` (discovery). Raises whatever the loader raises; a
+    failed load is not cached."""
+    key = _cache_key()
+    if key not in _ROWS_CACHE:
+        from agent_fleet.finance_agent.measure_verbs import load_measure_verbs
+        _ROWS_CACHE[key] = list(load_measure_verbs())
+    return _ROWS_CACHE[key]
+
+
+def _builtin_measures() -> list:
+    """The built-in measures their engine lists: ONE `load_askable_builtins()` per
+    `_cache_key()`. Raises whatever the loader raises; a failed load is not cached."""
+    key = _cache_key()
+    if key not in _BUILTINS_CACHE:
+        from agent_fleet.finance_agent.measure_verbs import load_askable_builtins
+        _BUILTINS_CACHE[key] = list(load_askable_builtins())
+    return _BUILTINS_CACHE[key]
+
+
+def _measure_blocks() -> dict[str, dict]:
+    """`{source: {"block": {...}}}` for every declared measure row that carries a `menu:` block.
+    Raises whatever the loader raises; `compose` turns that into an unreadable source."""
+    out: dict[str, dict] = {}
+    for r in _measure_rows():
+        m = r.menu
+        if m is None:
+            continue
+        out[f"measure_verbs/{r.measure_id}"] = {"block": {
+            "subject": m["subject"], "archetype": m["archetype"],
+            "persona_fit": list(m["persona_fit"]), "domain_fit": list(m["domain_fit"]),
+            "declared_by": _measure_verb(r)}}
+    return out
+
+
+def _cache_key() -> tuple:
+    return (os.getenv(_OVERLAY_ENV, ""), os.getenv(_MEASURE_OVERLAY_ENV, ""),
+            os.getenv(_MEASURE_SEED_ENV, ""))
+
+
 def compose() -> MenuBlocks:
     """The blocks, the invalid rows, and whether the registry was read at all. Never raises."""
-    dirs = _overlay_dirs()
-    key = tuple(str(d) for d in dirs)
+    key = _cache_key()
     if key in _CACHE:
         return _CACHE[key]
-    if not dirs:
+    dirs = _overlay_dirs()
+    measures = bool(os.getenv(_MEASURE_OVERLAY_ENV, ""))
+    if not dirs and not measures:
         result = MenuBlocks(False)
     else:
-        prefixes = _prefixes()
         rows: dict[str, dict] = {}
-        try:
-            for d in dirs:
-                if not d.is_dir():
-                    raise OSError(f"{d} is not a directory")
-                rows.update(_read_dir(d, prefixes))
-        except OSError:
-            rows = None
-        if rows is None:
+        unreadable = False
+        if dirs:
+            prefixes = _prefixes()
+            try:
+                for d in dirs:
+                    if not d.is_dir():
+                        raise OSError(f"{d} is not a directory")
+                    rows.update(_read_dir(d, prefixes))
+            except OSError:
+                unreadable = True
+        if unreadable:
             result = MenuBlocks(False)
         else:
-            invalid = [{"source": s, "reason": r["reason"]} for s, r in rows.items() if "reason" in r]
-            valid = {s: r["block"] for s, r in rows.items() if "block" in r}
-            by_pair: dict[tuple, list[str]] = {}
-            for s, b in valid.items():
-                by_pair.setdefault((b["subject"], b["archetype"]), []).append(s)
-            blocks = []
-            for s, b in valid.items():
-                others = [o for o in by_pair[(b["subject"], b["archetype"])] if o != s]
-                if others:
-                    invalid.append({"source": s, "reason": (
-                        f"ambiguous: {sorted(others)[0]} declares the same subject and archetype")})
-                else:
-                    blocks.append(b)
-            blocks.sort(key=lambda b: (b["subject"], b["archetype"]))
-            invalid.sort(key=lambda i: i["source"])
-            result = MenuBlocks(True, blocks, invalid)
+            try:
+                if measures:
+                    rows.update(_measure_blocks())
+            except Exception as exc:  # the loader raises MeasureVerbError and others
+                result = MenuBlocks(False, [], [
+                    {"source": "measure_verbs", "reason": f"unreadable: {type(exc).__name__}"}])
+                rows = None
+            if rows is not None:
+                invalid = [{"source": s, "reason": r["reason"]}
+                           for s, r in rows.items() if "reason" in r]
+                valid = {s: r["block"] for s, r in rows.items() if "block" in r}
+                by_verb: dict[str, list[str]] = {}
+                for s, b in valid.items():
+                    by_verb.setdefault(b["declared_by"], []).append(s)
+                blocks = []
+                for s, b in valid.items():
+                    others = [o for o in by_verb[b["declared_by"]] if o != s]
+                    if others:
+                        invalid.append({"source": s, "reason": (
+                            f"ambiguous: {sorted(others)[0]} declares the same verb")})
+                    else:
+                        blocks.append(b)
+                blocks.sort(key=lambda b: (b["subject"], b["archetype"], b["declared_by"]))
+                invalid.sort(key=lambda i: i["source"])
+                result = MenuBlocks(True, blocks, invalid)
     _CACHE[key] = result
     return result
 
 
 def clear_cache() -> None:
     _CACHE.clear()
+    _ROWS_CACHE.clear()
+    _BUILTINS_CACHE.clear()
+
+
+@dataclass(frozen=True)
+class AskableMeasures:
+    composed: bool
+    measures: list = field(default_factory=list)
+    invalid: list = field(default_factory=list)
+
+
+def askable() -> AskableMeasures:
+    """Every measure a caller can ask, sorted by verb: each declared measure row (with or without
+    a `menu:` block), from the same cached load `compose` uses, and each built-in measure, listed
+    from its listing row through the measure's engine's own loader. `shape` is the row's
+    `render.shape`; a built-in declares none, so its `shape` is None. `unit`, `example_ask` and
+    `group_label` are served as declared and are None when undeclared (never defaulted). A verb
+    served by both a declared row and a built-in is ambiguous: both are left out and named in
+    `invalid`. Never raises. `composed: False` is "not read"."""
+    if not os.getenv(_MEASURE_OVERLAY_ENV, ""):
+        return AskableMeasures(False)
+    try:
+        rows = _measure_rows()
+    except Exception as exc:
+        return AskableMeasures(False, [], [
+            {"source": "measure_verbs", "reason": f"unreadable: {type(exc).__name__}"}])
+    declared = [{"verb": _measure_verb(r), "name": r.name, "description": r.description,
+                 "phrasings": list(r.synonyms), "cells": sorted(r.cells),
+                 "shape": r.archetype,
+                 "unit": r.render.get("unit") if isinstance(r.render, dict) else None,
+                 "example_ask": r.example_ask or None,
+                 "group_label": r.group_label or None}
+                for r in rows]
+    invalid: list = []
+    try:
+        builtin = [{"verb": e["verb"], "name": e["name"], "description": e["description"],
+                    "phrasings": list(e["phrasings"]), "cells": list(e["cells"]),
+                    "shape": None, "unit": e.get("unit"),
+                    "example_ask": e.get("example_ask"), "group_label": e.get("group_label")}
+                   for e in _builtin_measures()]
+    except Exception as exc:
+        builtin = []
+        invalid.append({"source": "measure_builtins",
+                        "reason": f"unreadable: {type(exc).__name__}"})
+    clash = {m["verb"] for m in declared} & {m["verb"] for m in builtin}
+    for verb in sorted(clash):
+        invalid.append({"source": "measure_verbs",
+                        "reason": f"ambiguous: {verb} is also declared by measure_builtins"})
+        invalid.append({"source": "measure_builtins",
+                        "reason": f"ambiguous: {verb} is also declared by measure_verbs"})
+    measures = [m for m in declared + builtin if m["verb"] not in clash]
+    measures.sort(key=lambda m: m["verb"])
+    return AskableMeasures(True, measures, invalid)
+
+
+def visible_to(measures: list, domains) -> list:
+    """The entries whose declared cells the caller holds a domain in: the cell gate the
+    measure's own engine refuses on. Both sides are upper-cased (cells also stripped) and
+    compared as sets; no held domain sees nothing."""
+    # rule: agent_fleet/finance_agent/main.py `_require_cell` / `_held_domains`
+    held = {str(d).upper() for d in (domains or [])}
+    return [m for m in measures
+            if held & {str(c).strip().upper() for c in m["cells"]}]

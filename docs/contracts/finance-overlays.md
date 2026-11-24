@@ -70,6 +70,8 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
 | `menu` | Optional. Where the card sits on the menu: what it places, the card it draws as, and who it fits. |
+| `example_ask` | Optional. A non-empty string: one question a person could ask that this measure answers. It must route to this measure's own verb; the check that it does is a sandbox eval still to come, so none is written yet. |
+| `group_label` | Optional. A non-empty string: the heading the measure is listed under. |
 | `source` | Optional. Where the measure reads when `FIN_DATASET_URN` is set (section 5a): `asset` (the default) or `seed`, the notional model. A dataset row reads its own asset and is refused if it carries one. |
 | `reason` | Required with `source: seed`, refused otherwise. Why the measure stays on the seed under the flag. |
 | `ratified_by` | Required with `source: seed`, refused otherwise. Who ratified that. |
@@ -389,7 +391,7 @@ Top-level keys. The first four are the shared header.
 | `cdrl` | `item` (required), and optional `title`, `data_item`, `frequency`. These are the facts a title-block cell can show. |
 | `template` | `file` (a file beside this row, no path) and `sha256`. xlsx and docx only. |
 | `sheet` | The template sheet to fill. xlsx only. |
-| `cells` | Title block: coordinate to fact. Facts: `program.name`, `program.id`, `as_of`, `cdrl.item`, `cdrl.title`, `cdrl.data_item`, `cdrl.frequency`. Not for csv. |
+| `cells` | Title block: coordinate to fact. Facts: `program.name`, `program.id`, `as_of` (the DATA's as-of, from the source's own receipt; `as-of unavailable` with the reason when the source has none), `generated_on` (the server's clock; a request carrying `as_of` is refused with a 422); a seed-sourced export reads `sample data (notional seed): no as-of` for the as-of, `cdrl.item`, `cdrl.title`, `cdrl.data_item`, `cdrl.frequency`. Not for csv. |
 | `sources` | List of `{fn: <measure>}`, built-in measures (for example `fin_performance_indices`) or your own `measure_id`s. |
 | `table` | `key` (the field rows are joined on, usually `period`), `columns`, and `start` or `at` (below). |
 | `methods_sheet` | Optional name for the methods sheet. Default `Methods`. xlsx only. |
@@ -443,9 +445,9 @@ scope: program                       # one file per program
 label: CDRL A001 - Notional EV summary (synthetic)
 audience: program_office
 cdrl: {item: A001, title: Notional Earned Value Summary, data_item: DI-NOTIONAL-0001, frequency: monthly}
-template: {file: cdrl_a001_ev_summary.xlsx, sha256: 041f60148f0a6fb3aedc9c382151482d0e77c7eb48a6e7506ef01a8653d52f4a}
+template: {file: cdrl_a001_ev_summary.xlsx, sha256: eb3708c4d72b03b3089cd412adb634ff95fbfa0f22f475f1018f176819d7e78c}
 sheet: EV Summary
-cells: {B2: program.name, B3: program.id, B4: as_of, B5: cdrl.item}
+cells: {B2: program.name, B3: program.id, B4: as_of, B5: generated_on, B6: cdrl.item}
 sources:
   - fn: fin_performance_indices
   - fn: fin_tcpi
