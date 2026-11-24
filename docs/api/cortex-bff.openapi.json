@@ -7003,8 +7003,45 @@
     },
     "/askable_measures": {
       "get": {
-        "description": "The declared measures this caller can ask, for discovery. One entry per declared measure\nrow (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),\nwhether or not the row carries a `menu:` block. An entry is listed only when the caller holds\na domain in the row's declared cells, the same comparison the engine that declares the\nmeasure refuses on, so the list never names a measure the caller would be refused. The\nengine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's\n`declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the\nrow declares none). `example_ask` and `group_label` are served as declared, null otherwise.\n\nBuilt-in measures are listed from their listing rows, through the measure's engine's own\nloader. They declare no shape (`shape` is null).\n\nBuilt-ins are listed whatever the overlay env; declared rows are read only when\n`MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed\nload is named in `invalid` and logged at ERROR); it never means \"none\".",
+        "description": "The declared measures this caller can ask, for discovery. One entry per declared measure\nrow (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),\nwhether or not the row carries a `menu:` block. An entry is listed only when the caller holds\na domain in the row's declared cells, the same comparison the engine that declares the\nmeasure refuses on, so the list never names a measure the caller would be refused. The\nengine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's\n`declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the\nrow declares none). `example_ask` and `group_label` are served as declared, null otherwise.\n\nBuilt-in measures are listed from their listing rows, through the measure's engine's own\nloader. They declare no shape (`shape` is null).\n\nThe active persona narrows the list: `active_persona` (and optionally `active_domains`) is\nresolved by the same rule as the seed path (`_resolve_active_cell`), and the list is then\nfiltered to those domains instead of every domain the caller holds. A domain the caller\ndoes not hold under that persona refuses the request (`cell_not_entitled`); it is not\nignored. Neither set leaves the list unchanged.\n\nBuilt-ins are listed whatever the overlay env; declared rows are read only when\n`MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed\nload is named in `invalid` and logged at ERROR); it never means \"none\".",
         "operationId": "get_askable_measures_askable_measures_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "active_persona",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Active Persona"
+            }
+          },
+          {
+            "in": "query",
+            "name": "active_domains",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Active Domains"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -7015,6 +7052,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

@@ -2091,7 +2091,11 @@ class AskableMeasuresResponse(_BaseModel):
 
 
 @app.get("/askable_measures", response_model=AskableMeasuresResponse)
-async def get_askable_measures(current_user: User = Depends(get_current_user)):
+async def get_askable_measures(
+    current_user: User = Depends(get_current_user),
+    active_persona: str | None = _Query(None),
+    active_domains: list[str] | None = _Query(None),
+):
     """The declared measures this caller can ask, for discovery. One entry per declared measure
     row (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),
     whether or not the row carries a `menu:` block. An entry is listed only when the caller holds
@@ -2104,6 +2108,12 @@ async def get_askable_measures(current_user: User = Depends(get_current_user)):
     Built-in measures are listed from their listing rows, through the measure's engine's own
     loader. They declare no shape (`shape` is null).
 
+    The active persona narrows the list: `active_persona` (and optionally `active_domains`) is
+    resolved by the same rule as the seed path (`_resolve_active_cell`), and the list is then
+    filtered to those domains instead of every domain the caller holds. A domain the caller
+    does not hold under that persona refuses the request (`cell_not_entitled`); it is not
+    ignored. Neither set leaves the list unchanged.
+
     Built-ins are listed whatever the overlay env; declared rows are read only when
     `MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed
     load is named in `invalid` and logged at ERROR); it never means "none".
@@ -2111,11 +2121,17 @@ async def get_askable_measures(current_user: User = Depends(get_current_user)):
     from starlette.concurrency import run_in_threadpool
     from . import menu_blocks
 
+    domains = current_user.entitled_domains
+    if active_persona or active_domains:
+        _persona, domains = _resolve_active_cell(
+            active_persona, active_domains, current_user,
+            log_tag="askable_measures_cell_not_entitled",
+        )
     result = await run_in_threadpool(menu_blocks.askable)
     for bad in result.invalid:
         logger.error("askable measures are unreadable (%s): %s", bad["source"], bad["reason"])
     return {"composed": result.composed,
-            "measures": menu_blocks.visible_to(result.measures, current_user.entitled_domains),
+            "measures": menu_blocks.visible_to(result.measures, domains),
             "invalid": result.invalid}
 
 
@@ -5525,6 +5541,64 @@ def _canvas_seed_domains(request, ent) -> list[str] | None:
     return None
 
 
+def _resolve_active_cell(active_persona, active_domains, current_user, *, log_tag: str):
+    """The cell a caller's chosen persona (and domains) name, resolved from the caller's OWN
+    entitlements. ONE derivation, shared by the seed and `/askable_measures`. Returns
+    `(persona, domains)` to use; neither set stays `(persona, None)` unchanged.
+
+    THE CELL A PERSONA NAMES. A persona without domains is completed from the caller's own
+    entitlements (`domains_for`); none held refuses `persona_not_held`. Domains without a
+    persona is a 400 `incomplete_override`. THE SERVER OWNS THE DOMAIN LIST (Lane 1,
+    2026-11-16): a client-sent `active_domains` is a REQUEST for a cell, never a grant of one.
+    Same rule as `/orchestrate`: every named domain must be entitled under the named persona,
+    and one miss refuses the whole request (`cell_not_entitled`); nothing is silently dropped.
+    """
+    if not (active_persona or active_domains):
+        return active_persona, active_domains
+    ent = current_user.entitlements
+    if active_persona and not active_domains:
+        _derived = ent.domains_for(active_persona)
+        if not _derived:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            raise _policy_refusal(
+                "persona_not_held", policy_id="groups",
+                missing_binding=f"a_group_granting({active_persona})",
+                message=f"you hold no cell under persona {active_persona}",
+            )
+        active_domains = _derived
+    elif active_domains and not active_persona:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "incomplete_override", "field": "active_persona",
+                "message": "a seed names its domains without a persona; send active_persona "
+                           "(or user_persona) too",
+            },
+        )
+    if active_persona and active_domains:
+        _missing = [d for d in active_domains if not ent.contains(active_persona, d)]
+        if _missing:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            # The body mirrors `/orchestrate`'s `cell_not_entitled` so an access request can be
+            # built from it; the WARN aggregates denials for ops as `/orchestrate`'s does.
+            _extra = {
+                "requested": {"persona": active_persona, "domains": list(active_domains)},
+                "requested_missing": _missing,
+                "entitled_cells": [{"persona": c.persona, "domain": c.domain}
+                                   for c in ent.cells],
+            }
+            _refusal_exc = _policy_refusal(
+                "cell_not_entitled", policy_id="groups",
+                missing_binding=f"a_group_granting({active_persona}, {_missing[0]})",
+                message=f"you hold no cell under persona {active_persona} "
+                        f"for domains {_missing}",
+                extra=_extra,
+            )
+            logger.warning("%s: %s", log_tag, _refusal_exc.detail)
+            raise _refusal_exc
+    return active_persona, active_domains
+
+
 async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User,
                            bearer: str = ""):
     """The ask for a 409'd seed, or None when no unbound slot is askable.
@@ -5642,59 +5716,12 @@ async def canvas_seed(
         request.active_persona = request.user_persona
     if request.active_domains is None and request.domain:
         request.active_domains = [request.domain]
-    # THE CELL A PERSONA NAMES. The stream refuses a persona without domains, so a persona-only
-    # seed (the chat re-send after the "which program?" pick) is completed HERE from the
-    # caller's own entitlements, the same derivation the ask uses. A seed never picks a cell
-    # the caller did not name: neither field set stays unset.
-    if request.active_persona and not request.active_domains:
-        _derived = _canvas_seed_domains(request, current_user.entitlements)
-        if not _derived:
-            from .authz.refusal import policy_refusal as _policy_refusal
-            raise _policy_refusal(
-                "persona_not_held", policy_id="groups",
-                missing_binding=f"a_group_granting({request.active_persona})",
-                message=f"you hold no cell under persona {request.active_persona}",
-            )
-        request.active_domains = _derived
-    elif request.active_domains and not request.active_persona:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "incomplete_override", "field": "active_persona",
-                "message": "a seed names its domains without a persona; send active_persona "
-                           "(or user_persona) too",
-            },
-        )
-    # THE SERVER OWNS THE DOMAIN LIST (Lane 1, 2026-11-16). A client-sent `active_domains` is a
-    # REQUEST for a cell, never a grant of one. Before this gate the 409 path's ask
-    # (`_canvas_seed_ask`) forwarded the client's list to engine-o's `/enumerate_instances` as
-    # `entitled_domains`, and engine-o decides origin visibility from that list
-    # (`origin_entitlement.can_consume`), so a domain the caller does not hold widened what the
-    # ask enumerated. Same rule as `/orchestrate`: every named domain must be entitled under the
-    # named persona, and one miss refuses the whole request; nothing is silently dropped.
-    if request.active_persona and request.active_domains:
-        _missing = [d for d in request.active_domains
-                    if not current_user.entitlements.contains(request.active_persona, d)]
-        if _missing:
-            from .authz.refusal import policy_refusal as _policy_refusal
-            # The body mirrors `/orchestrate`'s `cell_not_entitled` so an access request can be
-            # built from it; the WARN aggregates denials for ops as `/orchestrate`'s does.
-            _extra = {
-                "requested": {"persona": request.active_persona,
-                              "domains": list(request.active_domains)},
-                "requested_missing": _missing,
-                "entitled_cells": [{"persona": c.persona, "domain": c.domain}
-                                   for c in current_user.entitlements.cells],
-            }
-            _refusal_exc = _policy_refusal(
-                "cell_not_entitled", policy_id="groups",
-                missing_binding=f"a_group_granting({request.active_persona}, {_missing[0]})",
-                message=f"you hold no cell under persona {request.active_persona} "
-                        f"for domains {_missing}",
-                extra=_extra,
-            )
-            logger.warning("canvas_seed_cell_not_entitled: %s", _refusal_exc.detail)
-            raise _refusal_exc
+    # THE CELL A PERSONA NAMES, resolved by the one derivation the askable list shares. See
+    # `_resolve_active_cell` for the rule and its three refusals.
+    request.active_persona, request.active_domains = _resolve_active_cell(
+        request.active_persona, request.active_domains, current_user,
+        log_tag="canvas_seed_cell_not_entitled",
+    )
 
     _requested = (request.template_id or "").strip()
     if not _requested:
