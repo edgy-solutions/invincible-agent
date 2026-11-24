@@ -346,6 +346,14 @@ engineO:
   enabled: true
   image:
     tag: ""
+  # Reasoning effort on engine O's three routing calls, at low (the architect,
+  # 2026-11-24: "The speed setting passed and stays on ... Put the three
+  # routing-effort keys at low in the sandbox values for 0.4.92"). Perf's run 2
+  # measured it on the sandbox. The chart default stays off (values.yaml).
+  env:
+    IAGENT_ROUTING_EFFORT_SUBJECT: "low"
+    IAGENT_ROUTING_EFFORT_VERB: "low"
+    IAGENT_ROUTING_EFFORT_SLOTS: "low"
   resources:
     requests:
       cpu: 100m
