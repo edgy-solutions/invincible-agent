@@ -71,7 +71,7 @@ def test_the_owner_sees_the_record_and_it_names_the_call(client, monkeypatch):
     assert r.status_code == 200
     assert r.json() == {"paused": [{
         "run_id": RUN, "paused_call": PAUSED_CALL, "instruction": INSTRUCTION,
-        "reason": "token_near_expiry_and_not_refreshable"}]}
+        "reason": "token_expired_and_not_refreshable"}]}  # the seam is unset: no refresh was possible
 
 
 def test_another_person_gets_an_empty_list(client, monkeypatch):

@@ -37,7 +37,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["exchange", "entitlement_of"]
+__all__ = ["exchange", "entitlement_of", "configured"]
 
 _GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
 _ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token"
@@ -53,6 +53,12 @@ def _settings() -> Optional[tuple]:
     if not (url and cid and secret):
         return None
     return url, cid, secret
+
+
+def configured() -> bool:
+    """Whether a refresh is possible at all: the three settings are present. Reads the
+    environment only; no network call."""
+    return _settings() is not None
 
 
 def _claims_of(token: str) -> Optional[dict]:

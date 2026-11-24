@@ -5065,10 +5065,10 @@ class SeedPortfolioCanvasRequest(_BaseModel):
 #   or dropped by arity, which is NOT a policy refusal; an unscoped re-check that failed is
 #   could-not-check, never a deny), seed_panel_unroutable (template declares no subject),
 #   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
-#   dagster_run_failed, answer_run_failed, ui_payload_fetch_error, ui_payload_timeout,
-#   acceptance_not_opened, engine_did_not_answer, render_ui_failed, stream_producer_error,
-#   stream_raised -- all faults of the seed/pipeline, not of the caller's grants. An absent
-#   cause is "unrecorded" and is never entitlement.
+#   dagster_run_failed, answer_run_failed, session_expired, ui_payload_fetch_error,
+#   ui_payload_timeout, acceptance_not_opened, engine_did_not_answer, render_ui_failed,
+#   stream_producer_error, stream_raised -- all faults of the seed/pipeline, not of the
+#   caller's grants. An absent cause is "unrecorded" and is never entitlement.
 _SEED_ENTITLEMENT_CAUSES = frozenset({"seed_panel_verb_not_visible"})
 
 
@@ -6046,8 +6046,10 @@ async def _refresh_the_runs_token(run_id: str, leg: Optional[str] = None) -> Non
         who = identity_exchange.entitlement_of(fresh) if fresh else None
         if fresh and who and VAULT.replace(run_id, fresh, who):
             return
-    VAULT.mark_awaiting_reauth(run_id, "token_near_expiry_and_not_refreshable",
-                               _paused_call_text(leg), _REAUTH_INSTRUCTION)
+    # Unconfigured: no refresh was ever possible, so the token itself has lapsed.
+    _reason = ("token_near_expiry_and_not_refreshable" if identity_exchange.configured()
+               else "token_expired_and_not_refreshable")
+    VAULT.mark_awaiting_reauth(run_id, _reason, _paused_call_text(leg), _REAUTH_INSTRUCTION)
 
 
 @app.post("/internal/identity/redeem")
@@ -6131,9 +6133,11 @@ async def redeem_caller_identity(
     # A replay is not a 404. Distinguishing them is the point of the tombstone, and
     # collapsing them here would throw away the discrimination the vault just made. A run
     # paused for its person is a 409 too: the state is real, the run is not failed.
-    _status = 409 if result.outcome in (
-        RedemptionOutcome.ALREADY_REDEEMED, RedemptionOutcome.AWAITING_REAUTH,
-    ) else 404
+    # A session that expired while the run waited is a 410: terminal, nothing more is tried.
+    _status = 410 if result.outcome == RedemptionOutcome.SESSION_EXPIRED else (
+        409 if result.outcome in (
+            RedemptionOutcome.ALREADY_REDEEMED, RedemptionOutcome.AWAITING_REAUTH,
+        ) else 404)
     raise HTTPException(
         status_code=_status,
         detail={
@@ -6148,6 +6152,10 @@ async def redeem_caller_identity(
                 RedemptionOutcome.AWAITING_REAUTH: (
                     "The run is paused, not failed: the person's token needs them to sign "
                     "in again (POST /orchestrate/{run_id}/reauth). Ask again after they do."
+                ),
+                RedemptionOutcome.SESSION_EXPIRED: (
+                    "The run waited for its person to sign in again past its bound, so its "
+                    "session has expired. Nothing more is attempted; the person asks again."
                 ),
                 RedemptionOutcome.LAUNCHER_MISMATCH: (
                     "The run's recorded launcher does not match the stashed token's "
@@ -11011,12 +11019,14 @@ async def _generate_dagster_stream_inner(
     # THE ONE DEADLINE IN THIS GENERATOR: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
     # dagster, the same 15 minutes on the durable path), the ceiling for slow
     # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
-    # ended by it, so a paused tick does not count toward it; the pause is bounded by the
-    # vault entry's own life, after which the state is None and the ticks count again. The
+    # ended by it, so a paused tick does not count toward it; the pause is bounded by
+    # `IDENTITY_REAUTH_WAIT_SECONDS`, after which the vault says `session_expired` (or, at the
+    # entry's own life, None) and the ticks count again. The
     # keepalive wrapper is an interval, not a deadline, and `_get_run_status` is a per-call
     # fetch.
     _ticks = 0
     _reauth_paused = False
+    _session_expired = False
     while _ticks < _ab.max_ticks:
         await asyncio.sleep(_ab.poll_s)
 
@@ -11032,6 +11042,8 @@ async def _generate_dagster_stream_inner(
                 }))
         else:
             _ticks += 1
+            if _vstate == "session_expired":
+                _session_expired = True
             if _reauth_paused:
                 _reauth_paused = False
                 if _vstate == "live":
@@ -11042,6 +11054,10 @@ async def _generate_dagster_stream_inner(
             VAULT.close(run_id)
             break
         if status_data.get("status") == "FAILURE":
+            # Read BEFORE the close: a run whose vault went `session_expired` between ticks
+            # is still recognised.
+            if VAULT.state(run_id) == "session_expired":
+                _session_expired = True
             VAULT.close(run_id)
             # ADR-0072 8.1 (ruled 2026-11-15): name the step that failed and the run's trace id. The
             # backend says which step; the trace id is the backend's if it holds one, else the one this
@@ -11055,7 +11071,7 @@ async def _generate_dagster_stream_inner(
                 "Pipeline failed.",
                 kind="retrieving",
                 retryable=False,
-                cause=_ab.failed_cause,
+                cause="session_expired" if _session_expired else _ab.failed_cause,
                 failed_step=_run_failure["failed_step"],
                 trace_id=_run_failure["trace_id"],
             )
@@ -11459,7 +11475,8 @@ async def _generate_dagster_stream_inner(
                 }))
             _card = result["payload"]
         else:
-            _card = _failure_card(_run_failure["failed_step"], _run_failure["trace_id"])
+            _card = _failure_card(_run_failure["failed_step"], _run_failure["trace_id"],
+                                  session_expired=_session_expired)
         yield _sse("final_payload", json.dumps(_card))
     else:
         yield _perror(
@@ -11483,15 +11500,22 @@ async def _generate_dagster_stream_inner(
     await _dispatch_answer_artifact(_artifact_bundle)
 
 
-def _failure_card(failed_step: str | None, trace_id: str | None) -> dict:
+def _failure_card(failed_step: str | None, trace_id: str | None,
+                  session_expired: bool = False) -> dict:
     """The card a failed run ends with when it produced none of its own (ADR-0072 8.1, ruled
     2026-11-15: "On a failed run the BFF delivers a failure card naming the step and the trace id;
     it never stays silent."). An absent value is said to be absent, never invented."""
     step = (failed_step or "").replace("`", "")
     trace = (trace_id or "").replace("`", "")
-    lines = ["# The answer could not be completed", ""]
-    lines.append(f"The run failed at step `{step}`." if step else
-                 "The run failed. The step that failed was not recorded.")
+    if session_expired:
+        # The run waited for its person to sign in again and the wait ran out (ruling 2026-11-24).
+        lines = ["# Your sign-in expired", "",
+                 "This answer was waiting for you to sign in again, and the wait ran out, so it "
+                 "was not finished. Ask the question again."]
+    else:
+        lines = ["# The answer could not be completed", ""]
+        lines.append(f"The run failed at step `{step}`." if step else
+                     "The run failed. The step that failed was not recorded.")
     lines.append("")
     lines.append(f"Trace id: `{trace}`" if trace else "This run has no trace id.")
     return {"components": [{
