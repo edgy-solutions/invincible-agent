@@ -11567,8 +11567,6 @@ async def _generate_dagster_stream_inner(
                         )
                         emitted_steps.add("retrieving_pre_started")
 
-        # THE ORDINARY PATH'S `review_request` CONSUMER (R-076). Before the payload fetch, and
-        # whatever the run's outcome: see `_open_acceptances_from_run` for why both.
     except (GeneratorExit, asyncio.CancelledError):
         # A stream closed while its answer still WAITS: withdraw it, fire and forget (never
         # awaited in this cancelled frame). No other exit withdraws.
@@ -11576,6 +11574,8 @@ async def _generate_dagster_stream_inner(
             _withdraw_quietly(_ab, run_id)
         raise
 
+    # THE ORDINARY PATH'S `review_request` CONSUMER (R-076). Before the payload fetch, and
+    # whatever the run's outcome: see `_open_acceptances_from_run` for why both.
     for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle, get_events=_ab.events):
         yield _acc_err
 
