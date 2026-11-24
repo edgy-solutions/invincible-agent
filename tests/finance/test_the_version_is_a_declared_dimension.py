@@ -462,6 +462,8 @@ def test_a_version_outside_the_list_is_a_422_naming_the_declared_versions(post):
 def test_a_equal_to_b_is_a_422(post):
     status, body = post(version_a=PMB, version_b=PMB)
     assert status == 422 and "not_in_model" in body["detail"]
+    assert "same version" in body["detail"]["not_in_model"]
+    assert "compare" not in body and "rows" not in body
 
 
 def test_a_missing_version_is_asked_for_by_its_declared_list(post):
@@ -527,3 +529,68 @@ def test_the_artifact_id_follows_the_versions_chosen(post):
            for a, b in ((GOV, PMB), (CTR, PMB), (PMB, GOV))}
     assert len(set(ids.values())) == 3
     assert post(version_a=GOV, version_b=PMB)[1]["artifact_id"] == ids[(GOV, PMB)]
+
+
+# -- 10. the difference and its percent of b ---------------------------------------------------------
+
+def tiny(world, a, b):
+    """Program B holding ONE path whose version totals are exactly `a` (EAC-GOV) and `b` (PMB)."""
+    path = ("1", "1.1", "1.1.1", "1.1.1.1", "CA-01")
+    rows = [{"program_id": PROG_B, "wbs_2": path[0], "wbs_3": path[1], "wbs_4": path[2], "wbs_5": path[3],
+             "control_account": path[4], "period": "P1", "version": v, "amount": amt}
+            for v, amt in ((GOV, a), (PMB, b))]
+    world.frames[URN_B] = pl.DataFrame(rows, schema_overrides={"amount": pl.Float64})
+
+
+def test_the_difference_is_exact_and_equals_the_root_edge(post):
+    status, env = post(version_a=GOV, version_b=PMB)
+    block = env["compare"]
+    diff = Decimal(block["total_a_exact"]) - Decimal(block["total_b_exact"])
+    assert isinstance(block["difference_exact"], str) and block["difference_exact"] == str(diff)
+    (root,) = [e for e in env["rows"] if e["source"] is None]
+    assert SIGN[root["sign"]] * Decimal(root["value_exact"]) == Decimal(block["difference_exact"])
+    assert block["difference_percent_of_b"] == str(diff / abs(Decimal(block["total_b_exact"])))
+
+
+def test_the_percent_is_a_fraction_of_b(post, world):
+    tiny(world, 250.0, 200.0)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    assert Decimal(env["compare"]["difference_percent_of_b"]) == Decimal("0.25")
+    assert Decimal(env["compare"]["difference_exact"]) == Decimal(50)
+    assert env["compare"]["difference_percent_of_b"] == str(Decimal(50) / Decimal(200))
+
+
+def test_a_zero_b_total_leaves_the_percent_null_and_the_verdict_says_undefined(post, world):
+    tiny(world, 250.0, 0.0)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    assert env["compare"]["difference_percent_of_b"] is None
+    assert Decimal(env["compare"]["difference_exact"]) == Decimal(250)
+    assert "undefined" in env["verdict"] and f"{PMB}'s total is zero" in env["verdict"]
+
+
+def test_a_negative_b_total_gives_a_percent_of_the_differences_sign(post, world):
+    tiny(world, -100.0, -200.0)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    diff = Decimal(env["compare"]["difference_exact"])
+    pct = Decimal(env["compare"]["difference_percent_of_b"])
+    assert diff == Decimal(100) and pct == Decimal("0.5")
+    assert (pct > 0) == (diff > 0)
+    tiny(world, -300.0, -200.0)
+    _s, fall = post(version_a=GOV, version_b=PMB)
+    assert Decimal(fall["compare"]["difference_exact"]) < 0 and Decimal(fall["compare"]["difference_percent_of_b"]) < 0
+
+
+def test_swapping_a_and_b_negates_the_difference(post):
+    _s, fwd = post(version_a=GOV, version_b=PMB)
+    _s, rev = post(version_a=PMB, version_b=GOV)
+    assert Decimal(rev["compare"]["difference_exact"]) == -Decimal(fwd["compare"]["difference_exact"])
+    assert fwd["compare"]["difference_exact"] != "0"
+
+
+def test_the_verdict_names_the_difference_and_percent_as_served(post):
+    _s, env = post(version_a=GOV, version_b=PMB)
+    block = env["compare"]
+    assert f"{GOV} less {PMB} is {block['difference_exact']}, {block['difference_percent_of_b']} of {PMB}" in env["verdict"]
