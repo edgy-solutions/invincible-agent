@@ -159,6 +159,9 @@ differences under `inputs` and `render`:
   `render.other_label` is served by the engine from the module's `OTHER_LABEL`; a row does not
   declare it (a row that does is refused at load). A consumer marks the sink by `node_kind`, never
   by matching the label.
+- The sink edge, and only the sink edge, also carries `members`: one `{target, value, value_exact,
+  sign}` per collapsed child, ordered by value descending then target. Their signed values sum to
+  the sink's signed value exactly. A member is terminal; an `item` edge has no `members` key.
 - A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
   with rule `refused_by_module`; the message names no row value.
 
