@@ -304,3 +304,56 @@ def test_the_supervisor_sends_its_run_id_and_audit_source(supervisor_mod, monkey
     sent = counter.classify_payloads[0]
     assert sent["request_id"] == _Ctx.run_id
     assert sent["audit_source"] == "user_request"
+
+
+def test_the_row_names_the_bound_caller_not_the_body(ontology_main, monkeypatch, rows):
+    """Absence with its control: the control is the pick test above, where the body's own
+    values DO appear in the row because the stubbed binding returns the request unchanged."""
+    eo = ontology_main
+    _stub(eo, monkeypatch, pick=CANDS[0]["verb_iri"])
+    body = _req(eo)
+    bound_person = "bound@example.invalid"
+    bound_grant = ["maintenance"]
+    assert bound_person != body.user_email
+    assert set(d.upper() for d in bound_grant) < set(d.upper() for d in body.entitled_domains)
+
+    async def _bound_narrower(request, **kw):
+        return request.model_copy(update={"user_email": bound_person,
+                                          "entitled_domains": bound_grant}), None
+    monkeypatch.setattr(eo, "_bound", _bound_narrower)
+
+    asyncio.run(eo.classify_predicate(body))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["user_id"] == bound_person
+    assert row["entitled_domains"] == [d.upper() for d in bound_grant]
+    assert body.user_email not in json.dumps(row)
+    dropped = set(d.upper() for d in body.entitled_domains) - set(d.upper() for d in bound_grant)
+    assert dropped == {"DATA_ENG"}
+    assert not dropped & set(row["entitled_domains"])
+
+
+def test_search_predicates_no_match_writes_its_row(ontology_main, monkeypatch, rows):
+    eo = ontology_main
+
+    class _Cs:
+        def exists(self, n):
+            return True
+
+    class _Client:
+        collections = _Cs()
+
+    monkeypatch.setattr(eo, "_WEAVIATE_CLIENT", _Client())
+    monkeypatch.setitem(sys.modules, eo.__name__, eo)
+    eo.SearchPredicatesResponse.model_rebuild(force=True)
+
+    async def _search(*a, **k):
+        return []
+    monkeypatch.setattr(eo, "predicate_hybrid_search", _search)
+    req = eo.SearchPredicatesRequest(query="q", entitled_domains=["maintenance"],
+                                     user_email="alice@example.invalid", user_id="u-1")
+    resp = asyncio.run(eo.search_predicates(req))
+    assert resp.found is False
+    assert len(rows) == 1
+    assert rows[0]["endpoint"] == "/search_predicates"
+    assert rows[0]["fallback_reason"] == "no_predicate_matched"
