@@ -22,6 +22,9 @@ _SEED_ENV = "MEASURE_VERB_POLICY_DIR"
 class _User:
     id = "u"
     email = "u@example.invalid"
+    persona = None
+    # No entitlement cells: the ask's honest-empty branch, so the list keeps `entitled_domains`.
+    entitlements = type("_Ent", (), {"cells": [], "default": None})()
 
     def __init__(self, domains):
         self.entitled_domains = list(domains)

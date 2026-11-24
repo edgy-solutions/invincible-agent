@@ -2088,6 +2088,11 @@ class AskableMeasuresResponse(_BaseModel):
     composed: bool
     measures: list[AskableMeasure]
     invalid: list[MenuBlockInvalid]
+    # The persona and domains the list was filtered for: the cell an ask would run under.
+    persona: str | None
+    domains: list[str]
+    # How that cell was chosen: picker, default, first-cell or none.
+    cell_source: str
 
 
 @app.get("/askable_measures", response_model=AskableMeasuresResponse)
@@ -2108,11 +2113,11 @@ async def get_askable_measures(
     Built-in measures are listed from their listing rows, through the measure's engine's own
     loader. They declare no shape (`shape` is null).
 
-    The active persona narrows the list: `active_persona` (and optionally `active_domains`) is
-    resolved by the same rule as the seed path (`_resolve_active_cell`), and the list is then
-    filtered to those domains instead of every domain the caller holds. A domain the caller
-    does not hold under that persona refuses the request (`cell_not_entitled`); it is not
-    ignored. Neither set leaves the list unchanged.
+    The list is filtered to the cell an ask would run under, resolved by the ask's own rule
+    (`_resolve_ask_cell`): with neither param, the caller's default cell (then the first cell,
+    then none); with params, both are required and every domain must be held under the
+    persona, else the request is refused (400 / 403), never narrowed silently. The response
+    names that cell (`persona`, `domains`, `cell_source`).
 
     Built-ins are listed whatever the overlay env; declared rows are read only when
     `MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed
@@ -2121,18 +2126,16 @@ async def get_askable_measures(
     from starlette.concurrency import run_in_threadpool
     from . import menu_blocks
 
-    domains = current_user.entitled_domains
-    if active_persona or active_domains:
-        _persona, domains = _resolve_active_cell(
-            active_persona, active_domains, current_user,
-            log_tag="askable_measures_cell_not_entitled",
-        )
+    persona, domains, cell_source = _resolve_ask_cell(
+        active_persona, active_domains, current_user, session_id=None,
+    )
     result = await run_in_threadpool(menu_blocks.askable)
     for bad in result.invalid:
         logger.error("askable measures are unreadable (%s): %s", bad["source"], bad["reason"])
     return {"composed": result.composed,
             "measures": menu_blocks.visible_to(result.measures, domains),
-            "invalid": result.invalid}
+            "invalid": result.invalid,
+            "persona": persona, "domains": domains, "cell_source": cell_source}
 
 
 @app.get("/task_kinds")
@@ -12629,54 +12632,20 @@ async def register_frontend_capabilities(
     )
 
 
-@app.post("/orchestrate", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
-@app.post("/interview/stream")
-@_audit_orchestrate_refusals
-async def orchestrate(request: InterviewRequest, http_request: Request,
-                      current_user: User = Depends(get_current_user)):
-    """
-    Entry point for the Agentic Mesh.
-    Delegates to Dagster GraphQL and streams step stats as SSE events
-    to power Holographic Thinking Cards. Emits final payload when done.
-
-    Per ADR-0009 Step F'.2: user_persona + entitled_domains come from the
-    auth-resolved User and flow downstream to the supervisor + engines.
-
-    ADR-0026 step 4: when the request carries `active_persona` /
-    `active_domains` (the cortex-ui picker's per-prompt selection), we
-    validate the cell is in the caller's Topaz-resolved entitlement
-    matrix. Non-entitled → 403 `cell_not_entitled` with the caller's
-    entitled cells in the body — the client knows what would work
-    (honest denial per ADR-0026, not a silent downgrade). Cell entitled
-    → the picker values override the JWT-claim defaults, and downstream
-    routing sees the picked persona/domains.
-
-    Precedence when a field is absent:
-      1. Explicit picker override (`active_persona` / `active_domains`)
-      2. User's default cell (`entitlements.default`)
-      3. First cell from `entitlements.cells`
-      4. Legacy JWT-claim path (`current_user.persona` /
-         `current_user.entitled_domains`) — kept as a safety net for
-         clients that don't set the picker AND users without seeded
-         entitlements.
-    """
+def _resolve_ask_cell(active_persona, active_domains, current_user, *, session_id):
+    """The cell an ask runs under: `(persona, domains, source)`, source one of `picker`,
+    `default`, `first-cell`, `none`. ONE derivation, used by `/orchestrate` and by
+    `/askable_measures`, so the list and the ask cannot disagree about the persona. Refuses an
+    incomplete override (400) and a cell the caller does not hold (403) instead of narrowing."""
     ent = current_user.entitlements
-    # Telemetry (ADR-0038): cortex-ui mints X-Trace-Id per request; thread it so the whole
-    # conversation (BFF -> supervisor -> Engine A) lands ONE Langfuse trace. Session grouping
-    # uses request.session_id (the conversation thread) downstream.
-    # The BFF mints one when the caller sends none, so no client can silence tracing
-    # (architect ruling 4, 2026-11-10).
-    # A valid W3C `traceparent` wins: its trace-id is the trace and its parent-id parents the root span.
-    _trace_ctx = request_trace_context(http_request.headers)
-    _trace_id = _trace_ctx.trace_id
     entitled_cells = [
         {"persona": c.persona, "domain": c.domain} for c in ent.cells
     ]
 
     # Validate per-prompt override if the caller sent one.
-    if request.active_persona is not None or request.active_domains is not None:
-        p = request.active_persona
-        ds = request.active_domains or []
+    if active_persona is not None or active_domains is not None:
+        p = active_persona
+        ds = active_domains or []
         if p is None or not ds:
             # Structured 400 body — client + logs get the same shape.
             # `denied_at` is the capture-or-lose-forever timestamp
@@ -12688,7 +12657,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 "denied_at": datetime.now(timezone.utc).isoformat(),
                 "subject": current_user.id,
                 "subject_email": current_user.email,
-                "session_id": request.session_id,
+                "session_id": session_id,
                 "requested": {"persona": p, "domains": ds},
                 "message": (
                     "active_persona and active_domains must be "
@@ -12726,7 +12695,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 "denied_at": datetime.now(timezone.utc).isoformat(),
                 "subject": current_user.id,
                 "subject_email": current_user.email,
-                "session_id": request.session_id,
+                "session_id": session_id,
                 "requested": {"persona": p, "domains": ds},
                 "requested_missing": missing,
                 "entitled_cells": entitled_cells,
@@ -12744,9 +12713,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=body_403,
             )
-        effective_persona = p
-        effective_domains = ds
-        effective_source = "picker"
+        return p, ds, "picker"
     else:
         # No override — pick the default cell, then the first cell, then
         # HONEST-EMPTY (ADR-0026 step 6): a caller with zero entitlements
@@ -12756,19 +12723,58 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
         # generalist handles the query without a persona; any privileged
         # path hits the real gate and denies with an actionable message.
         if ent.default is not None:
-            effective_persona = ent.default.persona
-            effective_domains = [ent.default.domain]
-            effective_source = "default"
+            return ent.default.persona, [ent.default.domain], "default"
         elif ent.cells:
-            effective_persona = ent.cells[0].persona
-            effective_domains = ent.domains_for(ent.cells[0].persona)
-            effective_source = "first-cell"
+            return ent.cells[0].persona, ent.domains_for(ent.cells[0].persona), "first-cell"
         else:
             # honest-empty — persona is None (current_user.persona is
             # None post step-6), domains empty. Least privilege.
-            effective_persona = current_user.persona  # None
-            effective_domains = current_user.entitled_domains  # []
-            effective_source = "none"
+            return current_user.persona, current_user.entitled_domains, "none"  # None, []
+
+
+@app.post("/orchestrate", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
+@app.post("/interview/stream")
+@_audit_orchestrate_refusals
+async def orchestrate(request: InterviewRequest, http_request: Request,
+                      current_user: User = Depends(get_current_user)):
+    """
+    Entry point for the Agentic Mesh.
+    Delegates to Dagster GraphQL and streams step stats as SSE events
+    to power Holographic Thinking Cards. Emits final payload when done.
+
+    Per ADR-0009 Step F'.2: user_persona + entitled_domains come from the
+    auth-resolved User and flow downstream to the supervisor + engines.
+
+    ADR-0026 step 4: when the request carries `active_persona` /
+    `active_domains` (the cortex-ui picker's per-prompt selection), we
+    validate the cell is in the caller's Topaz-resolved entitlement
+    matrix. Non-entitled → 403 `cell_not_entitled` with the caller's
+    entitled cells in the body — the client knows what would work
+    (honest denial per ADR-0026, not a silent downgrade). Cell entitled
+    → the picker values override the JWT-claim defaults, and downstream
+    routing sees the picked persona/domains.
+
+    Precedence when a field is absent:
+      1. Explicit picker override (`active_persona` / `active_domains`)
+      2. User's default cell (`entitlements.default`)
+      3. First cell from `entitlements.cells`
+      4. Legacy JWT-claim path (`current_user.persona` /
+         `current_user.entitled_domains`) — kept as a safety net for
+         clients that don't set the picker AND users without seeded
+         entitlements.
+    """
+    # Telemetry (ADR-0038): cortex-ui mints X-Trace-Id per request; thread it so the whole
+    # conversation (BFF -> supervisor -> Engine A) lands ONE Langfuse trace. Session grouping
+    # uses request.session_id (the conversation thread) downstream.
+    # The BFF mints one when the caller sends none, so no client can silence tracing
+    # (architect ruling 4, 2026-11-10).
+    # A valid W3C `traceparent` wins: its trace-id is the trace and its parent-id parents the root span.
+    _trace_ctx = request_trace_context(http_request.headers)
+    _trace_id = _trace_ctx.trace_id
+    effective_persona, effective_domains, effective_source = _resolve_ask_cell(
+        request.active_persona, request.active_domains, current_user,
+        session_id=request.session_id,
+    )
 
     logger.info(
         "orchestrate: user=%s persona=%s domains=%s source=%s "
@@ -12896,9 +12902,9 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
             )
 
     # ── A MEASURE PICKED FROM THE ASKABLE LIST — VALIDATED BEFORE THE STREAM OPENS ──────────
-    # The verb must be on THIS caller's `/askable_measures` list: the same list, read with the
-    # same domains (`current_user.entitled_domains`, which that route filters on — not the
-    # picker-narrowed `effective_domains`, which would refuse a measure the list itself shows).
+    # The verb must be on the list as `/askable_measures` serves it for the cell THIS ask runs
+    # under (`effective_domains`). The list resolves its cell with the same helper
+    # (`_resolve_ask_cell`), so a pick shown under one persona cannot run under another.
     # ONE message for "no such measure" and "not in your cells", so the response cannot tell
     # an unknown verb from a withheld one.
     if request.askable_pick is not None:
@@ -12911,7 +12917,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
         from starlette.concurrency import run_in_threadpool as _ap_threadpool
 
         _ap_composed, _ap_entry = await _ap_threadpool(
-            _askable_pick_entry, _ap_parts[0], current_user.entitled_domains
+            _askable_pick_entry, _ap_parts[0], effective_domains
         )
         if not _ap_composed:
             raise HTTPException(

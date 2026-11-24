@@ -258,6 +258,9 @@ async def test_the_CONTROL_an_ordinary_turn_is_not_a_label(stubbed, monkeypatch)
 class _User3:
     id = "u"
     email = "u@example.invalid"
+    persona = None
+    # No entitlement cells: the ask's honest-empty branch, so the list keeps `entitled_domains`.
+    entitlements = type("_Ent", (), {"cells": [], "default": None})()
 
     def __init__(self, domains):
         self.entitled_domains = list(domains)
