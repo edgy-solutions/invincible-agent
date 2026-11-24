@@ -98,6 +98,15 @@ try:
     from inflight import CoalescingClient  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.ontology_service.inflight import CoalescingClient
+# EACH MODEL CALL IS RECORDED AS A LANGFUSE GENERATION (architect ruling 2026-11-24): model and
+# version, parameters, tokens, a hash of the rendered prompt and of the reply; the TEXT only where
+# a deployment setting turns it on (model_generations.TEXT_SETTING). INSIDE the coalescer, so a
+# call that joins a running call makes no model call and records nothing.
+try:
+    from model_generations import GenerationRecordingClient  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service.model_generations import GenerationRecordingClient
+b = GenerationRecordingClient(b)
 b = CoalescingClient(b, log=logging.getLogger(__name__))
 
 # Shared embedding helper (agent_fleet/utils/embed.py). Container flat-layout
