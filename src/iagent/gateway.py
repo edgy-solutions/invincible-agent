@@ -2097,8 +2097,9 @@ async def get_askable_measures(current_user: User = Depends(get_current_user)):
     Built-in measures are listed from their listing rows, through the measure's engine's own
     loader. They declare no shape (`shape` is null).
 
-    `composed: false` means the rows were NOT READ (no overlay dir configured, or the load
-    failed, named in `invalid` and logged at ERROR); it never means "none".
+    Built-ins are listed whatever the overlay env; declared rows are read only when
+    `MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed
+    load is named in `invalid` and logged at ERROR); it never means "none".
     """
     from starlette.concurrency import run_in_threadpool
     from . import menu_blocks
