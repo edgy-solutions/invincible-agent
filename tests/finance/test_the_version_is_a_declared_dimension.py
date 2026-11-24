@@ -546,10 +546,10 @@ def test_the_difference_is_exact_and_equals_the_root_edge(post):
     status, env = post(version_a=GOV, version_b=PMB)
     block = env["compare"]
     diff = Decimal(block["total_a_exact"]) - Decimal(block["total_b_exact"])
-    assert isinstance(block["difference_exact"], str) and block["difference_exact"] == str(diff)
+    assert isinstance(block["difference_exact"], str) and block["difference_exact"] == format(diff, "f")
     (root,) = [e for e in env["rows"] if e["source"] is None]
     assert SIGN[root["sign"]] * Decimal(root["value_exact"]) == Decimal(block["difference_exact"])
-    assert block["difference_percent_of_b"] == str(diff / abs(Decimal(block["total_b_exact"])))
+    assert block["difference_percent_of_b"] == format(diff / abs(Decimal(block["total_b_exact"])), "f")
 
 
 def test_the_percent_is_a_fraction_of_b(post, world):
@@ -558,7 +558,18 @@ def test_the_percent_is_a_fraction_of_b(post, world):
     assert status == 200, env
     assert Decimal(env["compare"]["difference_percent_of_b"]) == Decimal("0.25")
     assert Decimal(env["compare"]["difference_exact"]) == Decimal(50)
-    assert env["compare"]["difference_percent_of_b"] == str(Decimal(50) / Decimal(200))
+    assert env["compare"]["difference_percent_of_b"] == format(Decimal(50) / Decimal(200), "f")
+
+
+def test_a_cent_on_a_billion_is_served_without_an_exponent(post, world):
+    """str(Decimal) writes a quotient this small as "1E-11"; the wire holds plain decimals only."""
+    tiny(world, 1_000_000_000.01, 1_000_000_000.00)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    block = env["compare"]
+    assert block["difference_exact"] == "0.01"
+    assert block["difference_percent_of_b"] == "0.00000000001"
+    assert "E" not in env["verdict"].split(" less ", 1)[1]
 
 
 def test_a_zero_b_total_leaves_the_percent_null_and_the_verdict_says_undefined(post, world):
