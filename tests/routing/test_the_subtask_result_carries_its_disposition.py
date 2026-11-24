@@ -143,10 +143,14 @@ class _Resp:
 
 @pytest.fixture
 def drive(monkeypatch):
-    def _run(*, slots=None, score=0.9):
+    def _run(*, slots=None, score=0.9, status=None, predicate="default", telemetry=None,
+             post=None, identity_error=None):
+        _status = ds._ROUTING_MATCHED if status is None else status
+        _predicate = _pred(score) if predicate == "default" else predicate
+        _telemetry = {"subject_uri": "mesh:Lot"} if telemetry is None else telemetry
         monkeypatch.setattr(
             ds, "_classify_route",
-            lambda *a, **k: (ds._ROUTING_MATCHED, _pred(score), {"subject_uri": "mesh:Lot"}),
+            lambda *a, **k: (_status, _predicate, _telemetry),
         )
         monkeypatch.setattr(ds, "_log_subtask_route_assets", lambda *a, **k: None)
         monkeypatch.setattr(ds, "_make_enumerator", lambda *a, **k: (lambda *x, **y: None))
@@ -159,7 +163,14 @@ def drive(monkeypatch):
             ds, "_call_engine_a_fallback",
             lambda *a, **k: {"route_status": "no_match", "expert_response": {}},
         )
-        monkeypatch.setattr(ds.requests, "post", lambda *a, **k: _Resp())
+        if post is None:
+            post = lambda *a, **k: _Resp()  # noqa: E731
+        monkeypatch.setattr(ds.requests, "post", post)
+        if identity_error is not None:
+            def _refuse(*a, **k):
+                raise identity_error
+            monkeypatch.setattr(ds, "_run_has_a_person", lambda *a, **k: True)
+            monkeypatch.setattr(ds, "_caller_token_for", _refuse)
         return ds.execute_subtask.compute_fn.decorated_fn(_Ctx(), _Cfg(slots), dict(_TASK))
     return _run
 
@@ -189,3 +200,64 @@ def test_execute_subtask_decides_through_the_module_level_name(drive, monkeypatc
     )
     out = drive(slots={"lot": "4"})
     assert out["disposition"] == "abstain"
+
+
+# -- every row of the disposition table, value and route_status both -----------------------
+
+_NO_ENDPOINT = {**_pred(), "endpoint": ""}
+
+
+def _unreachable(*a, **k):
+    raise ds.requests.exceptions.ConnectionError("refused")
+
+_ROWS = [
+    pytest.param(
+        dict(status=ds._ROUTING_INFRA_ERROR, predicate=None),
+        "infra_error", "infra_error", id="routing infra error",
+    ),
+    pytest.param(
+        dict(status=ds._ROUTING_NO_MATCH, predicate=None,
+             telemetry={"fallback_reason": "no_verb_classified"}),
+        "abstained", "abstain", id="no verb classified (abstain)",
+    ),
+    pytest.param(
+        dict(status=ds._ROUTING_NO_MATCH, predicate=None,
+             telemetry={"fallback_reason": "subject_unknown"}),
+        "no_match", "fallback", id="no predicate (engine A fallback)",
+    ),
+    pytest.param(
+        dict(score=0.1), "no_match", "fallback", id="low confidence (engine A fallback)",
+    ),
+    pytest.param(
+        dict(predicate=_NO_ENDPOINT), "abstained", "abstain", id="no endpoint (abstain)",
+    ),
+    pytest.param(dict(slots=None), "matched", "ask", id="ask card"),
+    pytest.param(dict(slots={"lot": "4"}), "matched", "route", id="route (specialist reply)"),
+    pytest.param(
+        dict(slots={"lot": "4"}, identity_error=RuntimeError("no token")),
+        "matched", "route", id="caller identity unavailable",
+    ),
+    pytest.param(
+        dict(slots={"lot": "4"}, post=_unreachable),
+        "matched", "route", id="engine unreachable",
+    ),
+]
+
+_STATUS = {
+    "caller identity unavailable": "caller_identity_unavailable",
+    "engine unreachable": "engine_unreachable",
+}
+
+
+@pytest.mark.parametrize("kwargs,route_status,disposition", _ROWS)
+def test_each_row_of_the_table_returns_its_route_status_and_disposition(
+    drive, kwargs, route_status, disposition,
+):
+    out = drive(**kwargs)
+    assert (out["route_status"], out["disposition"]) == (route_status, disposition)
+
+
+@pytest.mark.parametrize("case,status", sorted(_STATUS.items()))
+def test_the_two_failed_dispatches_name_their_failure(drive, case, status):
+    kwargs = next(p.values[0] for p in _ROWS if p.id == case)
+    assert drive(**kwargs)["expert_response"]["status"] == status
