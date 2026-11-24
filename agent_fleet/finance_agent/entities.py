@@ -17,8 +17,9 @@ of dollars" is precisely the question that must not be answered by convention.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Iterator, Literal, Optional, Sequence
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Periods
@@ -26,19 +27,62 @@ from typing import ClassVar, Literal, Optional
 #
 # MONTHS, NOT QUARTERS, and that is a finance fact rather than a preference: EVM reporting
 # is monthly, indices are read as a monthly trend, and a burn rate stated per quarter cannot
-# show the month a program's spend turned. The planning engine's FY26-Q1 vocabulary is a
+# show the month a program's spend turned. The planning engine's quarter vocabulary is a
 # different axis for a different question and the two are deliberately not merged.
 #
 # THE VOCABULARY IS DATA, NOT A `Literal`. It cannot be derived from a signature, which is
 # exactly why slots.py attaches it at registration time rather than reading it off the type
 # — the same split Lane 1 drew between what the CODE knows and what the DATA knows.
 
-FISCAL_PERIODS: tuple[str, ...] = (
-    "FY26-01", "FY26-02", "FY26-03", "FY26-04", "FY26-05", "FY26-06",
-    "FY26-07", "FY26-08", "FY26-09", "FY26-10", "FY26-11", "FY26-12",
-)
+# THE CALENDAR IS THE DEPLOYMENT'S. The engine holds no period label: a deployment declares its
+# fiscal calendar (fiscal_calendar.py, `FIN_CALENDAR_OVERLAY_DIRS`) and these two functions read it.
 
-PERIOD_ORDER: dict[str, int] = {p: i for i, p in enumerate(FISCAL_PERIODS)}
+# This module is embedded in the exported page, which has no deployment and no `fiscal_calendar`
+# module: so that one is imported LAZILY, inside `_labels`, and the page installs the calendar the
+# package carries (`calendar_installed`) instead. The calendar is the sender's data, shipped with
+# the state it was computed under.
+
+_installed: Optional[tuple[str, ...]] = None
+
+
+@contextmanager
+def calendar_installed(labels: Sequence[str]) -> Iterator[None]:
+    """While active, `fiscal_periods()` and `period_order()` answer `labels`, in that order.
+
+    Restores the previous state on exit, even on an exception. An empty sequence, or labels with
+    a duplicate, is a `ValueError`."""
+    global _installed
+    labels = tuple(labels)
+    if not labels:
+        raise ValueError("an installed fiscal calendar needs at least one period")
+    if len(set(labels)) != len(labels):
+        raise ValueError("an installed fiscal calendar has a duplicate period label")
+    previous = _installed
+    _installed = labels
+    try:
+        yield
+    finally:
+        _installed = previous
+
+
+def _labels() -> tuple[str, ...]:
+    if _installed is not None:
+        return _installed
+    try:  # flat in the image (/app), packaged in the repo
+        from fiscal_calendar import default_calendar
+    except ImportError:
+        from agent_fleet.finance_agent.fiscal_calendar import default_calendar
+    return default_calendar().labels
+
+
+def fiscal_periods() -> tuple[str, ...]:
+    """The period labels of the calendar in force, in order. Empty when none is declared."""
+    return _labels()
+
+
+def period_order() -> dict[str, int]:
+    """Each period label of the calendar in force to its position in it."""
+    return {p: i for i, p in enumerate(_labels())}
 
 FiscalPeriod = str
 
@@ -172,7 +216,7 @@ class PeriodFact:
     mapping rather than a translation.
 
     THESE ARE PERIOD AMOUNTS, NOT CUMULATIVE. Every cumulative figure in this engine is
-    computed by summing these in `PERIOD_ORDER`. Storing a cumulative field beside them
+    computed by summing these in the declared period order. Storing a cumulative field beside them
     would be a second writer for a fact that already has one — the planning engine's rev-3
     refusal of a stored `funding_gap`, applied here before it could happen.
     """
@@ -279,11 +323,16 @@ def periods_in(window: Optional[list[FiscalPeriod]]) -> list[FiscalPeriod]:
     string arriving here is wrapped rather than iterated, so the refusal names what was
     actually said.
     """
+    order = period_order()
+    if not order:
+        raise NotInModel(
+            "no fiscal calendar is declared: the deployment declares its periods in a "
+            "fin_calendar file under FIN_CALENDAR_OVERLAY_DIRS")
     if window is None:
-        return list(FISCAL_PERIODS)
+        return list(fiscal_periods())
     if isinstance(window, str):     # a caller that sent a scalar meant one period
         window = [window]
-    unknown = [p for p in window if p not in PERIOD_ORDER]
+    unknown = [p for p in window if p not in order]
     if unknown:
         raise NotInModel("unknown fiscal period(s): " + ", ".join(repr(u) for u in unknown))
-    return sorted(set(window), key=lambda p: PERIOD_ORDER[p])
+    return sorted(set(window), key=lambda p: order[p])

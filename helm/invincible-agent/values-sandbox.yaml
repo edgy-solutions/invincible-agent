@@ -130,6 +130,9 @@ agentFleet:
     # A PROGRAM IS AN INSTANCE ROW (docs/contracts/finance-overlays.md section 7). SANDBOX ONLY: the
     # three planted refusal programs, declared so a question can name them. engine-fin reads it.
     FIN_INSTANCE_OVERLAY_DIRS: "/app/policy/overlays/sandbox/fin_instances"
+    # A FISCAL CALENDAR IS DECLARED BY THE DEPLOYMENT (docs/contracts/finance-overlays.md section 8). This
+    # is the sample FY26 calendar, so the sandbox's periods are unchanged. engine-fin reads it.
+    FIN_CALENDAR_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_calendar"
     CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.

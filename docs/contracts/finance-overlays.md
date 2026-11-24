@@ -40,6 +40,7 @@ The rules, the same for every kind:
 | method row | `policy/measures/` (three EAC rows) | `MEASURE_OVERLAY_DIRS` | `method_id` |
 | export profile | `policy/fin_export_profiles/` (ships none) | `FIN_EXPORT_PROFILE_OVERLAY_DIRS` | `name` |
 | declared instance | none (the seed holds one program) | `FIN_INSTANCE_OVERLAY_DIRS` | `class` and `instance_id` (section 7) |
+| fiscal calendar | none (the engine holds no calendar) | `FIN_CALENDAR_OVERLAY_DIRS` | `calendar_id` (section 8) |
 
 **Two variables with "measure" in the name.** `MEASURE_VERB_OVERLAY_DIRS` carries measure rows: the
 measures people can ask for and see charted (section 2). `MEASURE_OVERLAY_DIRS` carries method rows:
@@ -715,3 +716,51 @@ the resolver scores an exact match 1.0 across every class and the router abstain
 
 A declared `Program` is visible only to the callers its `program_id` lists in
 `policy/program_members.yaml` (`grant_to`). A program with no row there is listed to no one.
+
+## 8. The fiscal calendar: declared by the deployment
+
+The finance service holds no fiscal calendar. A deployment declares its periods (their labels, their
+order, their start and end dates, and the fiscal year, quarter and half each belongs to) and the
+service reads that declaration. The variable is `FIN_CALENDAR_OVERLAY_DIRS`: directories separated
+by `:` in the service. The repo ships one SAMPLE under `policy/overlays/sample/fin_calendar/`, the
+US federal fiscal year 2026. It is the sample's choice, not a default.
+
+A file holds exactly two keys:
+
+```yaml
+calendar_id: example_fy
+periods:
+  - {label: P-01, start: 2025-10-01, end: 2025-10-31, fiscal_year: FY-A, quarter: Q-1, half: H-1}
+  - {label: P-02, start: 2025-11-01, end: 2025-11-30, fiscal_year: FY-A, quarter: Q-1, half: H-1}
+```
+
+- **`calendar_id`** is a non-empty string.
+- **`periods`** is a non-empty list, and **the list order is the calendar's order.**
+- **Each period has exactly six keys:** `label`, `start`, `end`, `fiscal_year`, `quarter`, `half`.
+  The label, fiscal year, quarter and half are non-empty strings. `start` and `end` are a YAML date
+  or an ISO `YYYY-MM-DD` string; anything else is refused.
+
+The service refuses to start, naming the file and the reason, when:
+- a key is missing or unknown, at the top or in a period;
+- a label appears twice;
+- a period starts after it ends;
+- the periods are not contiguous: each must start the day after the previous one ends, with no gap
+  and no overlap;
+- the periods of one quarter, one half or one fiscal year are not adjacent in the list;
+- a quarter's periods do not all share one half and one fiscal year, or a half's periods do not all
+  share one fiscal year.
+
+**Composition.** A file with the same `calendar_id` in a later directory replaces the earlier one
+whole; nothing is merged. Calendars are named: several `calendar_id`s may be declared, and a
+contract names the one it uses in `period.calendar`. One declared calendar is the default, so a
+contract may omit `period.calendar`; with several declared, every contract names one. The same
+`calendar_id` in two files of one directory is refused, naming both files. A configured dataset
+with no calendar declared fails at boot (not ready), not on each answer.
+
+**No calendar means every period is refused.** With the variable unset, or pointing at no file, the
+calendar is empty. A read of a dataset refuses with the rule id `period_outside_calendar`, and a
+question over a period window is refused as not in the model. An empty answer is never given. A
+period outside a declared calendar is refused with the same rule id.
+
+**The template names this kind.** `contracts/ev_fixture.yaml` gives `period.calendar`: the
+`calendar_id` of the declared `fin_calendar` the dataset's periods are drawn from.
