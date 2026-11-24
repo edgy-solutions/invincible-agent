@@ -597,6 +597,10 @@ agentFleet:
     # IAGENT_ROUTING_EFFORT_SUBJECT: "low"
     # IAGENT_ROUTING_EFFORT_VERB: "low"
     # IAGENT_ROUTING_EFFORT_SLOTS: "low"
+    # The subject prompt (ClassifyDomainIntent) names the caller's own domains
+    # instead of the single legacy domain when this is "caller" (OFF: unset).
+    # Switching it on is a values change Chris approves after its measured run.
+    # IAGENT_SUBJECT_PROMPT_DOMAINS: "caller"
 
     # --- Embedding gateway (agent_fleet/utils/embed.py) ---
     # All Weaviate vector writes + reads in iagent code go through this

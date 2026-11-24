@@ -3996,6 +3996,22 @@ async def _resolve_docs_subject(request: ResolveRequest) -> SemanticResolutionRe
     )
 
 
+def subject_prompt_domain(domain: str, domains: list[str] | None) -> str:
+    """The domain text the subject prompt (ClassifyDomainIntent) is given. Off unless
+    IAGENT_SUBJECT_PROMPT_DOMAINS is `caller`, read per call: the legacy single `domain` is
+    passed through unchanged. On, it is the caller's domains, de-duplicated and sorted, joined
+    with ", " (at /resolve `domains` is the bound grant); an empty list leaves `domain`."""
+    name = "IAGENT_SUBJECT_PROMPT_DOMAINS"
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return domain
+    if raw != "caller":
+        logging.warning("%s=%r is not 'caller'; the subject prompt domains are OFF", name, raw)
+        return domain
+    names = sorted({d for d in (domains or []) if d})
+    return ", ".join(names) if names else domain
+
+
 @app.post("/resolve", response_model=SemanticResolutionResponse)
 async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     """Resolve a natural-language query to a canonical ontology URI using Late Binding.
@@ -4367,7 +4383,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     try:
         result = await b.ClassifyDomainIntent(
             query=request.query,
-            domain=request.domain,
+            domain=subject_prompt_domain(request.domain, request.domains),
             baml_options={"tb": tb, **routing_call_options("SUBJECT")},
         )
     except Exception as exc:
