@@ -5,8 +5,8 @@ scope: program                       # one file per program
 label: CDRL A002 - Notional cost performance report, Word (synthetic)
 audience: program_office
 cdrl: {item: A002, title: Notional Cost Performance Report, data_item: DI-NOTIONAL-0002, frequency: monthly}
-template: {file: cdrl_a002_cost_performance.docx, sha256: 691a2c5f9e7c93137cb90b06f1e479f1fcd230f5ff085f78ee38e6035f37b8e1}
-cells: {T1!B1: program.name, T1!B2: program.id, T1!B3: as_of, T1!B4: cdrl.item, T1!B5: cdrl.data_item}   # table 1: labels in column A, values in column B
+template: {file: cdrl_a002_cost_performance.docx, sha256: 1a64a0367531fdc45a3c177676801a542406c46630f21f7a52225f6192831f5f}
+cells: {T1!B1: program.name, T1!B2: program.id, T1!B3: as_of, T1!B4: generated_on, T1!B5: cdrl.item, T1!B6: cdrl.data_item}   # table 1: labels in column A, values in column B
 sources:
   - fn: fin_performance_indices
   - fn: fin_tcpi

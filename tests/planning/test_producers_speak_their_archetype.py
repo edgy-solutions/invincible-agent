@@ -148,6 +148,17 @@ _EXEMPT = {
         "rather than components/planning, which _CORTEX here does not resolve. Conformance is "
         "in tests/graph_host/test_the_projector_carries_the_ledger.py"
     ),
+    # FLOW_DECOMPOSITION (Lane 1, 0.4.81). Its producer is engine-fin's dataset-kind measure
+    # row, declared in an overlay, so this file's walk of built-in measures cannot reach it.
+    # Cortex's contract declares the edge in a comment, not a row interface, so there is no
+    # type here to parse.
+    "FLOW_DECOMPOSITION": (
+        "no PLANNING producer emits a flow table - engine-fin's dataset-kind measure row does, "
+        "and cortex's contract names no edge row type. Conformance is beside the engine: "
+        "tests/finance/test_variance_decomposition_over_the_ev_fixture.py (the edges against "
+        "an independent computation) and tests/finance/test_the_flow_table_reaches_the_card.py "
+        "(the served envelope through the projector)"
+    ),
 }
 
 #: THE MIRROR — used only when the sibling repo is absent, and cross-checked against the

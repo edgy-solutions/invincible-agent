@@ -1,4 +1,4 @@
-"""data_provenance arrives whole on the card: every fin verb drawn as a MULTI_SERIES, through the projector.
+"""data_provenance arrives whole on the card: every fin verb, whatever archetype its class is drawn as, through the projector.
 
 The architect, via Chris, 2026-11-08: the data_provenance seal flips. It "arrives whole: dataset
 URN, as-of, ticket id". Before 0.4.82 the projector named five envelope fields for MULTI_SERIES
@@ -34,11 +34,20 @@ import re
 import pytest
 
 from tests.finance.test_the_wire_carries_what_the_engine_declares import _envelope, _fin_bindings
+from tests.finance.test_variance_decomposition_over_the_ev_fixture import (  # noqa: F401
+    _clean_env, flow_rows, gate, members, post,
+)
 from tests.planning.test_planning_archetypes_are_projected import _fns
 
-ARCH = "MULTI_SERIES"
+DECLARED = "declared-measure-route"
 FIELD = "data_provenance"
 URN = "urn:li:dataset:(urn:li:dataPlatform:file,any_asset,TEST)"
+
+#: The archetypes a finance class is drawn as, 2026-11-23. The population is DERIVED from
+#: capabilities.py (fin subject_uri -> archetype -> the verbs producing that class); this set is
+#: only the floor the derivation must not fall under, so a dropped binding fails loudly.
+FIN_ARCHETYPES_FLOOR = {"MULTI_SERIES", "FLOW_DECOMPOSITION", "SHORTFALL_GRID", "VARIANCE_TREE",
+                        "CONTRIBUTION_RANKING", "COMPETING_MEASURES", "FORECAST_MEASURE"}
 
 
 @pytest.fixture(autouse=True)
@@ -47,38 +56,79 @@ def _member(monkeypatch):
     monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
 
 
-def _bound() -> list[str]:
-    return sorted(fn for fn, arch in _fin_bindings().items() if arch == ARCH)
+def _fin_archetypes() -> set[str]:
+    """Every archetype a `fin:` class is drawn as, read from the capability rows."""
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+    return {c["archetype"] for c in PRESENTATION_CAPABILITIES if c["subject_uri"].startswith("fin:")}
 
 
-def _project(ns, env):
+def _verbs() -> dict[str, list[str]]:
+    """archetype -> the fin verbs that produce a class drawn as it."""
+    out: dict[str, list[str]] = {}
+    for fn, arch in _fin_bindings().items():
+        out.setdefault(arch, []).append(fn)
+    # fin:DeclaredMeasureSeries is served by the declared-measure route, which has no OUTPUT_URI
+    # verb; its envelope comes from the same fixture test_the_flow_table_reaches_the_card uses.
+    for a in _fin_archetypes():
+        out.setdefault(a, [DECLARED] if a == "FLOW_DECOMPOSITION" else [])
+    return {a: sorted(v) for a, v in sorted(out.items())}
+
+
+def _cases() -> list[tuple[str, str]]:
+    return [(a, fn) for a, fns in _verbs().items() for fn in fns]
+
+
+#: A fin verb whose envelope carries no data_provenance is NOT fixed here (finance_agent is not
+#: this PR's); it is a strict xfail and reported by name.
+_NO_ENVELOPE_FIELD: set[str] = set()
+
+
+def _case_param(arch, fn):
+    marks = [pytest.mark.xfail(strict=True, reason="fin's envelope does not carry data_provenance")] \
+        if fn in _NO_ENVELOPE_FIELD else []
+    return pytest.param(arch, fn, id=f"{arch}-{fn}", marks=marks)
+
+
+def _env(fn, post):
+    if fn == DECLARED:
+        status, env = post()
+        assert status == 200, env
+        return env
+    return _envelope(fn)
+
+
+def _project(ns, arch, env):
     raw = [{"persona": "PROGRAM_FINANCE_ANALYST", "expert_response": env}]
-    return ns["_project_planning_archetype"](ARCH, raw, "PROGRAM_FINANCE_ANALYST", None)
+    return ns["_project_planning_archetype"](arch, raw, "PROGRAM_FINANCE_ANALYST", None)
 
 
 def test_the_population_is_inhabited():
-    assert len(_bound()) >= 2, f"derived {_bound()} -- the binding derivation is stale"
+    derived = _fin_archetypes()
+    assert FIN_ARCHETYPES_FLOOR <= derived, f"derived {sorted(derived)} -- the capability read is stale"
+    missing = {a for a, v in _verbs().items() if not v}
+    assert not missing, f"archetypes with no fin verb deriving to them: {sorted(missing)}"
 
 
-@pytest.mark.parametrize("fn", _bound())
-def test_THE_PROVENANCE_REACHES_THE_CARD_VERBATIM(fn):
-    env = _envelope(fn)
+@pytest.mark.parametrize("arch,fn", [_case_param(a, f) for a, f in _cases()])
+def test_THE_PROVENANCE_REACHES_THE_CARD_VERBATIM(arch, fn, post):
+    env = _env(fn, post)
     assert isinstance(env.get(FIELD), str) and env[FIELD], f"{fn} sent no {FIELD} (control)"
-    got = _project(_fns(), env)
-    assert got is not None and got["archetype"] == ARCH
+    got = _project(_fns(), arch, env)
+    assert got is not None and got["archetype"] == arch
     assert got[FIELD] == env[FIELD]
 
 
-def test_WITHOUT_THE_TUPLE_ENTRY_IT_DROPS():
+@pytest.mark.parametrize("arch", sorted(_verbs()))
+def test_WITHOUT_THE_TUPLE_ENTRY_IT_DROPS(arch, post):
     """The control: the same envelope through a projector whose tuple lacks the field."""
-    fn = _bound()[0]
-    env = _envelope(fn)
+    fn = next(f for f in _verbs()[arch] if f not in _NO_ENVELOPE_FIELD)
+    env = _env(fn, post)
     ns = _fns()
-    key, carried = ns["_PROJECTED_ARCHETYPES"][ARCH]
+    key, carried = ns["_PROJECTED_ARCHETYPES"][arch]
     assert FIELD in carried
     ns["_PROJECTED_ARCHETYPES"] = {**ns["_PROJECTED_ARCHETYPES"],
-                                   ARCH: (key, tuple(f for f in carried if f != FIELD))}
-    got = _project(ns, env)
+                                   arch: (key, tuple(f for f in carried if f != FIELD))}
+    got = _project(ns, arch, env)
     assert got is not None and FIELD not in got
 
 

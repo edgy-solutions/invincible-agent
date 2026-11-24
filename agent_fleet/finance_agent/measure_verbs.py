@@ -33,6 +33,18 @@ dataset-kind row reads its own asset and carries no `source`. The seed layer shi
 `fin_funding_status: seed` (the contract carries no funding lines yet); an overlay row of the same
 id replaces it whole, so a deployment whose asset gains them re-sources it with one row.
 
+── A DATASET ROW'S VALUE, AND ITS VERSION ──────────────────────────────────────────────────
+A flow row's `value` is a column, `{minus: [a, b]}` (first less second, per row), or
+`{compare: {column: <amount>, by: <version column>}}`: the amount summed per path in each of two
+versions, the paths joined on the full path, and the second version subtracted from the first (a
+path in one version only counts as zero in the other). A contract that declares a
+`version_dimension` block (column and values) makes the version a declared dimension: the row
+lists `version` (a column or minus row, which reads one version) or `version_a` and `version_b`
+(a compare row) in
+`inputs.params`, the person chooses them as slots, and a value outside the declared list is refused.
+A version-free value over a versioned contract is refused at load (its read would sum every version
+together), and a series row over one waits for a later step.
+
 ── THE CUMULATIVE BASIS ─────────────────────────────────────────────────────────────────────
 `cumulative.*` means what the built-in `cum_*` columns mean: summed from the FIRST PERIOD OF THE
 WINDOW, skipping a period with nothing reported (`index_series.build` accumulates over the periods
@@ -73,6 +85,10 @@ try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils i
     from utils import dataset_contracts as _contracts
 except ImportError:
     from agent_fleet.utils import dataset_contracts as _contracts
+try:  # the declared fiscal calendars, with the same two-way import
+    import fiscal_calendar as _fiscal_calendar
+except ImportError:
+    from agent_fleet.finance_agent import fiscal_calendar as _fiscal_calendar
 try:  # engine-fin's own rule ids, with the same two-way import
     from asset_inputs import RULES as _FIN_RULES
 except ImportError:
@@ -125,13 +141,17 @@ _ID_RE = re.compile(r"^fin_[a-z0-9_]+$")
 _TOP_KEYS = frozenset({
     "measure_id", "verb", "name", "description", "synonyms", "anti_synonyms",
     "inputs", "computation", "outputs", "render", "policy", "menu",
-    "source", "reason", "ratified_by",
+    "source", "reason", "ratified_by", "example_ask", "group_label",
 })
 #: `source` values. Under `FIN_DATASET_URN`, `asset` is the default and `seed` the declared exception.
 SOURCE_ASSET, SOURCE_SEED = "asset", "seed"
 _SOURCES = frozenset({SOURCE_ASSET, SOURCE_SEED})
 #: Every key a row naming a BUILT-IN may carry: it says where the built-in reads, and nothing else.
 _SOURCE_KEYS = frozenset({"measure_id", "source", "reason", "ratified_by"})
+#: A built-in's row may also list it (`name` and `description`, together): the askable list.
+_BUILTIN_ROW_KEYS = _SOURCE_KEYS | {"name", "description", "example_ask", "group_label"}
+#: Optional listing fields, on a declared row and on a built-in's listing row: a non-empty string.
+_LISTING_KEYS = ("example_ask", "group_label")
 #: The render shapes this engine's runner fills: one declared series per period. A MECHANISM list,
 #: not a vocabulary: the archetype vocabulary is `capability_admission.KNOWN_ARCHETYPES`, which the
 #: flattened image cannot import, so a test ties this set to it (this set must be a subset).
@@ -142,7 +162,8 @@ COMPUTED_SHAPES = frozenset({"MULTI_SERIES", "FLOW_DECOMPOSITION"})
 KIND_STATE, KIND_DATASET = "state", "dataset"
 _SHAPES_OF_KIND = {KIND_STATE: frozenset({"MULTI_SERIES"}),
                    KIND_DATASET: frozenset({"FLOW_DECOMPOSITION", "MULTI_SERIES"})}
-_DATASET_PARAMS = frozenset({"program_id"})   # `window` is refused for this kind: a read is the whole program
+_DATASET_PARAMS = frozenset({"program_id", "version", "version_a", "version_b"})   # `window` is refused: a read is the whole program
+_VERSION_PARAMS = ("version", "version_a", "version_b")
 _URN_PREFIX = "urn:li:dataset:"               # `asset_inputs.URN_PREFIX`; the flat image cannot import it
 _DATASET_FN_KEYWORDS = frozenset({"root", "paths", "other_threshold"})
 _SERIES_FN_KEYWORDS = frozenset({"periods"})  # a dataset row drawn as MULTI_SERIES
@@ -207,6 +228,10 @@ class SourceRow:
     source: str
     source_reason: str = ""
     ratified_by: str = ""
+    name: str = ""  # a row with no name is source-only and is not listed
+    description: str = ""
+    example_ask: str = ""
+    group_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -243,7 +268,7 @@ class MeasureVerbRow:
     banner: str = ""
     levels: tuple[str, ...] = ()
     value_columns: tuple[str, ...] = ()   # one column, or the two of a `minus`
-    value_op: str = "column"              # "column" (the one column) or "minus" (first less second)
+    value_op: str = "column"              # "column" (the one column), "minus" (first less second) or "compare"
     per_path: str = "sum"                 # "sum" (rows add) or "once" (a path's amount counted once)
     other_threshold: Optional[Decimal] = None
     # A dataset row drawn as MULTI_SERIES (`_check_dataset_series`); every other row the defaults.
@@ -253,11 +278,15 @@ class MeasureVerbRow:
     per_period: dict[str, str] = field(default_factory=dict)    # keyword -> column, summed per period
     per_program: dict[str, str] = field(default_factory=dict)   # keyword -> column, one value per program
     contract: Any = None                  # a dataset row's `dataset_contracts.DatasetContract`
+    calendar_id: str = ""                 # a dataset row's resolved calendar; "" for a non-dataset row
     menu: Optional[dict[str, Any]] = None     # the `menu:` block, checked; None when undeclared
     # Where a state row reads under `FIN_DATASET_URN`; `source_reason`/`ratified_by` only for seed.
     source: str = SOURCE_ASSET
     source_reason: str = ""
     ratified_by: str = ""
+    compare_by: str = ""                  # a compare row's version column; "" for every other row
+    example_ask: str = ""     # optional: a question that routes to this measure; "" = undeclared
+    group_label: str = ""     # optional: the heading the measure is grouped under; "" = undeclared
 
     @property
     def series_key(self) -> str:
@@ -323,19 +352,32 @@ def _check_dataset(inputs: dict) -> dict:
             or len(set(levels)) != len(levels)):
         raise ValueError("inputs.dataset.levels must be a list of at least two distinct, non-empty column names")
     value = ds.get("value")
+    compare_by = ""
     if isinstance(value, str) and value.strip():
         op, columns = "column", (value,)
+    elif isinstance(value, dict) and set(value) == {"compare"}:
+        spec = value["compare"]
+        if (not isinstance(spec, dict) or set(spec) != {"column", "by"}
+                or not all(isinstance(spec[k], str) and spec[k].strip() for k in spec)
+                or spec["column"] == spec["by"]):
+            raise ValueError(
+                "inputs.dataset.value.compare must be exactly {column: <amount column>, "
+                "by: <version column>} with two distinct column names")
+        if spec["by"] in levels:
+            raise ValueError(f"inputs.dataset.value.compare.by {spec['by']!r} is also one of the levels")
+        op, columns, compare_by = "compare", (spec["column"],), spec["by"]
     elif isinstance(value, dict):
         pair = value.get("minus")
         if (set(value) != {"minus"} or not isinstance(pair, list) or len(pair) != 2
                 or not all(isinstance(c, str) and c.strip() for c in pair) or pair[0] == pair[1]):
             raise ValueError(
-                "inputs.dataset.value must be a column name or exactly {minus: [a, b]} "
-                "with two distinct column names")
+                "inputs.dataset.value must be a column name, exactly {minus: [a, b]} with two "
+                "distinct column names, or exactly {compare: {column: <amount>, by: <version column>}}")
         op, columns = "minus", tuple(pair)
     else:
         raise ValueError(
-            "inputs.dataset.value must be a column name or exactly {minus: [a, b]}")
+            "inputs.dataset.value must be a column name, exactly {minus: [a, b]}, or exactly "
+            "{compare: {column: <amount>, by: <version column>}}")
     for c in columns:
         if c in levels:
             raise ValueError(f"inputs.dataset.value column {c!r} is also one of the levels")
@@ -353,7 +395,8 @@ def _check_dataset(inputs: dict) -> dict:
         raise ValueError(
             f"inputs.other_threshold {raw_t!r} must be a Decimal string with 0 <= t < 1") from None
     return {"urn": urn, "banner": banner, "contract": ds["contract"], "levels": tuple(levels),
-            "value_columns": columns, "value_op": op, "per_path": per_path, "other_threshold": threshold}
+            "value_columns": columns, "value_op": op, "per_path": per_path, "other_threshold": threshold,
+            "compare_by": compare_by}
 
 
 def _source(raw: dict) -> tuple[str, str, str]:
@@ -454,9 +497,17 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
     read's dependency check is what leaves each one value across the program's rows.
 
     Holding the named columns to the contract is the shared reader's (`undeclared`, `not_of`); the
-    roles are engine-fin's."""
+    roles are engine-fin's.
+
+    The contract's calendar (`period.calendar`, else the one declared) is resolved here, for EVERY
+    dataset row, flow rows that read no period included, and stored in `ds["calendar_id"]`. A dataset
+    with no calendar declared is refused at load (the ruling: not ready, not a refusal per answer)."""
     contract = _contracts.load_contract(ds["contract"])
     cid = contract.contract_id
+    try:
+        ds["calendar_id"] = _fiscal_calendar.calendar_for(contract.calendar).calendar_id
+    except _fiscal_calendar.FiscalCalendarError as e:
+        raise ValueError(f"contract {cid!r}: {e}") from e
     if not contract.scoped:
         raise ValueError(f"contract {cid!r} declares scope: none; a fin dataset row filters each read to one "
                          f"program, so it reads only a scoped contract")
@@ -491,6 +542,37 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
         raise ValueError(f"inputs.dataset reads {loose} once per {scope}; contract {cid!r} declares no "
                          f"dependency of them on {scope!r}, so nothing holds them to one value")
     return contract
+
+
+def _check_versions(ds: dict, params: tuple[str, ...], series_kind: bool) -> None:
+    """The row's version params held to what its contract declares, after the join. ValueError.
+
+    A contract that declares a version makes it a dimension every read of it must name: a value
+    that is not a comparison lists `version`, a comparison lists `version_a` and `version_b`, and a
+    value that listed neither would sum every version together, a silent wrong answer."""
+    contract = ds["contract"]
+    cid, column = contract.contract_id, contract.version_column
+    listed = [p for p in _VERSION_PARAMS if p in params]
+    if series_kind:
+        if column:
+            raise ValueError(f"contract {cid!r} declares a version ({column!r}); a series by version is "
+                             f"a later step, so a MULTI_SERIES dataset row cannot read it")
+    elif ds["value_op"] == "compare":
+        if column is None:
+            raise ValueError(f"inputs.dataset.value is a comparison; contract {cid!r} declares no version")
+        if ds["compare_by"] != column:
+            raise ValueError(f"inputs.dataset.value.compare.by is {ds['compare_by']!r}; contract {cid!r} "
+                             f"declares its version column as {column!r}")
+        if "version" in listed or not {"version_a", "version_b"} <= set(listed):
+            raise ValueError("a comparison row lists version_a and version_b in inputs.params, and not version")
+        return
+    elif column and "version" not in listed:
+        raise ValueError(f"contract {cid!r} declares a version ({column!r}); a row that is not a comparison "
+                         f"lists `version` in inputs.params, or its read would sum every version together")
+    elif column and listed != ["version"]:
+        raise ValueError("a row that is not a comparison lists `version` only; version_a and version_b are a comparison's")
+    if listed and not column:
+        raise ValueError(f"inputs.params lists {listed}; contract {cid!r} declares no version")
 
 
 def _check_series(rnd: dict, *, single: bool) -> tuple[tuple[dict[str, Any], ...], Optional[dict[str, Any]]]:
@@ -534,18 +616,43 @@ def _check_series(rnd: dict, *, single: bool) -> tuple[tuple[dict[str, Any], ...
     return series, dict(target)
 
 
+def _listing_fields(raw: dict) -> dict[str, str]:
+    """`example_ask` and `group_label` as written, stripped; only those present. ValueError."""
+    out = {}
+    for k in _LISTING_KEYS:
+        if k in raw:
+            if not isinstance(raw[k], str) or not raw[k].strip():
+                raise ValueError(f"`{k}` must be a non-empty string")
+            out[k] = raw[k].strip()
+    return out
+
+
 def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow | SourceRow:
     # Raises ValueError: `compose_rows` re-raises it as MeasureVerbError WITH THE FILE NAMED.
     fns, verbs = _names(builtins)
     if raw.get("measure_id") in fns:
-        extra = sorted(set(raw) - _SOURCE_KEYS)
+        extra = sorted(set(raw) - _BUILTIN_ROW_KEYS)
         if extra:
             raise ValueError(
                 f"measure_id {raw['measure_id']!r} is a built-in finance verb; a row naming it may "
-                f"carry only {sorted(_SOURCE_KEYS)} (where it reads), never {extra}: a row cannot "
-                f"replace code")
+                f"carry only {sorted(_BUILTIN_ROW_KEYS)} (where it reads, and how it is listed), "
+                f"never {extra}: a row cannot replace code, and its cells and phrasings are the "
+                f"engine's own")
         _need(raw, "source")
-        return SourceRow(raw["measure_id"], *_source(raw))
+        listed = [k for k in ("name", "description") if k in raw]
+        if listed and len(listed) != 2:
+            raise ValueError(f"a built-in's row carries `name` and `description` together or "
+                             f"neither; this one has only {listed}")
+        for k in listed:
+            if not isinstance(raw[k], str) or not raw[k].strip():
+                raise ValueError(f"`{k}` must be a non-empty string")
+        extras = _listing_fields(raw)
+        if extras and not listed:
+            raise ValueError(f"a built-in's row carries {', '.join('`'+k+'`' for k in sorted(extras))} only with `name` and "
+                             f"`description`: they describe a listing, and this row lists nothing")
+        return SourceRow(raw["measure_id"], *_source(raw),
+                         name=raw.get("name", "").strip(), description=raw.get("description", "").strip(),
+                         **extras)
     moved = sorted(k for k in _MOVED_OUTPUT_KEYS if isinstance(raw.get("outputs"), dict)
                    and k in raw["outputs"])
     if moved:
@@ -608,6 +715,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
     if kind == KIND_DATASET:
         dataset = _check_dataset_series(inputs) if series_kind else _check_dataset(inputs)
         dataset["contract"] = _join_contract(dataset, series_kind)
+        _check_versions(dataset, params, series_kind)
         state: dict = {}
     else:
         state = dict(inputs["state"])
@@ -743,8 +851,11 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         scope_column=dataset.get("scope_column", ""), period_column=dataset.get("period_column", ""),
         status_column=dataset.get("status_column", ""), per_period=dataset.get("per_period", {}),
         per_program=dataset.get("per_program", {}), contract=dataset.get("contract"),
+        calendar_id=dataset.get("calendar_id", ""),
         menu=menu,
         source=source, source_reason=source_reason, ratified_by=ratified_by,
+        compare_by=dataset.get("compare_by", ""),
+        **_listing_fields(raw),
     )
 
 
@@ -775,12 +886,46 @@ def load_measure_sources(
     return [r for r in _compose(policy_dir, overlay_dirs, builtins) if isinstance(r, SourceRow)]
 
 
+def _engine_main():
+    try:
+        from agent_fleet.finance_agent import main as _main
+    except ImportError:  # pragma: no cover -- flat image: main always passes its own
+        import main as _main
+    return _main
+
+
+def load_askable_builtins(
+    policy_dir: Path | str | None = None,
+    overlay_dirs: list[Path] | None = None,
+    *,
+    builtins: tuple[Iterable[str], Iterable[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """The built-ins a row lists (a row with a `name`), in the shape of the askable list.
+
+    `phrasings` are the verb's routing synonyms and `cells` the engine's own `DOMAINS`, both read
+    from `main`: a built-in is not cell-gated, and a phrasing offered here routes to its own verb.
+    """
+    _main = _engine_main()
+    by_fn = {v["fn"]: v for v in _main.VERBS}
+    out = []
+    for r in load_measure_sources(policy_dir, overlay_dirs, builtins=builtins):
+        if not r.name:
+            continue
+        entry = {"verb": by_fn[r.measure_id]["verb"], "name": r.name, "description": r.description,
+                 "phrasings": list(by_fn[r.measure_id]["synonyms"]), "cells": sorted(_main.DOMAINS)}
+        # Optional keys, present only with a value. A built-in declares no shape, so none is served;
+        # a unit is the engine's own (`VALUE_UNIT`), declared and never inferred.
+        for k, v in (("example_ask", r.example_ask), ("group_label", r.group_label),
+                     ("unit", _measures.VALUE_UNIT.get(r.measure_id, ""))):
+            if v:
+                entry[k] = v
+        out.append(entry)
+    return sorted(out, key=lambda e: e["verb"])
+
+
 def _compose(policy_dir, overlay_dirs, builtins) -> list[MeasureVerbRow | SourceRow]:
     if builtins is None:
-        try:
-            from agent_fleet.finance_agent import main as _main
-        except ImportError:  # pragma: no cover -- flat image: main always passes its own
-            import main as _main
+        _main = _engine_main()
         builtins = (_measures.OUTPUT_URI, [v["verb"].split(":", 1)[-1] for v in _main.VERBS])
     d = Path(policy_dir) if policy_dir is not None else MEASURE_VERB_POLICY_DIR()
     ov = overlay_dirs if overlay_dirs is not None else MEASURE_VERB_OVERLAY_DIRS()
@@ -869,11 +1014,13 @@ def run_dataset(paths, row: MeasureVerbRow, *, program_id: str) -> list[dict[str
     return _measures._emit_money(edges, money_fields=("value",))
 
 
-def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]]) -> Optional[str]:
+def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]], *,
+                    compare: Optional[dict[str, Any]] = None) -> Optional[str]:
     """A MECHANICAL restatement of the edge table: the root's net signed value (read off the root
     edge), how many edges below the root, over how many levels, and how many sinks the collapse
     made. It states where the figure stands, never whether that is acceptable. ABSENT (None) when
-    there are no edges."""
+    there are no edges. A comparison row's `compare` (the envelope's block, counted by the read, never
+    recomputed here) adds how many paths only one of the two versions holds."""
     if not rows:
         return None
     sign = {"positive": 1, "negative": -1, "zero": 0}
@@ -883,9 +1030,18 @@ def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]]) -> Optional
     zeros = sum(1 for e in below if e["sign"] == "zero")
     sinks = sum(1 for e in below if e.get("node_kind") == "other")
     label = row.render.get("value_label", row.name)
-    return (f"{label}: net {net:.2f} across {len(below)} edges over {len(row.levels) - 1} levels, "
+    text = (f"{label}: net {net:.2f} across {len(below)} edges over {len(row.levels) - 1} levels, "
             f"{sinks} 'All other' sink(s) from the collapse, "
             f"{zeros} edge(s) at zero")
+    if compare is not None:
+        a, b = compare["version_a"], compare["version_b"]
+        text += (f" comparing {a} with {b}: {compare['paths_only_in_a']} path(s) only in {a}, "
+                 f"{compare['paths_only_in_b']} only in {b}; "
+                 f"{a} less {b} is {compare['difference_exact']}, ")
+        pct = compare["difference_percent_of_b"]
+        text += (f"{pct} of {b}" if pct is not None
+                 else f"its percent of {b} undefined because {b}'s total is zero")
+    return text
 
 
 def run_dataset_series(read, row: MeasureVerbRow) -> list[dict[str, Any]]:

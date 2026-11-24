@@ -609,12 +609,38 @@ def _supplied_resolution(request: dict) -> dict | None:
     return None
 
 
+#: A provider refusing the person's own relayed token, in Engine O's `instance_match` vocabulary
+#: (Engine O holds the same tuple, `_PERSON_TOKEN_REFUSALS`; a seal keeps them equal). Both are
+#: terminal here.
+_PERSON_TOKEN_REFUSALS = ("session_expired", "caller_refused")
+
+
+def _person_token_refusal(reason: str) -> "restate.TerminalError":
+    """The terminal error for a refused person token. FIXED text: never the token, never a body."""
+    if reason == "session_expired":
+        return restate.TerminalError(
+            "session_expired: the person's session has expired; sign in again",
+            status_code=401,
+        )
+    return restate.TerminalError(
+        "caller_refused: Engine O refused the person's token; sign in again",
+        status_code=403,
+    )
+
+
 def _resolve_ontology(
     task_description: str,
     user_email: str = "",
     entitled_domains: list | None = None,
+    *,
+    user_jwt: str = "",
 ) -> dict:
     """Call Engine O to resolve the task description into semantic context.
+
+    THE PERSON'S OWN BEARER TRAVELS (ruled 2026-11-19, Q2, part 3): when the task carries its
+    ``user_jwt`` it is relayed as the Authorization header, so Engine O binds the person from a
+    verified token; without one the call carries this engine's service token, as before. The
+    token is never printed and is in no error text.
 
     This function is executed inside ``ctx.run()`` for durable execution —
     if the pod crashes mid-flight, Restate will replay and skip this step
@@ -640,6 +666,12 @@ def _resolve_ontology(
     A TIMED-OUT CALL REFUSES, IT IS NOT RETRIED. A read timeout raises a terminal 504
     ``resolution_timeout`` (see the comment at the post): inside ``ctx.run`` an ordinary
     exception is retried by Restate, and each retry is another full model call.
+
+    A REFUSED PERSON TOKEN IS TERMINAL, NEVER RETRIED (ruled 2026-11-19, Q2 condition 3). On a
+    relayed token a 401, or a 403 naming ``ExpiredSignatureError``, is a terminal 401
+    ``session_expired``; any other 403 is a terminal 403 ``caller_refused``. An Engine O answer
+    whose ``provenance.instance_match`` names either reason is raised the same way, on both
+    paths. The service-token path keeps ``raise_for_status`` (retryable), as before.
     """
     if not str(user_email or "").strip():
         raise restate.TerminalError(
@@ -684,6 +716,12 @@ def _resolve_ontology(
     # ordinary exception is retried by Restate on every read timeout; one prompt was
     # re-resolved 4 and 8 times, each a full model call that Engine O completed. A ReadTimeout
     # therefore becomes a TERMINAL 504. ConnectionError and HTTPError stay retryable.
+    _token = str(user_jwt or "").strip()
+    if _token.lower() == "bearer":
+        _token = ""
+    elif _token.lower().startswith("bearer "):  # the gateway may store the header form
+        _token = _token[7:].strip()
+    _relay_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
     try:
         resp = requests.post(
             ONTOLOGY_RESOLVE_URL,
@@ -693,7 +731,7 @@ def _resolve_ontology(
             # `user_email` in the payload above: this is the call whose dropped identity
             # [[identity-reaches-enforcement-point]] was written for, and the credential must not
             # be mistaken for the fix to that. Two identities, one request, on purpose.
-            headers=outbound_auth_headers(
+            headers=_relay_headers or outbound_auth_headers(
                 client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
             ),
         )
@@ -704,8 +742,16 @@ def _resolve_ontology(
             f"the supervisor decides",
             status_code=504,
         ) from exc
+    if _relay_headers and resp.status_code in (401, 403):
+        if resp.status_code == 401 or "ExpiredSignatureError" in (resp.text or ""):
+            raise _person_token_refusal("session_expired")
+        raise _person_token_refusal("caller_refused")
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    _refusal = ((data or {}).get("provenance") or {}).get("instance_match")
+    if _refusal in _PERSON_TOKEN_REFUSALS:
+        raise _person_token_refusal(_refusal)
+    return data
 
 
 from orchestrator.auth import current_user_token, current_trace_id
@@ -791,6 +837,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 task.task_description,
                 resolve_caller_email,
                 request.get("entitled_domains") or [],
+                user_jwt=auth_header or "",
             ),
         )
 
@@ -806,7 +853,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
         from smolagents import tool
 
-        @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
+        @safe_observe(as_type="retriever", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
             # ADR-0016 r2 Open Items: agent_id partition.
             # Engine A and Engine E share the Mem0 collection. Without
