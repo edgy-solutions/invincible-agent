@@ -25,7 +25,7 @@ PERIOD CALENDAR. `period.calendar` (optional) names the declared period calendar
 period values are drawn from. The reader resolves it, not this module.
 
 VERSION DIMENSION. `version_dimension` (optional) declares `{column, values}`: the versions
-(baselines, estimates) the dataset's rows carry in `column`, in declared order. It is NOT the
+(baselines, estimates) the dataset's rows carry in `column`, in declared order; the column must be in grain. It is NOT the
 top-level `version`, which is the contract's own revision and is not read here. The values are
 strings, ever: an identifier of this kind is never read as a number. A reader refuses a row whose
 version is not in the list (`version_outside_list`), and a row compares or filters on versions
@@ -58,6 +58,7 @@ and `_default_dir`'s walk-up reaches `/app/contracts`.
 """
 from __future__ import annotations
 
+import datetime
 import os
 import re
 from dataclasses import dataclass, field
@@ -250,14 +251,14 @@ def _parse(raw: dict) -> DatasetContract:
             calendar = period["calendar"]
             if not isinstance(calendar, str) or not calendar.strip():
                 raise ValueError(f"period.calendar is a non-empty string; {calendar!r} is not")
-    version_column, versions = _parse_version(raw.get("version_dimension"), types)
+    version_column, versions = _parse_version(raw.get("version_dimension"), types, key)
     return DatasetContract(contract_id=contract_id, types=types, required=tuple(required),
                            key=key, scope=scope, dependencies=dependencies, rules=dict(rules),
                            personal=frozenset(personal), calendar=calendar,
                            version_column=version_column, versions=versions)
 
 
-def _parse_version(version: Any, types: dict[str, str]) -> tuple[str | None, tuple[str, ...]]:
+def _parse_version(version: Any, types: dict[str, str], key: Any) -> tuple[str | None, tuple[str, ...]]:
     """`(column, values)` of the optional `version_dimension` block, else `(None, ())`. ValueError."""
     if version is None:
         return None, ()
@@ -271,11 +272,20 @@ def _parse_version(version: Any, types: dict[str, str]) -> tuple[str | None, tup
         raise ValueError(f"version_dimension.column {column!r} is not a declared column")
     if types[column] != "string":
         raise ValueError(f"version_dimension.column {column!r} is declared {types[column]!r}; a version column is a string")
+    if column not in key:
+        raise ValueError(f"version_dimension.column {column!r} is not in grain; each version's rows are one grain "
+                         f"apart, so the key holds the version column")
     if not isinstance(values, list) or not values:
         raise ValueError("version_dimension.values is a non-empty list of strings")
     for v in values:
-        if isinstance(v, int) and not isinstance(v, bool):
+        if isinstance(v, bool):
+            raise ValueError(f"version_dimension.values holds the boolean {v!r}; a version is a string, so quote it")
+        if isinstance(v, int):
             raise ValueError(f"version_dimension.values holds the number {v!r}; a version is a string, so quote it")
+        if isinstance(v, float):
+            raise ValueError(f"version_dimension.values holds the float {v!r}; a version is a string, so quote it")
+        if isinstance(v, datetime.date):
+            raise ValueError(f"version_dimension.values holds the date {v.isoformat()}; a version is a string, so quote it")
         if not isinstance(v, str) or not v.strip():
             raise ValueError("version_dimension.values holds only non-empty strings")
     if len(set(values)) != len(values):

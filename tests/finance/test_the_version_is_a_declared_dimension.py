@@ -19,6 +19,7 @@ Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:ca
 from __future__ import annotations
 
 import copy
+import datetime
 import os
 from decimal import Decimal
 from pathlib import Path
@@ -222,6 +223,10 @@ def test_the_contracts_own_revision_is_not_the_version_dimension():
     ({"column": "version", "values": ["A", "A"]}, "repeats"),
     ({"column": "version", "values": ["A", ""]}, "non-empty strings"),
     ({"column": "version", "values": ["A", 2024]}, "quote it"),
+    ({"column": "version", "values": ["A", 1.5]}, "holds the float 1.5; a version is a string, so quote it"),
+    ({"column": "version", "values": ["A", True]}, "holds the boolean True; a version is a string, so quote it"),
+    ({"column": "version", "values": ["A", datetime.date(2026, 1, 1)]},
+     "holds the date 2026-01-01; a version is a string, so quote it"),
     ({"column": "version"}, "non-empty"),
     ({"values": ["A"]}, "not a declared column"),
     (["A"], "mapping"),
@@ -605,3 +610,43 @@ def test_the_verdict_names_the_difference_and_percent_as_served(post):
     _s, env = post(version_a=GOV, version_b=PMB)
     block = env["compare"]
     assert f"{GOV} less {PMB} is {block['difference_exact']}, {block['difference_percent_of_b']} of {PMB}" in env["verdict"]
+
+
+# -- 11. the totals are plain decimals ----------------------------------------------------------------
+
+def test_the_two_totals_are_plain_decimals_never_in_exponent_form(post, world):
+    """`str(Decimal('1E-8'))` is exponent form; the block serves `format(x, 'f')`."""
+    path = ("1", "1.1", "1.1.1", "1.1.1.1", "CA-01")
+    rows = [{"program_id": PROG_B, "wbs_2": path[0], "wbs_3": path[1], "wbs_4": path[2], "wbs_5": path[3],
+             "control_account": path[4], "period": "P1", "version": v, "amount": amount}
+            for v, amount in ((GOV, 3e-8), (PMB, 1e-8))]
+    world.frames[URN_B] = pl.DataFrame(rows, schema_overrides={"amount": pl.Float64})
+    assert str(Decimal(str(1e-8))) == "1E-8"            # the control: str() would have served this
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    block = env["compare"]
+    assert block["total_a_exact"] == "0.00000003" and block["total_b_exact"] == "0.00000001"
+    assert not ({"E", "e"} & set(block["total_a_exact"] + block["total_b_exact"]))
+
+
+def test_a_version_column_outside_grain_is_refused_and_inside_grain_loads():
+    raw = _b_raw()
+    raw["grain"] = [g for g in raw["grain"] if g != "version"]
+    with pytest.raises(ValueError, match=r"version_dimension.column 'version' is not in grain; .*key holds the version column"):
+        dataset_contracts._parse(raw)
+    raw["grain"] = [*raw["grain"], "version"]                    # the control: the same contract, the column in grain
+    assert dataset_contracts._parse(raw).version_column == "version"
+
+
+# -- 12. uneven counts: a swap of the two counts must not survive -------------------------------------
+
+def test_uneven_only_in_counts_are_read_to_the_right_side(post, world):
+    """Two paths only in A (CA-09, CA-11) and one only in B (CA-10): (2, 1) forward, (1, 2) swapped."""
+    extra = {"program_id": PROG_B, "wbs_2": "3", "wbs_3": "3.1", "wbs_4": "3.1.1", "wbs_5": "3.1.1.3",
+             "control_account": "CA-11", "period": "P1", "version": GOV, "amount": 7.0}
+    world.frames[URN_B] = pl.concat([b_frame(), pl.DataFrame([extra], schema_overrides={"amount": pl.Float64})])
+    _s, fwd = post(version_a=GOV, version_b=PMB)
+    _s, rev = post(version_a=PMB, version_b=GOV)
+    assert (fwd["compare"]["paths_only_in_a"], fwd["compare"]["paths_only_in_b"]) == (2, 1)
+    assert (rev["compare"]["paths_only_in_a"], rev["compare"]["paths_only_in_b"]) == (1, 2)
+    assert f"2 path(s) only in {GOV}, 1 only in {PMB}" in fwd["verdict"]
