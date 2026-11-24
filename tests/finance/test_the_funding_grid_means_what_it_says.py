@@ -50,7 +50,7 @@ from __future__ import annotations
 import pytest
 
 from agent_fleet.finance_agent import measures as m
-from agent_fleet.finance_agent.entities import PERIOD_ORDER, periods_in
+from agent_fleet.finance_agent.entities import period_order, periods_in
 from agent_fleet.finance_agent.seed import build_seed
 
 STATE = build_seed()
@@ -149,5 +149,5 @@ def test_the_grid_is_ordered_by_subject_then_period(rows):
     taking funding rows directly can be handed them out of order in one line, which is where
     this belongs.
     """
-    ordered = sorted(rows, key=lambda r: (r["subject_id"], PERIOD_ORDER[r["period"]]))
+    ordered = sorted(rows, key=lambda r: (r["subject_id"], period_order()[r["period"]]))
     assert rows == ordered

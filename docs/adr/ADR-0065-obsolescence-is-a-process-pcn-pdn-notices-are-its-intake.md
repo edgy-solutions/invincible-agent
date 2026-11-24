@@ -217,6 +217,12 @@ The draft raised four places where the brief and what is on disk disagreed. The 
    - **Ruled:** `ImpactRow = {end_item, program, component, qty_per, population, stock, configuration, as_of,
      data_provenance}`, with `end_item` an identity (section 4). ca reshapes to it.
    - "Absent is not zero" stands as written.
+   - **Amended 2026-11-19, as SDK v0.9.26 ships it:** `ImpactRow = {end_item, program, component, qty_per,
+     population, stock, configuration, as_of, data_provenance, absent_reason}`. `absent_reason` is the row's own
+     `{field: short phrase}` for an absent `population`, `stock` or `as_of`. Each `data_provenance` entry is one
+     input and carries its own reasons. Source: the architect's ruling of 11-19, via Chris, that the provenance
+     entry "must be able to carry what is served", and the order of the same night to pin the served row to
+     v0.9.26. The row-level field was lane 74's ask to ca. Recorded for the architect to confirm.
 
 ## What this does not establish
 

@@ -875,12 +875,14 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # THE DOMAIN-NAMED PAIR IS KEPT rather than swapped out. Nothing is known to read it, but
     # "nothing reads it" is exactly the claim this whole class of defect is made of, and
     # retiring a field the engine still emits is a separate decision from fixing a join.
+    # `data_provenance` ADDED 2026-11-23 (cortex, under the architect's 11-23 order 'show the source and
+    # as-of on a finance answer'): an envelope field, carried only when the producer sends it.
     "COMPETING_MEASURES": ("rows", ("spread", "spread_percent_of_bac",
                                     "lowest_value", "highest_value", "reference_value",
                                     "lowest_eac", "highest_eac",
                                     "methods_compared", "methods_answered",
                                     "all_methods_answered", "verdict", "value_unit",
-                                    "value_label", "scope_label")),
+                                    "value_label", "scope_label", "data_provenance")),
     "STEP_LADDER": ("steps", ("price", "unit_price", "value_unit", "sums", "quantity", "rate_vintage", "scope_label")),
     "THRESHOLD_GRID": ("rows", ("value_label", "scope_label")),
     "MATRIX_GRID": ("rows", ("level_label", "scope_label", "as_of")),
@@ -908,7 +910,9 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # initiative" fall through to KNOWLEDGE_DOCUMENT and answer
     # "No content available." Picked up here because the arm is mechanical
     # once the contract exists.
-    "SHORTFALL_GRID": ("rows", ("value_label", "value_unit", "scope_label", "verdict")),
+    # `data_provenance` ADDED 2026-11-23 (cortex, under the architect's 11-23 order 'show the source and
+    # as-of on a finance answer'): an envelope field, carried only when the producer sends it.
+    "SHORTFALL_GRID": ("rows", ("value_label", "value_unit", "scope_label", "verdict", "data_provenance")),
 
     # ── ENGINE F (FINANCE), ADR-0045. Added 2026-09-02, MEASURED FIRST. ────────────────
     #
@@ -932,7 +936,9 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # is RECURSIVE — rows[0] carries a nested `contributors` — and rows pass through
     # VERBATIM here, so the nesting survives, which is what ADR-0045 required when it
     # ruled the verb returns the tree and refused flattening.
-    "VARIANCE_TREE": ("rows", ("value_label", "value_unit", "scope_label", "verdict")),
+    # `data_provenance` ADDED 2026-11-23 (cortex, under the architect's 11-23 order 'show the source and
+    # as-of on a finance answer'): an envelope field, carried only when the producer sends it.
+    "VARIANCE_TREE": ("rows", ("value_label", "value_unit", "scope_label", "verdict", "data_provenance")),
     # `threshold` and `threshold_defaulted` ADDED 2026-09-19, and this is the THIRD time this
     # tuple has silently dropped a field the producer emitted correctly — see the `reference` and
     # `verdict` note below, which describes the identical mechanism. cost_agent/measures.py:788-789
@@ -953,10 +959,14 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # first and the `rendered_output` envelope second. Without this entry the component never
     # carries it and the export renders "method not supplied" about four producers that supply
     # one — green on both sides and blank on the card.
+    # `data_provenance` ADDED 2026-11-23 (cortex, under the architect's 11-23 order 'show the source and
+    # as-of on a finance answer'): an envelope field, carried only when the producer sends it.
     "CONTRIBUTION_RANKING": ("rows",
                             ("value_label", "value_unit", "scope_label", "verdict",
-                             "threshold", "threshold_defaulted", "method")),
-    "FORECAST_MEASURE": ("rows", ("value_unit", "scope_label", "verdict")),
+                             "threshold", "threshold_defaulted", "method", "data_provenance")),
+    # `data_provenance` ADDED 2026-11-23 (cortex, under the architect's 11-23 order 'show the source and
+    # as-of on a finance answer'): an envelope field, carried only when the producer sends it.
+    "FORECAST_MEASURE": ("rows", ("value_unit", "scope_label", "verdict", "data_provenance")),
     # MULTI_SERIES (ADR-0045 follow-on, 2026-09-02). `series` is in the PASSTHROUGH and the
     # archetype REQUIRES it — the projector carries only what the producer supplied, so a verb
     # that forgets to declare its series produces a card that refuses by name rather than one
@@ -1053,6 +1063,21 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # producer's words in a null cell instead of "-". Ruled by Chris 11-19; never a 0.
     "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
                                        "state_vocabulary", "group_by", "absent_reason")),
+
+    # ── FLOW_DECOMPOSITION (Lane 1; held from 0.4.81, opened 2026-11-23). Runbook site 2. ──
+    #
+    # Bound for a dataset-kind measure row (#255): `rows` is the edge table, root edge first,
+    # passed through verbatim. Cortex proposed the tuple and Chris accepted it (2026-11-05:
+    # "Projector row accepted as proposed"). It was ruled for 0.4.80 and missed that cut; it
+    # was held until a menu carried the shape (#513: each dataset row declares its own `menu:`).
+    #
+    # `render` travels WHOLE because `unit` and `other_label` live only inside it; the card
+    # reads `render.value_label` first and the top-level `value_label` only as a fallback.
+    # `data_provenance` IS carried. It was not in the accepted three-field tuple, but the 11-08
+    # ruling (it "arrives whole: dataset URN, as-of, ticket id") answered cortex's 11-06 question
+    # for every served table, as MULTI_SERIES above already carries it; cortex's row reads it.
+    # The seal is tests/finance/test_the_flow_table_reaches_the_card.py.
+    "FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict", "data_provenance")),
 }
 
 

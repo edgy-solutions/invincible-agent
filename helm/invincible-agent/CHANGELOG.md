@@ -1,10 +1,26 @@
 # invincible-agent helm chart — changelog
 
-## Unreleased — after 0.4.91
+## 0.4.92 — not yet cut
 
-- **Electric can run as its own database role, reading only the tables the shapes policy names** (saf; step 3 of the sync-service exposure plan). New switch `electric.db.enabled`, **default off**: a bare render is unchanged. When on, a hook Job (as `postgres`, idempotent) creates `electric.db.role` with a password from the generated-and-kept Secret `<release>-electric-db`, grants `SELECT` on exactly the tables in `policy/electric_shapes.yaml` (the chart carries a byte-equal copy, `files/policy/electric_shapes.yaml`, read at render time: an empty list fails the render), makes the publication over them with `REPLICA IDENTITY FULL`, and can revoke `REPLICATION` from the main user (`electric.db.revokeReplicationFromMainUser`, off). The Electric pod then has no `envFrom` and no init container. **Roll blockers, unanswered:** step-0 item 2 (does 1.0.13 have a manual-publishing mode) and item 3 (what else relies on the main user's `REPLICATION`). Turning it on resets Electric's slot and publication, so clients refetch once. Not in the ruled 0.4.91 list; rides the release after unless ruled.
+**Opened at the 0.4.91 cut** (the architect, 2026-11-22: "Open `## 0.4.92 — not yet cut` now as a small PR, and after every cut from now on"). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.91 one. `Chart.yaml` stays at 0.4.91 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
 
-## 0.4.91 — not yet cut
+- **engine-fin reads its fiscal calendar from the deployment, never from a constant** (fin; the architect's ruling, 2026-11-23). **Chart change:** engine-fin reads `FIN_CALENDAR_OVERLAY_DIRS`, and `policyOverlay.components.engine-fin` gains the row `{dir: fin_calendar, env: FIN_CALENDAR_OVERLAY_DIRS, optional: true}`. The sandbox sets the variable to the sample FY26 calendar (`policy/overlays/sample/fin_calendar`), so nothing changes there. **A deployment that sets no calendar has every period refused** (`period_outside_calendar`), and a question over a period window is refused as not in the model. **A private policy repo delivered by `policyOverlay` needs a `fin_calendar` directory BEFORE it rolls a chart carrying this.** Shape and rules: `docs/contracts/finance-overlays.md` section 8.
+
+- **No pod's libraries call the public internet on their own account; engine A's log loses three noise lines** (74; seen on a deployment with no route out). **Chart change:** the release ConfigMap gains `MEM0_TELEMETRY: "False"` (mem0 sent usage events to its vendor's analytics service from every engine using it) and `LITELLM_LOCAL_MODEL_COST_MAP: "True"` (LiteLLM fetched its cost map from GitHub at import and, with no egress, waited out the handshake timeout before using the copy it ships with; no fleet code reads the cost map). A workload's own `env` still overrides either. **Code:** the mem0 Weaviate adapter copies as itself, so mem0's config copy no longer fails and logs `'ConnectionSync' object has no attribute '_client'` (mem0's fallback already returned this same adapter: no behaviour change); the mem0 lookup on engines A and E is recorded as a Langfuse `retriever`, not a span with an `Invalid as_type` warning. Seals render the chart and let each library read the rendered value.
+
+- **Only the BFF can reach Electric** (saf; step 2 of the sync-service exposure plan). A NetworkPolicy `<release>-electric-ingress` admits ingress to the Electric pods from the cortex-bff pods only, on `electric.port`. It has its own switch, `electric.networkPolicy.enabled` (default false: enabling a perimeter is the operator's decision, and the CNI is unmeasured), so it does not wait on the fleet gate `networkPolicy.enabled`. The selectors come from two helpers (`electricComponent`, `cortexBffComponent`) that the Electric and BFF templates also label themselves with; a seal renders both and compares, and a census fails when any other pod names Electric. **Whether this cluster's CNI enforces NetworkPolicy is unmeasured**: the roll has two checks (a call to Electric from a non-BFF pod must fail; the BFF's shape read must answer), each needing approval. Not in the ruled 0.4.91 list; rides the release after unless ruled.
+
+- **`/menu_blocks` is keyed by verb, and serves the declared measures' menu blocks** (74; the architect, 2026-11-22: "/menu_blocks is keyed by verb. Serve finance's menu blocks from the BFF for declared measures."). A placement is keyed by its declaring verb, so distinct verbs may share a subject and archetype; only a verb declared twice is left out and named. When `MEASURE_VERB_OVERLAY_DIRS` is set, the BFF also serves each declared measure row's in-row `menu:` block, declared by the verb engine-fin registers. **Chart change:** with `policyOverlay` on, `components.cortex-bff` gains `{dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS, optional: true}`, so the BFF reads the same measure rows as engine-fin. `values-sandbox.yaml` changes a comment only: the sandbox already gives both pods the env through the shared configmap. With the overlay off and no env set, nothing changes. **Before the roll:** nothing. The response shape is unchanged.
+
+- **The finance source reaches five more cards.** The finance source (`data_provenance`) now reaches the CONTRIBUTION_RANKING, VARIANCE_TREE, SHORTFALL_GRID, COMPETING_MEASURES and FORECAST_MEASURE cards; before, the projector dropped it for every finance tuple but MULTI_SERIES and FLOW_DECOMPOSITION.
+
+- **`/askable_measures` serves the list of askable measures** (74; the architect, 2026-11-22: "A served list of askable measures, through the same mechanism, so a person can discover them", and 2026-11-23: "The askable list names nothing finance-specific and is filtered by the caller's cells"). It is a new BFF route with the same gate and overlay switch as `/menu_blocks`. It lists each declared measure row the caller's cells hold, and each built-in measure from its listing row, through the measure engine's own loader. Each entry carries its verb, name, phrasings and cells, plus `shape`, `unit`, `example_ask` and `group_label` exactly as declared. A built-in declares no shape, and nothing is defaulted. A verb declared on both sides is left out and named in `invalid`, and an unreadable built-in listing is named there too, while the declared rows are still served. Built-in measures are listed whatever `MEASURE_VERB_OVERLAY_DIRS` says; declared rows are read only when it is set. **No chart change**: the BFF's image only. **Before the roll:** nothing.
+
+- **The as-of setting (chart half).** New key `userDeployments.dag-tools.broker.asOf.readers`, default `[]`: the source types the broker reads a data as-of for. The chart refuses a type the pinned broker does not register, and at this pin it registers none. A non-empty list renders `DAG_TOOLS_AS_OF_READERS`, which dag-tools' broker is to read. **The roll:** nothing renders differently; the default is today's 'as-of unavailable'.
+
+- **Two more libraries stop calling home** (74; follow-up to the "No pod's libraries call the public internet" bullet above). **Chart change:** the release ConfigMap gains `DATAHUB_TELEMETRY_ENABLED: "false"` (the DataHub client library uploaded a usage event with an anonymous client id to its vendor's analytics service) and `HF_HUB_DISABLE_TELEMETRY: "1"` (the Hugging Face client library pinged its hub and added installed-framework versions to its user agent). Seals replace the HTTP send and show no request with the rendered value and a request to the host each library names without it.
+
+- **Engine O writes its `routing_decision` row on the live path** (74; the architect, 11-23: "The audit row on the live path"). `/classify_predicate`, the route that picks the verb for a supervisor-routed question, now writes exactly one row per request on every exit: a pick, an UNKNOWN, the Contract B short-circuit, no candidate, a search error and a classifier error. Each refusal or fallback sets its own `fallback_reason`. `user_id` and `entitled_domains` come from the verified binding. Every row, `/search_predicates`' included, gains `endpoint` (the route that wrote it) and `classifier_confidence`/`classifier_reasoning`; on an error exit the reasoning is the exception's type, never its message. `source` keeps its ADR-0015 meaning (the population). The supervisor sends the run id as `request_id`, and an Engine O that has not been rolled ignores it. **No chart change**: engine O's and the supervisor's images. Do not roll it during perf's runs.
 
 - **Electric answers only a request that carries its API secret, and the BFF proxy forwards an allow-list of parameters** (saf; step 1 of the sync-service exposure plan). `electric.insecure` now defaults `false`; Electric reads `ELECTRIC_SECRET` and the BFF reads `ELECTRIC_SHAPE_SECRET` from ONE Secret (`<release>-electric-api`, key `secret`, generated on first install and kept on upgrade by `lookup`; `electric.apiSecret.name` names a pre-made one instead), both by `secretKeyRef`, never a literal. `/electric/shape` forwards only the parameters in `_ELECTRIC_FORWARD_PARAMS` (what `@electric-sql/client` sends); `where`, `replica`, `secret`, `api_secret` and any unknown key are dropped, and the BFF's own `secret=` is added. Roll note: the BFF and Electric must roll together (the chart bump restarts both); between the two, a shape read answers 401/502. Not in the ruled 0.4.91 list; rides the release after unless ruled.
 
@@ -12,27 +28,96 @@
 
 - **Neither Electric nor the BFF writes the Electric secret to a log** (saf, found by the coordinator and gov on #486). Electric 1.0.13 takes the secret only as `?secret=` and logs the query string at `info` (its default), so the chart now sets `ELECTRIC_LOG_LEVEL` from `electric.logLevel` (default `warning`). On the BFF, httpx logs the full upstream URL at INFO; nothing leaked only because boot's `basicConfig()` leaves the root at WARNING, so the `httpx` and `httpcore` loggers are pinned to WARNING explicitly, and the proxy's upstream-error line logs the exception class only. `electric.insecure: true` crashloops Electric by design (insecure plus a secret refuses to boot); do not make the secret conditional on it. Sealed, each with a mutant.
 
+- **Electric can run as its own database role, reading only the tables the shapes policy names** (saf; step 3 of the sync-service exposure plan). New switch `electric.db.enabled`, **default off**: a bare render is unchanged. When on, a hook Job (as `postgres`, idempotent) creates `electric.db.role` with a password from the generated-and-kept Secret `<release>-electric-db`, grants `SELECT` on exactly the tables in `policy/electric_shapes.yaml` (the chart carries a byte-equal copy, `files/policy/electric_shapes.yaml`, read at render time: an empty list fails the render), makes the publication over them with `REPLICA IDENTITY FULL`, and can revoke `REPLICATION` from the main user (`electric.db.revokeReplicationFromMainUser`, off). The Electric pod then has no `envFrom` and no init container. **Roll blockers, unanswered:** step-0 item 2 (does 1.0.13 have a manual-publishing mode) and item 3 (what else relies on the main user's `REPLICATION`). Turning it on resets Electric's slot and publication, so clients refetch once. Not in the ruled 0.4.91 list; rides the release after unless ruled.
+
+## 0.4.91 — 2026-11-21
+
+**0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
+
+| order | PR | merge | lane | what |
+| --- | --- | --- | --- | --- |
+| 1 | #430 | `638cdffc` | Lane 1 | The three citation checks pass: qualify cross-repo cites, scan tracked files only |
+| 2 | #443 | `171e53ff` | saf | Store the review domain on the receipt; put the range scope in the query (supersedes #407) |
+| 3 | #400 | `03eb71db` | gov | Docs gate: name the defect test for what it tests (a defect is a deny) |
+| 4 | #432 | `4b04940b` | saf | Declare GET /me/queue and /me/needs_you in the endpoint-gating manifest |
+| 5 | #441 | `147bda29` | 74 | A promotion starts its kind's declared review workflow, once (B2; dormant until the SDK pin) |
+| 6 | #375 | `136793de` | fin | An asset answer cites the as-of and ticket id of the read it computed over |
+| 7 | #434 | `20a18158` | 74 | The NetworkPolicy seal reads accepted-issuer lists as compared strings, not destinations |
+| 8 | #438 | `6b3e8efd` | Lane 1 | pre-push reads the Lane trailer from git's trailer parse, not the whole message |
+| 9 | #433 | `d3b4654a` | Lane 1 | Routing reds A, B and C: give the fakes a run, read the right emit, exempt one re-raise |
+| 10 | #435 | `18b8ac46` | 74 | An advisory suite job on every PR splits the reds into known and new |
+| 11 | #408 | `e7c79e73` | saf | Record an approved access grant in a ledger, not in a file in the pod |
+| 12 | #412 | `329a5533` | saf | The seed reads the approved-grant ledger: the one pruner keeps approved grants |
+| 13 | #414 | `7f341e38` | saf | engine-r grant path: exclusion set, two-approver quorum, ledger backfill, add-only apply |
+| 14 | #446 | `1f22907f` | Lane 1 | 0.4.90 notes: who engine O believes; the CHANGELOG opens 0.4.91 as not yet cut |
+| 15 | #437 | `9f4ec2b7` | Lane 1 | canvas/seed refuses a domain the caller does not hold, as /orchestrate does |
+| 16 | #447 | `861d3c5e` | 74 | known_reds: drop the entry for a parametrized id that no longer exists |
+| 17 | #439 | `b876e5ac` | saf | A re-grant is its own approved act: the latest act on a grant wins (DRAFT) |
+| 18 | #440 | `8924ebc0` | saf | A revocation is effective at once: the BFF removes the one revoked reader (DRAFT) |
+| 19 | #427 | `47548f46` | 74 | Serve the menu: GET /menu_blocks, with where-used's block as its first row |
+| 20 | #442 | `4ef6e3ae` | Lane 1 | Tests that call a live cluster are marked live and leave the default run |
+| 21 | #448 | `b1e42ff5` | 74 | Where-used serves the "no source" reason for a column it cannot fill |
+| 22 | #450 | `d2bd3b42` | 74 | The review serves an abstention's reason and its candidate dispositions |
+| 23 | #451 | `097c59a9` | 74 | The contract pin asserts on the payload the builder builds |
+| 24 | #449 | `fb2c7905` | 74 | The review keeps its source reference; its evidence resolves from it |
+| 25 | #452 | `c4e88dea` | 74 | Engine O binds the verified caller, never the request body |
+| 26 | #453 | `020eb089` | saf | Declare POST /access_grants/revoke in the gating manifest |
+| 27 | #454 | `a0811d24` | saf | Clear a stale receipt domain where a task is filed, not where one is found |
+| 28 | #456 | `0f6945a5` | 74 | Drop the netpol known reds fixed by #434; advisory flags merged-PR citations as stale |
+| 29 | #457 | `d566f030` | saf | The viewer double imports the case projection instead of borrowing it (q2b) |
+| 30 | #455 | `d6375304` | saf | A backfill proposes the row of a key's latest act |
+| 31 | #459 | `2ee1e731` | saf | The domain-key census declares its one read by function, with a reason |
+| 32 | #460 | `9dca8494` | 74 | Q6's fill_slots arms call engine O as a verified caller, as #452 requires |
+| 33 | #458 | `2c83d64d` | 74 | Engine O honours a declared delegation: a service acts for a person only with a policy row |
+| 34 | #461 | `601361ac` | saf | The case-runner census decides POST /access_grants/revoke subject |
+| 35 | #462 | `84e5592a` | saf | The census sorts hits by line and seals the path in its key |
+| 36 | #463 | `a1696ce7` | 74 | The tests #452 left red now call engine O as a verified caller |
+| 37 | #464 | `5f19b5bb` | saf | The census seals its stale arm: the message names the entry and both counts |
+| 38 | #465 | `1654dcc4` | 74 | Engine O /plan: an unparseable planner answer degrades; no 502 leaks the prompt |
+| 39 | #466 | `44909336` | Lane 1 | 0.4.91 pins: fleet to dag-tools 0.17.0 and iagent-mesh SDK v0.9.25 |
+| 40 | #467 | `332fa062` | Lane 1 | Pin data_analyst to dag-tools v0.17.0, on its own |
+| 41 | #470 | `7c79a6c1` | 74 | The refusal envelope forwards the producer's plain-language message |
+| 42 | #471 | `8673deb2` | 74 | A review suspended under the live release replays its artifact_uri write |
+| 43 | #468 | `f6a017ce` | fin | engine-fin: a program is an instance row a deployment declares |
+| 44 | #469 | `36f3451a` | perf | init_baml_client returns the client unconfigured when with_options fails (the #431 reds) |
+| 45 | #472 | `addc97ed` | Lane 1 | The root's dag-tools note names the pins the two engines carry today |
+| 46 | #474 | `e5ee97df` | Lane 1 | The SDK contract tests read the installed iagent_mesh, not a sibling checkout |
+| 47 | #473 | `28e4b691` | 74 | Three seals catch up with 74's merged #470, #458 and #427 |
+| 48 | #476 | `384b4810` | perf | Declare packaging in the dev dependency group (fixes the import-census red from #425) |
+| 49 | #475 | `77dd101f` | saf | The person-guard census declares its one identity comparison by function |
+| 50 | #480 | `141eed43` | Lane 1 | known_reds: name every site in three causes; retire the self-sustaining anchor red |
+| 51 | #478 | `0d6aef85` | 74 | The input-declared pool upper-cases its scope, and the caller census names it |
+| 52 | #479 | `fc9ebaf9` | 74 | Neo4jGraph declares is_safety_critical and never answers it |
+| 53 | #481 | `91305a37` | Lane 1 | Re-issue a grouped review from its own source reference |
+| 54 | #482 | `9a2e555f` | Lane 1 | Propose the identity prefix: one realm, many instances (PROPOSED) |
+| 55 | #483 | `a925b320` | Lane 1 | Fold gov's notes into the identity-prefix proposal (still PROPOSED) |
+| 56 | #477 | `77222c6b` | 74 | A renderer is never a routing candidate, and dispatch abstains if one arrives |
+| 57 | #484 | `ea32374d` | Lane 1 | Record the architect's ruling on identity-prefix question 1 |
+| 58 | #393 | `06f8ac8d` | fin | The shared reader withholds personal_data columns by default |
+| 59 | #485 | `0c97936e` | Lane 1 | Pin cortex to 1660b84 for 0.4.91 |
+| 60 | #487 | `08ce14f9` | Lane 1 | The fleet on SDK v0.9.26, and where_used serves its row (0.4.91) |
+| 61 | #488 | `8e5e3655` | fin | Pin the contract reader's template copy to dag-tools v0.17.0 |
+| 62 | #498 | `97944822` | fin | Declare polars as a dev dependency: the import census is green again |
+| 63 | #490 | `81f5035a` | 74 | Engine O's resolve fan-out carries the person as themselves (Q2) |
+| 64 | #499 | `bee9cbb6` | Lane 1 | CHANGELOG 0.4.91: bullets for #478, #481 and #393 |
+
+**Before the roll:**
+- Show Chris the values diff against the live release, re-run on this cut's tree, and wait for his approval. Measured before the cut (`8e5e3655`): 7 effective values change: the frontend, central-gateway and user-deployment digests; `domainBroker.meshSdkVersion` v0.9.20 -> v0.9.26; the `menu_blocks` (cortex-bff) and `fin_instances` (engine-fin) overlay directories; and the sandbox's `FIN_INSTANCE_OVERLAY_DIRS`. pub-tools is unchanged.
+- The chart version moves, so every pod template changes and every pod restarts. List STARTED Dagster runs first (a dead worker holds a slot).
+- #477: Predicate rows with an empty `endpoint_url` that are not `rendersAs` must count 0. Lane 1 read the Weaviate `Predicate` collection from engine O's pod at 2026-11-21 05:02Z: 0 (170 rows; 86 with an empty `endpoint_url`, all `rendersAs`).
+- The `access-revokers` group (revocation, `policy/groups.yaml`) is live in the sandbox directory: Chris synced it before the roll, as a new group requires.
+- **Roll order: the BFF before the Topaz seed job.**
+- #481: the roll re-issues nothing. A grouped review is re-issued only by a later call that names `reissue_of`.
+
 - **The person-guard census declares its one identity comparison** (saf; master was red since #414). `grant_flow.backfill_ledger` compares the repository identity's `Auth-Via` header with `"service"`; it is not an Initiator kind and is already allowlist-shaped. The matcher stays broad (a copy written as `initiator.role == "service"` is still caught); the row is declared by (path, function) with a count and a reason, checked both ways. Test only.
 
 - **The case-runner census decides `POST /access_grants/revoke`** (saf; master was red since #408 added the route). The census flagged `subject` as a person-shaped field. It is the OWNER of the grant being revoked, not a principal the caller acts for; the actor is the caller, asked `can_invoke mesh:revokeAccessGrant`, and no service identity is in the `access-revokers` group. The field is EXCLUDED with that reason, backed by a seal that the case runner is refused at the gate (403 `not_entitled_to_revoke_access`, nothing recorded) and a control that a revoker records. The exclusion is agreed by gov 11-19 (#461, comment 7014541192); architect's agreement pending. Test only; no chart change.
 
-**What 0.4.91 owes so far:** the 11-18 drain and the 11-19 merges, each merged by sha after the 0.4.90 tag (`36393237`). The cut writes its table.
+- **engine-o: the input-declared pool upper-cases its scope like its two siblings** (74; #478). `_input_declared_pool`, resolve's input-declared grounding, is the third caller of `predicate_hybrid_search`. It handed the bound grant over as-is, while `/search_predicates` and `/classify_predicate` upper-case it first. The incumbent's domain filter is case-sensitive and the mesh arm's is not, so a lower-case scope made the two arms return different rows. The census in `test_the_migrated_predicate_route_returns_the_same_rows` now names all three callers. Both of 74's known_reds lines leave in the same PR. No chart change.
 
-| PR | merge |
-| --- | --- |
-| #430 | `638cdffc` |
-| #443 | `171e53ff` |
-| #400 | `03eb71db` |
-| #432 | `4b04940b` |
-| #441 | `147bda29` |
-| #375 | `136793de` |
-| #434 | `20a18158` |
-| #438 | `6b3e8efd` |
-| #433 | `d3b4654a` |
-| #435 | `18b8ac46` |
-| #408 | `e7c79e73` |
-| #412 | `329a5533` |
-| #414 | `7f341e38` |
+- **A grouped review can be re-issued from its own source reference** (Lane 1; #481). Restate workflow keys are single-use, so a review that fails when decided cannot be driven again under its old key. `POST /reviews` takes an optional `reissue_of`. The BFF re-composes the workflow id from the request and **the token's** approver. It refuses 422 `reissue_source_mismatch` unless that id equals `reissue_of`, and it refuses 409 at the two conflict sites, classified `CONFLICT` in the refusal ratchet. `human_tasks.supersede_open_task` records `superseded_by` on the old task. The OpenAPI is regenerated. **Without `reissue_of`, nothing changes:** the forwarded body and the idempotency key are as before. The roll re-issues nothing. Re-issuing the sandbox's failing reviews is a separate, sandbox-only act after the roll, touching only the reviews a journal read confirms.
+
+- **engine-fin: the shared contract reader withholds columns a contract marks personal_data by default, and refuses a finance row that names one (#393).**
 
 #443 changed chart content after the 0.4.90 cut, with no pending entry, so master's chart seal refused it (build `171e53ff`, "Refuse to publish a chart whose version did not move"). This entry declares the owed bump.
 

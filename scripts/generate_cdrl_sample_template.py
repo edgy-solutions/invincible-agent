@@ -32,7 +32,7 @@ DEFAULT_OUT = (REPO / "policy" / "overlays" / "sample" / "fin_export_profiles"
 
 SHEET = "EV Summary"
 TITLE = "CDRL A001 - Notional Earned Value Summary (SYNTHETIC)"
-LABELS = ("Program", "Program id", "As of", "CDRL item")   # A2:A5
+LABELS = ("Program", "Program id", "Data as of", "Generated", "CDRL item")   # A2:A6
 HEADERS = ("Period", "Cum BCWS", "Cum BCWP", "Cum ACWP", "Cum CPI", "Cum SPI", "TCPI")  # row 7
 WIDTHS = (34, 16, 16, 16, 12, 12, 12)
 

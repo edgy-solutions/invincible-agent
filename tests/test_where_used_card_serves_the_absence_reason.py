@@ -3,7 +3,8 @@
 Cortex draws a null cell as "-" because the reason ("no source") lived only at
 `where_used[].data_provenance.absent`. Chris ruled 11-19: the producer serves the reason on the
 card and cortex shows the served words. `absent_reason` is `{column key: short phrase}`, derived
-from the provenance, never restated; a column that differs by row carries it per row instead.
+from each row's own `absent_reason` (the SDK v0.9.26 row field), never restated; a column that
+differs by row carries it per row instead.
 
 Run: uv run pytest tests/test_where_used_card_serves_the_absence_reason.py -q
 """
@@ -35,13 +36,13 @@ def test_EVERY_KEY_IS_A_NULL_COLUMN_AND_THE_PHRASE_IS_THE_PROVENANCES():
     for key, phrase in got["absent_reason"].items():
         assert key in _null_everywhere(got), key
         for r in got["where_used"]:
-            assert r["data_provenance"]["absent"][key] == phrase
+            assert r["absent_reason"][key] == phrase
 
 
 def test_EVERY_NULL_COLUMN_WITH_A_PHRASE_IS_IN_THE_MAP():
     got = _ok()
     for key in _null_everywhere(got):
-        phrases = {r["data_provenance"]["absent"].get(key) for r in got["where_used"]}
+        phrases = {(r["absent_reason"] or {}).get(key) for r in got["where_used"]}
         if len(phrases) == 1 and None not in phrases:
             assert got["absent_reason"][key] == phrases.pop(), key
 
@@ -63,8 +64,8 @@ def test_PHRASES_THAT_DIFFER_BY_ROW_LAND_PER_ROW_NOT_ON_THE_CARD():
     columns = [{"key": "population"}, {"key": "stock"}, {"key": "qty_per"}]
     table = [{"population": None, "stock": None, "qty_per": 1},
              {"population": None, "stock": None, "qty_per": 2}]
-    rows = [SimpleNamespace(data_provenance={"absent": {"population": "no source", "stock": "held back"}}),
-            SimpleNamespace(data_provenance={"absent": {"population": "no source", "stock": "not read"}})]
+    rows = [SimpleNamespace(absent_reason={"population": "no source", "stock": "held back"}),
+            SimpleNamespace(absent_reason={"population": "no source", "stock": "not read"})]
     card, per_row = w._absent_reason(columns, table, rows)
     assert card == {"population": "no source"}
     assert per_row == [{"stock": "held back"}, {"stock": "not read"}]

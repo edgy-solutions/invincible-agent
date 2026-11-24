@@ -1,5 +1,9 @@
 """`ImpactRow` is ADR-0065 ruling 4's row: its fields come from the ADR text, not a copy of them.
 
+Since SDK v0.9.26 the served row IS the SDK's row (its fields, its provenance entries, its
+validators), with `qty_per` widened to take the fraction the dataset loader accepts. The ruled
+field list is the ADR's LAST `ImpactRow = {...}` line, so an amendment supersedes the original.
+
 Run: uv run pytest tests/test_impact_row_is_the_ruled_row.py -q
 """
 from __future__ import annotations
@@ -19,14 +23,14 @@ ADR = next((Path(__file__).resolve().parents[1] / "docs/adr").glob("ADR-0065-*.m
 
 def _ruled_fields() -> list[str]:
     text = re.sub(r"\s+", " ", ADR.read_text(encoding="utf-8"))
-    m = re.search(r"`ImpactRow = \{([^}]+)\}`", text)
-    assert m, "ruling 4's ImpactRow line moved; update this reader"
-    return [f.strip() for f in m.group(1).split(",")]
+    found = re.findall(r"`ImpactRow = \{([^}]+)\}`", text)
+    assert found, "ruling 4's ImpactRow line moved; update this reader"
+    return [f.strip() for f in found[-1].split(",")]
 
 
 def _row(**over):
     base = dict(end_item="e", program="p", component="c", qty_per=1, configuration="as_designed",
-                as_of=None, data_provenance={})
+                as_of=None, data_provenance=[{"as_of": None}])
     return ImpactRow(**{**base, **over})
 
 
@@ -74,34 +78,70 @@ def test_THE_SDKS_IMPACT_ROW_HAS_THE_RULED_FIELDS():
     assert list(sdk.model_fields) == _ruled_fields()
 
 
-def test_TRIPWIRE_THE_SDKS_ROW_CANNOT_CARRY_A_SERVED_ROW_AND_ONLY_ITS_PROVENANCE_IS_WHY():
-    """v0.9.25's provenance is the list ruled on 11-11: one `{name, dataset_urn, as_of, ticket_id}`
-    entry per input, closed (`extra="forbid"`), with `as_of` required. A served row's provenance is
-    `{inputs, absent}`. Its entries also carry `locator`, `classification` and `notional`, an input
-    may state no `as_of`, and the `absent` reasons have no slot. So the list still cannot carry a
-    served row, and the local row stays. When the SDK's row accepts a served row as it is, this
-    fails: re-export it then. A refusal outside `data_provenance` fails too."""
+def test_THE_ROW_IS_THE_SDKS_AND_ONLY_QTY_PER_DIFFERS():
+    """The local row is the SDK's class with one field re-annotated, nothing else of its own."""
     sdk = _sdk_impact_row()
-    if sdk is None:
-        pytest.skip("the SDK has no ImpactRow")
+    assert sdk is not None, "v0.9.26 is pinned; the SDK has an ImpactRow"
+    assert issubclass(ImpactRow, sdk)
+    assert w.DataProvenance is _sdk_provenance_entry(sdk)
+    differ = [n for n, f in ImpactRow.model_fields.items()
+              if f.annotation != sdk.model_fields[n].annotation]
+    assert differ == ["qty_per"], differ
+    assert set(vars(ImpactRow).get("__annotations__", {})) == {"qty_per"}
+
+
+def test_EVERY_SERVED_ROW_IS_A_VALID_SDK_ROW():
+    """The served rows, dumped to the wire, validate through the SDK's own row unchanged."""
+    sdk = _sdk_impact_row()
     rows = _served_rows()
     assert rows
     for row in rows:
-        try:
-            sdk(**row)
-        except ValidationError as e:
-            outside = [x["loc"] for x in e.errors() if x["loc"][:1] != ("data_provenance",)]
-            assert not outside, f"the SDK row refuses a served row outside its provenance: {outside}"
-        else:
-            pytest.fail("the SDK's ImpactRow now carries a served row: re-export it")
+        assert sdk(**row).model_dump() == row
 
 
-#: v0.9.25's provenance, as read from the installed tag: the container, each entry's
+def test_A_SERVED_ENTRY_STATES_EACH_ABSENCE_AND_ONLY_ABSENCES():
+    for row in _served_rows():
+        assert row["absent_reason"]["population"] and row["absent_reason"]["stock"]
+        for entry in row["data_provenance"]:
+            reasons = entry["absent_reason"] or {}
+            absent = {k for k in ("dataset_urn", "as_of", "ticket_id", "locator", "classification",
+                                  "notional") if entry[k] is None}
+            assert set(reasons) == absent, (entry["name"], reasons, absent)
+
+
+def test_TRIPWIRE_A_FRACTIONAL_QTY_PER_IS_THE_ONLY_REASON_THE_ROW_IS_NOT_A_RE_EXPORT():
+    """The loader takes any positive number as a usage quantity, and the SDK's `qty_per` is `int`.
+    So a served row that rolls up to a fraction is refused by the SDK row, on `qty_per` alone. When
+    the SDK takes the fraction, or the loader stops accepting one, this fails: re-export the SDK
+    row as it is then, and delete the subclass."""
+    sdk = _sdk_impact_row()
+    assert w._positive_number(2.5), "the loader now refuses a fraction: re-export the SDK row"
+    row = {**_served_rows()[0], "qty_per": 2.5}
+    assert ImpactRow(**row).qty_per == 2.5
+    try:
+        sdk(**row)
+    except ValidationError as e:
+        assert [x["loc"] for x in e.errors()] == [("qty_per",)], e.errors()
+    else:
+        pytest.fail("the SDK's ImpactRow now takes a fractional qty_per: re-export it")
+
+
+def _sdk_provenance_entry(sdk):
+    ann = sdk.model_fields["data_provenance"].annotation
+    args = typing.get_args(ann)
+    return args[0] if len(args) == 1 else ann
+
+
+#: v0.9.26's provenance, as read from the installed tag: the container, each entry's
 #: (field, annotation, required), and whether an entry refuses unknown keys.
-_V0925_PROVENANCE = {
+_V0926_PROVENANCE = {
     "container": "list",
     "entry": [("name", "typing.Optional[str]", False), ("dataset_urn", "typing.Optional[str]", False),
-              ("as_of", "str", True), ("ticket_id", "typing.Optional[str]", False)],
+              ("as_of", "typing.Optional[str]", True), ("ticket_id", "typing.Optional[str]", False),
+              ("locator", "typing.Optional[str]", False),
+              ("classification", "typing.Optional[str]", False),
+              ("notional", "typing.Optional[bool]", False),
+              ("absent_reason", "typing.Optional[dict[str, str]]", False)],
     "extra": "forbid",
 }
 
@@ -110,23 +150,20 @@ def _annotation(a) -> str:
     return a.__name__ if isinstance(a, type) else str(a)
 
 
-def test_TRIPWIRE_THE_SDKS_PROVENANCE_IS_STILL_V0925S_LIST():
-    """Ruled 11-11: the re-export waited on v0.9.21's list. The list shipped, and v0.9.25 fired the
-    v0.9.19 tripwire as written. It does not carry the served shape (see the tripwire above), so
-    this re-pins to v0.9.25 and the local row stays. Whether the SDK's entry gains the served fields,
-    or the served row narrows to the entry, is not this file's call. It fails on ANY change to
-    v0.9.25's provenance: read the new shape, see whether a served row fits, re-export if it does."""
+def test_TRIPWIRE_THE_SDKS_PROVENANCE_IS_STILL_V0926S_ENTRY():
+    """Ruled 11-19: the provenance entry must carry what is served, and the served row is pinned to
+    v0.9.26. It fails on ANY change to v0.9.26's provenance: read the new shape, and see whether
+    the served entries still fit it before re-pinning."""
     sdk = _sdk_impact_row()
-    if sdk is None:
-        pytest.skip("the SDK has no ImpactRow")
+    assert sdk is not None, "v0.9.26 is pinned; the SDK has an ImpactRow"
     ann = sdk.model_fields["data_provenance"].annotation
-    origin, args = typing.get_origin(ann), typing.get_args(ann)
-    entry = args[0] if len(args) == 1 else ann
+    origin = typing.get_origin(ann)
+    entry = _sdk_provenance_entry(sdk)
     got = {
         "container": _annotation(origin) if origin is not None else _annotation(ann),
         "entry": [(n, _annotation(f.annotation), f.is_required())
                   for n, f in getattr(entry, "model_fields", {}).items()],
         "extra": getattr(entry, "model_config", {}).get("extra"),
     }
-    assert got == _V0925_PROVENANCE, (
-        f"the SDK's provenance changed ({got}); see whether a served row fits it, and re-export if so")
+    assert got == _V0926_PROVENANCE, (
+        f"the SDK's provenance changed ({got}); see whether a served row fits it, and re-pin")
