@@ -94,7 +94,7 @@ class BamlSyncClient:
     def parse_stream(self):
       return self.__llm_stream_parser
 
-    def ClassifyDomainIntent(self, query: str,domain: str,
+    def ClassifyDomainIntent(self, query: str,domain: typing.Optional[str] = None,
         baml_options: BamlCallOptions = {},
     ) -> types.SemanticResolution:
         # Check if on_tick is provided
@@ -122,7 +122,7 @@ class BamlSyncClient:
                 "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
             })
             return typing.cast(types.TableClassificationResult, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: str,
+    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: typing.Optional[str] = None,
         baml_options: BamlCallOptions = {},
     ) -> types.PredicateClassification:
         # Check if on_tick is provided
@@ -411,7 +411,7 @@ class BamlStreamClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifyDomainIntent(self, query: str,domain: str,
+    def ClassifyDomainIntent(self, query: str,domain: typing.Optional[str] = None,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.SemanticResolution, types.SemanticResolution]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ClassifyDomainIntent", args={
@@ -435,7 +435,7 @@ class BamlStreamClient:
           lambda x: typing.cast(types.TableClassificationResult, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: str,
+    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: typing.Optional[str] = None,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.PredicateClassification, types.PredicateClassification]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ClassifyPredicate", args={
@@ -683,7 +683,7 @@ class BamlHttpRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifyDomainIntent(self, query: str,domain: str,
+    def ClassifyDomainIntent(self, query: str,domain: typing.Optional[str] = None,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ClassifyDomainIntent", args={
@@ -697,7 +697,7 @@ class BamlHttpRequestClient:
             "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
         }, mode="request")
         return __result__
-    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: str,
+    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: typing.Optional[str] = None,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ClassifyPredicate", args={
@@ -845,7 +845,7 @@ class BamlHttpStreamRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifyDomainIntent(self, query: str,domain: str,
+    def ClassifyDomainIntent(self, query: str,domain: typing.Optional[str] = None,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ClassifyDomainIntent", args={
@@ -859,7 +859,7 @@ class BamlHttpStreamRequestClient:
             "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
         }, mode="stream")
         return __result__
-    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: str,
+    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: typing.Optional[str] = None,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ClassifyPredicate", args={
@@ -1001,4 +1001,4 @@ class BamlHttpStreamRequestClient:
         return __result__
     
 
-b = BamlSyncClient(DoNotUseDirectlyCallManager({}))
+b = BamlSyncClient(DoNotUseDirectlyCallManager({}))

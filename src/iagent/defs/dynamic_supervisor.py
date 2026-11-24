@@ -104,7 +104,7 @@ class SupervisorQueryConfig(Config):
     user_query: str
     thread_id: str
     persona: str = "MECHANIC"  # legacy, prefer user_persona
-    domain: str = "MAINTENANCE"  # legacy, no longer routes
+    domain: str | None = None  # legacy, no longer routes; None = no domain named
     task_plan_json: str = ""  # Optional pre-computed plan from BFF
     user_id: str = "default_testing_user"
     # ADR-0025 hop 2: caller's entitlement key (email — what the seeded
@@ -202,12 +202,12 @@ def create_task_plan(context, config: SupervisorQueryConfig):
         # The person's own token for this call, or "" when no person is behind the run. A vault
         # refusal raises and fails the op: there is no fallback to the service here.
         _plan_token = _caller_token_for(context, config, "plan")
+        _plan_body = {"query": config.user_query}
+        if config.domain:
+            _plan_body["domain"] = config.domain
         response = requests.post(
             f"{ONTOLOGY_SVC_URL}/plan",
-            json={
-                "query": config.user_query,
-                "domain": config.domain
-            },
+            json=_plan_body,
             timeout=300,
             headers=_telemetry_headers(config, _plan_token),
         )
@@ -228,13 +228,12 @@ def create_task_plan(context, config: SupervisorQueryConfig):
     )
 
     # 3. Fan-out: yield each task dynamically
-    detected_domain = plan.get("domain") or config.domain
-    logger.info(f"Fanning out tasks for domain: {detected_domain}")
+    # Nothing downstream reads a task's `domain` (execute_subtask routes by
+    # `config.entitled_domains`), so none is stamped and the log names what routing reads.
+    logger.info("Fanning out %d task(s) for entitled domains: %s", len(tasks), list(config.entitled_domains or []))
 
     for idx, task in enumerate(tasks):
-        # Inject the domain context so execute_subtask routes correctly
-        task["domain"] = detected_domain
-        logger.info(f"Yielding task {idx} ({task.get('target_persona')}) for domain {detected_domain}")
+        logger.info("Yielding task %d (%s) for entitled domains: %s", idx, task.get("target_persona"), list(config.entitled_domains or []))
         
         # We must provide a valid mapping_key for each dynamic output
         yield DynamicOutput(
@@ -387,7 +386,7 @@ def _resolve_serialized(context):
 def _resolve_subject(
     context,
     user_query: str,
-    domain: str,
+    domain: str | None,
     entity_refs: List[str] | None = None,
     domains: List[str] | None = None,
     user_email: str = "",
@@ -446,8 +445,9 @@ def _resolve_subject(
             # entitled_domains[0]. See
             # [[failure-mode-pluralism-in-fixes]] for the
             # diagnose-each-mechanism rationale.
-            "domain": domain or "MAINTENANCE",
         }
+        if domain:
+            payload["domain"] = domain
         if domains:
             payload["domains"] = list(domains)
         if entity_refs:
@@ -708,7 +708,7 @@ def _classify_route(
     context,
     user_query: str,
     entitled_domains: List[str],
-    routing_domain: str,
+    routing_domain: str | None,
     entity_refs: List[str] | None = None,
     user_email: str = "",
     pre_resolved: Dict[str, Any] | None = None,
@@ -1208,7 +1208,8 @@ def _classify_route(
                 "subject_uri": subject_uri,
                 "subject_reasoning": subject_reason,
                 "entitled_domains": entitled_domains,
-                "domain": routing_domain or "MAINTENANCE",
+                # No routing domain is no key: the legacy hint is never a literal.
+                **({"domain": routing_domain} if routing_domain else {}),
                 # ADR-0018 addendum: constrain the LLM to graph-
                 # compatible verbs. Empty = unconstrained (Weaviate
                 # hybrid as before).
@@ -1945,7 +1946,7 @@ def _call_engine_a_fallback(
     # `idp#Portfolio` at 0.96, `/classify_predicate` honestly returned UNKNOWN (no portfolio
     # verb answers "make a canvas"), and this fallback dropped the subject. Engine A then
     # re-resolved from the raw phrase — and `_resolve_ontology` posts no `domain`, so
-    # `ResolveRequest.domain` defaults to "MAINTENANCE" with `domains=[]`, meaning the
+    # `ResolveRequest.domain` defaults to None with `domains=[]`, meaning the
     # entitlement filter is a no-op too. A PORTFOLIO_LEAD's question was classified against
     # the maintenance ontology and answered `SellingBusinessProcess` at 0.62.
     #
@@ -2820,7 +2821,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # the diagnosis surfaces it as material).
     routing_domain = (
         list(config.entitled_domains)[0]
-        if config.entitled_domains else "MAINTENANCE"
+        if config.entitled_domains else None
     )
 
     status, predicate, telemetry = _classify_route(
@@ -3067,7 +3068,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # entry if multi-domain) so engines that still segregate data by domain
     # (Engine W, Engine E label filters) keep working.
     predicate_domains = predicate.get("domains") or []
-    routing_domain = predicate_domains[0] if predicate_domains else "MAINTENANCE"
+    routing_domain = predicate_domains[0] if predicate_domains else None
 
     # Engine DA needs a DataHub schema map injected; we ship it for any
     # data-engineering-scoped predicate so the engine doesn't have to
@@ -3439,7 +3440,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # point to answerer_persona, which is what the old `persona` field
         # was driving (response shape) in practice.
         "persona": answerer_persona,
-        "domain": routing_domain,
+        # No routing domain is no key: the legacy hint is never a literal.
+        **({"domain": routing_domain} if routing_domain else {}),
         # 2026-07-03 SECURITY-CORRECTNESS: thread the caller's REAL
         # entitled_domains on the SPECIALIST dispatch too. The stopgap
         # (2026-07-02) added this to _call_engine_a_fallback but MISSED

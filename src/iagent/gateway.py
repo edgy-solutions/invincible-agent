@@ -9442,7 +9442,7 @@ def _supervisor_op_config(
     query: str,
     thread_id: str,
     persona: str = "PROCESS_ENGINEER",
-    domain: str = "MAINTENANCE",
+    domain: str | None = None,
     task_plan_json: str = "",
     user_id: str = "default_testing_user",
     # ADR-0017 amendment: which frontend will render the answer. Threaded to Engine F so
@@ -9495,7 +9495,6 @@ def _supervisor_op_config(
         "user_query": query,
         "thread_id": thread_id,
         "persona": persona,
-        "domain": domain,
         "task_plan_json": task_plan_json,
         "user_id": user_id,
         "user_email": user_email,
@@ -9523,6 +9522,9 @@ def _supervisor_op_config(
         # The bff.orchestrate span's id, ambient in the producer task.
         "parent_span_id": current_span_id(),
     }
+    if domain:
+        # No domain is no key: the run config never names one the caller was not given.
+        op_config["domain"] = domain
     return op_config
 
 
@@ -9530,7 +9532,7 @@ async def _launch_supervisor_job(
     query: str,
     thread_id: str,
     persona: str = "PROCESS_ENGINEER",
-    domain: str = "MAINTENANCE",
+    domain: str | None = None,
     task_plan_json: str = "",
     user_id: str = "default_testing_user",
     # ADR-0017 amendment: which frontend will render the answer. Threaded to Engine F so
@@ -10476,7 +10478,7 @@ async def _generate_dagster_stream_inner(
     # them. We pass sane defaults so the runConfig schema still validates.
     decision = intent_extraction  # kept for any downstream inspection
     intent = "PROCESS_CREATION" if mode == "CONVERSATIONAL" else "ONE_SHOT"
-    domain = "MAINTENANCE"  # legacy default; supervisor will route by predicate
+    # No domain is passed: the supervisor routes by predicate, within the caller's entitled_domains.
 
     if intent == "PROCESS_CREATION":
         # 🔵 THE INTERVIEW PATH (RESTATE)
@@ -10902,14 +10904,12 @@ async def _generate_dagster_stream_inner(
                 "target_persona": _pre_resolved.get("owner_persona") or "",
                 "sub_query": user_query,
             }],
-            "domain": domain,
             "extracted_concepts": [],
         })
     _ab = _answer_backend()
     run_id = await _ab.launch(
         user_query,
         session_id,
-        domain=domain,
         task_plan_json=task_plan_json,
         user_id=user_id,
         user_email=user_email,
