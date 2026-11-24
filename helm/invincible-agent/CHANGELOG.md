@@ -28,6 +28,8 @@
 
 - **Neither Electric nor the BFF writes the Electric secret to a log** (saf, found by the coordinator and gov on #486). Electric 1.0.13 takes the secret only as `?secret=` and logs the query string at `info` (its default), so the chart now sets `ELECTRIC_LOG_LEVEL` from `electric.logLevel` (default `warning`). On the BFF, httpx logs the full upstream URL at INFO; nothing leaked only because boot's `basicConfig()` leaves the root at WARNING, so the `httpx` and `httpcore` loggers are pinned to WARNING explicitly, and the proxy's upstream-error line logs the exception class only. `electric.insecure: true` crashloops Electric by design (insecure plus a secret refuses to boot); do not make the secret conditional on it. Sealed, each with a mutant.
 
+- **Every subtask result says how it was disposed of** (74; the architect, 2026-11-24: "An ask for a missing program counts as 'did not route'. Add the disposition to what the supervisor returns, so perf can score it."). `execute_subtask` now returns `disposition` beside `route_status` on every path: `route` (dispatched to a specialist), `ask` (an ask card: `route_status` stays `matched`), `abstain`, `fallback` (engine A's fallback) or `infra_error`. The decision point is extracted unchanged into `decide_subtask_disposition`, which a routing-only harness can call after `accept_slots`. No chart change.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
