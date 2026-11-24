@@ -1133,7 +1133,7 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
             if isinstance(read, asset_inputs.CompareRead):
                 paths = read.paths
                 compare = {"version_a": params["version_a"], "version_b": params["version_b"],
-                           "total_a_exact": str(read.total_a), "total_b_exact": str(read.total_b),
+                           "total_a_exact": format(read.total_a, "f"), "total_b_exact": format(read.total_b, "f"),
                            "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
             else:
                 paths = read

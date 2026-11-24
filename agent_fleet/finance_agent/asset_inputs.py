@@ -446,6 +446,10 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
             f"row(s) carry a version not in the contract's declared list ({version_column})")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
+    # The key and the dependencies are checked across EVERY version, before the filter, on purpose: this
+    # fails closed. The key holds the version column (contract parse), so two versions never collide on
+    # it; a declared dependency holds across versions, and a broken row in a version nobody asked for
+    # still refuses the read.
     check_contract_rows(df, contract)
     if version is not None:
         df = df.filter(pl.col(version_column) == version)
