@@ -3440,8 +3440,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # point to answerer_persona, which is what the old `persona` field
         # was driving (response shape) in practice.
         "persona": answerer_persona,
-        # No routing domain is no key: the legacy hint is never a literal.
-        **({"domain": routing_domain} if routing_domain else {}),
+        # `domain` is set below the literal, and only when there is one.
         # 2026-07-03 SECURITY-CORRECTNESS: thread the caller's REAL
         # entitled_domains on the SPECIALIST dispatch too. The stopgap
         # (2026-07-02) added this to _call_engine_a_fallback but MISSED
@@ -3578,6 +3577,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # a separate ledger item, deliberately not entangled with this one).
         "trace_id": config.trace_id or "",
     }
+    if routing_domain:
+        # No routing domain is no key: the legacy hint is never a literal. Set here, not
+        # spread into the literal, so the payload's keys stay one-to-one with its values.
+        payload["domain"] = routing_domain
 
     context.log.info(
         f"Routing subtask via predicate {predicate.get('verb_iri')!r} "
