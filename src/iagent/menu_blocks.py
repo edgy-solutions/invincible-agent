@@ -52,6 +52,8 @@ _MENU_KEYS = frozenset({"subject", "archetype", "persona_fit", "domain_fit"})
 _CURIE_FIELDS = ("subject", "archetype")
 _LIST_FIELDS = ("persona_fit", "domain_fit")
 _CACHE: dict = {}
+_ROWS_CACHE: dict = {}
+_BUILTINS_CACHE: dict = {}
 
 
 @dataclass(frozen=True)
@@ -131,12 +133,32 @@ def _measure_verb(row) -> str:
     return "mesh:" + row.verb
 
 
+def _measure_rows() -> list:
+    """The declared measure rows: ONE `load_measure_verbs()` per `_cache_key()`, shared by
+    `compose` (placements) and `askable` (discovery). Raises whatever the loader raises; a
+    failed load is not cached."""
+    key = _cache_key()
+    if key not in _ROWS_CACHE:
+        from agent_fleet.finance_agent.measure_verbs import load_measure_verbs
+        _ROWS_CACHE[key] = list(load_measure_verbs())
+    return _ROWS_CACHE[key]
+
+
+def _builtin_measures() -> list:
+    """The built-in measures their engine lists: ONE `load_askable_builtins()` per
+    `_cache_key()`. Raises whatever the loader raises; a failed load is not cached."""
+    key = _cache_key()
+    if key not in _BUILTINS_CACHE:
+        from agent_fleet.finance_agent.measure_verbs import load_askable_builtins
+        _BUILTINS_CACHE[key] = list(load_askable_builtins())
+    return _BUILTINS_CACHE[key]
+
+
 def _measure_blocks() -> dict[str, dict]:
     """`{source: {"block": {...}}}` for every declared measure row that carries a `menu:` block.
     Raises whatever the loader raises; `compose` turns that into an unreadable source."""
-    from agent_fleet.finance_agent.measure_verbs import load_measure_verbs
     out: dict[str, dict] = {}
-    for r in load_measure_verbs():
+    for r in _measure_rows():
         m = r.menu
         if m is None:
             continue
@@ -207,3 +229,75 @@ def compose() -> MenuBlocks:
 
 def clear_cache() -> None:
     _CACHE.clear()
+    _ROWS_CACHE.clear()
+    _BUILTINS_CACHE.clear()
+
+
+@dataclass(frozen=True)
+class AskableMeasures:
+    composed: bool
+    measures: list = field(default_factory=list)
+    invalid: list = field(default_factory=list)
+
+
+def askable() -> AskableMeasures:
+    """Every measure a caller can ask, sorted by verb: each built-in measure, listed from its
+    listing row through the measure's engine's own loader, WHATEVER the overlay env says; and
+    each declared measure row (with or without a `menu:` block), from the same cached load
+    `compose` uses, read only when `MEASURE_VERB_OVERLAY_DIRS` is set. `shape` is the row's
+    `render.shape`; a built-in declares none, so its `shape` is None. `unit`, `example_ask` and
+    `group_label` are served as declared and are None when undeclared (never defaulted). A verb
+    served by both a declared row and a built-in is ambiguous: both are left out and named in
+    `invalid`. An unreadable overlay names `measure_verbs` and, because the built-in listing
+    rows come from the same composition, usually `measure_builtins` too; that matches the
+    engine, which refuses to boot on a malformed row set. Never raises. `composed: False`
+    means nothing was read."""
+    invalid: list = []
+    read = False
+    declared: list = []
+    if os.getenv(_MEASURE_OVERLAY_ENV, ""):
+        try:
+            rows = _measure_rows()
+            declared = [{"verb": _measure_verb(r), "name": r.name,
+                         "description": r.description,
+                         "phrasings": list(r.synonyms), "cells": sorted(r.cells),
+                         "shape": r.archetype,
+                         "unit": r.render.get("unit") if isinstance(r.render, dict) else None,
+                         "example_ask": r.example_ask or None,
+                         "group_label": r.group_label or None}
+                        for r in rows]
+            read = True
+        except Exception as exc:
+            declared = []
+            invalid.append({"source": "measure_verbs",
+                            "reason": f"unreadable: {type(exc).__name__}"})
+    try:
+        builtin = [{"verb": e["verb"], "name": e["name"], "description": e["description"],
+                    "phrasings": list(e["phrasings"]), "cells": list(e["cells"]),
+                    "shape": None, "unit": e.get("unit"),
+                    "example_ask": e.get("example_ask"), "group_label": e.get("group_label")}
+                   for e in _builtin_measures()]
+        read = True
+    except Exception as exc:
+        builtin = []
+        invalid.append({"source": "measure_builtins",
+                        "reason": f"unreadable: {type(exc).__name__}"})
+    clash = {m["verb"] for m in declared} & {m["verb"] for m in builtin}
+    for verb in sorted(clash):
+        invalid.append({"source": "measure_verbs",
+                        "reason": f"ambiguous: {verb} is also declared by measure_builtins"})
+        invalid.append({"source": "measure_builtins",
+                        "reason": f"ambiguous: {verb} is also declared by measure_verbs"})
+    measures = [m for m in declared + builtin if m["verb"] not in clash]
+    measures.sort(key=lambda m: m["verb"])
+    return AskableMeasures(read, measures, invalid)
+
+
+def visible_to(measures: list, domains) -> list:
+    """The entries whose declared cells the caller holds a domain in: the cell gate the
+    measure's own engine refuses on. Both sides are upper-cased (cells also stripped) and
+    compared as sets; no held domain sees nothing."""
+    # rule: agent_fleet/finance_agent/main.py `_require_cell` / `_held_domains`
+    held = {str(d).upper() for d in (domains or [])}
+    return [m for m in measures
+            if held & {str(c).strip().upper() for c in m["cells"]}]
