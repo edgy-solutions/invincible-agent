@@ -113,8 +113,8 @@ class DatasetContract:
     rules: dict[str, str] = field(default_factory=dict)      # rule id -> the contract's message for it
     personal: frozenset[str] = frozenset()                   # the columns marked personal_data
     calendar: str | None = None                              # `period.calendar`, else None
-    version_column: str | None = None                        # `version.column`, else None
-    versions: tuple[str, ...] = ()                           # `version.values`, in declared order
+    version_column: str | None = None                        # `version_dimension.column`, else None
+    versions: tuple[str, ...] = ()                           # `version_dimension.values`, in order
 
     @property
     def scoped(self) -> bool:

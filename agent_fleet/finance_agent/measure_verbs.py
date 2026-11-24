@@ -37,9 +37,10 @@ id replaces it whole, so a deployment whose asset gains them re-sources it with 
 A flow row's `value` is a column, `{minus: [a, b]}` (first less second, per row), or
 `{compare: {column: <amount>, by: <version column>}}`: the amount summed per path in each of two
 versions, the paths joined on the full path, and the second version subtracted from the first (a
-path in one version only counts as zero in the other). A contract that declares a `version` block
-(column and values) makes the version a declared dimension: the row lists `version` (a column or
-minus row, which reads one version) or `version_a` and `version_b` (a compare row) in
+path in one version only counts as zero in the other). A contract that declares a
+`version_dimension` block (column and values) makes the version a declared dimension: the row
+lists `version` (a column or minus row, which reads one version) or `version_a` and `version_b`
+(a compare row) in
 `inputs.params`, the person chooses them as slots, and a value outside the declared list is refused.
 A version-free value over a versioned contract is refused at load (its read would sum every version
 together), and a series row over one waits for a later step.
