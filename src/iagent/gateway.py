@@ -7645,6 +7645,15 @@ class InterviewRequest(BaseModel):
     # `find_compatible_verbs` call still runs against the live mesh, so a declared `subject` the
     # mesh no longer agrees with is `FALL_BACK` — a visible failure, never a silent route.
     seed_panel: dict | None = None
+    # A MEASURE PICKED FROM `/askable_measures`: `{"verb": str, "bindings": dict}`. The message
+    # is a LABEL for logs and the card, never classified and never slot-filled. THE SUBJECT
+    # COMES FROM THE SERVER'S OWN LIST (`menu_blocks.askable()`), re-read on this request and
+    # never taken from the request: a client that could name the subject could aim a verb at
+    # any class. `orchestrate()` refuses a verb not on the caller's list BEFORE the stream
+    # opens (one message for "no such measure" and "not in your cells"); the stream then
+    # dispatches it the way a board ask is dispatched (`dispatch_pre_resolved`), skipping the
+    # routing calls. The mesh still confirms the verb on every dispatch.
+    askable_pick: dict | None = None
 
 
 class BPMNTask(BaseModel):
@@ -8951,6 +8960,37 @@ def _pre_resolved_from_seed_panel(seed_panel: dict) -> tuple[dict, dict]:
     }, params
 
 
+def _askable_pick_parts(pick: dict) -> tuple[str, dict] | None:
+    """`(verb, bindings)` of a request's `askable_pick`, or None when it is not the shape
+    `{"verb": str, "bindings": dict}`. `None`/`""` bindings are dropped, as seed_panel's are;
+    a binding's NAME is left to the engine's declarations at dispatch (the BFF holds none)."""
+    if not isinstance(pick, dict):
+        return None
+    verb = pick.get("verb")
+    bindings = pick.get("bindings") or {}
+    if not isinstance(verb, str) or not verb or not isinstance(bindings, dict):
+        return None
+    return verb, {k: v for k, v in bindings.items() if v not in (None, "")}
+
+
+def _askable_pick_entry(verb: str, domains=None) -> tuple[bool, dict | None]:
+    """`(composed, entry)` for `verb` on the SERVER'S OWN askable list (`menu_blocks.askable()`,
+    the list `/askable_measures` serves). With `domains`, the entry must also be visible to them
+    (`menu_blocks.visible_to`); with None the cell gate is not applied (the stream re-reads the
+    subject only; the visibility was judged before the stream opened and the mesh re-checks the
+    cell on dispatch). `entry["subject"]` is the engine's registration."""
+    from . import menu_blocks
+
+    result = menu_blocks.askable()
+    measures = result.measures if domains is None else menu_blocks.visible_to(
+        result.measures, domains
+    )
+    for m in measures:
+        if m.get("verb") == verb and m.get("subject"):
+            return result.composed, m
+    return result.composed, None
+
+
 def _artifact_is_the_callers(artifact_id: str, user_id: str) -> bool:
     """Does this artifact EXIST and belong to this caller? Existence, never routability.
 
@@ -9478,6 +9518,9 @@ def _supervisor_op_config(
     # The route an earlier ask already established, read back under the caller's ownership
     # edge. `{}` for an ordinary question, which is every request that answers nothing.
     pre_resolved: dict | None = None,
+    # True only for a measure picked from the askable list: the query is a label, so the
+    # supervisor must not slot-fill it.
+    message_is_label: bool = False,
     trace_id: str = "",
     session_id: str = "",
 ) -> dict:
@@ -9516,6 +9559,7 @@ def _supervisor_op_config(
         "spoken_slot": spoken_slot or "",
         "spoken_answer": spoken_answer or "",
         "pre_resolved": dict(pre_resolved or {}),
+        "message_is_label": bool(message_is_label),
         # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
         # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
         "trace_id": trace_id,
@@ -9566,6 +9610,7 @@ async def _launch_supervisor_job(
     # The route an earlier ask already established, read back under the caller's ownership
     # edge. `{}` for an ordinary question, which is every request that answers nothing.
     pre_resolved: dict | None = None,
+    message_is_label: bool = False,
     trace_id: str = "",
     session_id: str = "",
 ) -> str | None:
@@ -9596,6 +9641,7 @@ async def _launch_supervisor_job(
         spoken_slot=spoken_slot,
         spoken_answer=spoken_answer,
         pre_resolved=pre_resolved,
+        message_is_label=message_is_label,
         trace_id=trace_id,
         session_id=session_id,
     )
@@ -10314,10 +10360,33 @@ async def _generate_dagster_stream_inner(
     # both meaningful on the same turn, and this branches on both rather than trusting that.
     _is_seed_panel_turn = bool(request.seed_panel) and not _answering_artifact_id
     _seed_panel_bound_slots: dict = {}
+    _is_askable_pick_turn = (
+        bool(request.askable_pick) and not _answering_artifact_id and not _is_seed_panel_turn
+    )
+    _askable_pick_bound_slots: dict = {}
     if _is_seed_panel_turn:
         _pre_resolved, _seed_panel_bound_slots = _pre_resolved_from_seed_panel(
             request.seed_panel  # type: ignore[arg-type]
         )
+    elif _is_askable_pick_turn:
+        # A PICK FROM THE ASKABLE LIST IS ASKED THE WAY A BOARD ASK IS. The subject is read
+        # from the server's own list on THIS turn, never from the request and never carried
+        # from `orchestrate()`; `orchestrate()` already judged that the caller may see the verb.
+        _ap_parts = _askable_pick_parts(request.askable_pick)  # type: ignore[arg-type]
+        _ap_entry = None
+        if _ap_parts is not None:
+            _, _ap_entry = await asyncio.to_thread(_askable_pick_entry, _ap_parts[0])
+        if _ap_entry is not None and _ap_parts is not None:
+            _pre_resolved = {
+                "subject_uri": _ap_entry["subject"],
+                "subject_instance_id": "",
+                "subject_instance_label": "",
+                "verb_iri": _ap_entry["verb"],
+                "owner_persona": "",
+            }
+            _askable_pick_bound_slots = _ap_parts[1]
+        else:
+            _pre_resolved = {}
     else:
         _pre_resolved = (
             _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
@@ -10339,6 +10408,16 @@ async def _generate_dagster_stream_inner(
             kind="understanding",
             retryable=False,
             cause="seed_panel_unroutable",
+        )
+        yield _sse("stream_end", "{}")
+        return
+    if _is_askable_pick_turn and not _pre_resolved:
+        # Like seed_panel: the message is only a label, so there is nothing to route instead.
+        yield _perror(
+            "this askable measure is no longer on the list, so it cannot be dispatched directly",
+            kind="understanding",
+            retryable=False,
+            cause="askable_pick_unroutable",
         )
         yield _sse("stream_end", "{}")
         return
@@ -10414,7 +10493,9 @@ async def _generate_dagster_stream_inner(
         # nearest hop win: a person who answers a slot twice meant the second answer.
         _this_turn = {
             k: {"value": v, "source": SLOT_SOURCE_PICKED}
-            for k, v in dict(request.bound_slots or {}).items()
+            for k, v in dict(
+                _askable_pick_bound_slots if _is_askable_pick_turn else (request.bound_slots or {})
+            ).items()
         }
         _pre_resolved["accumulated_slots"] = {**(_chain_slots or {}), **_this_turn}
 
@@ -10696,6 +10777,7 @@ async def _generate_dagster_stream_inner(
                     # parameter names (`bind_as`).
                     bound_slots=(
                         _seed_panel_bound_slots if _is_seed_panel_turn
+                        else _askable_pick_bound_slots if _is_askable_pick_turn
                         else (request.bound_slots or {})
                     ),
                     # Read from the graph under the caller's ownership edge, never from the
@@ -10866,6 +10948,45 @@ async def _generate_dagster_stream_inner(
                 yield _sse("stream_end", "{}")
                 await _dispatch_answer_artifact(_artifact_bundle)
                 return
+            if _is_askable_pick_turn and _direct.kind != direct_dispatch.ASK:
+                # A PICK'S MESSAGE IS ONLY A LABEL, like a seed's: "route the full path" on a
+                # fall-back would hand the label to `/route_intent`. Fails visibly instead.
+                # AN `ask` IS NOT A FAILURE: it falls through to the run below with
+                # `pre_resolved` and `message_is_label`, so the supervisor builds the ask card
+                # and its menu without slot-filling the label.
+                _ap_cause = (
+                    "askable_pick_verb_not_visible"
+                    if _direct.missing_domains
+                    and direct_dispatch.VERB_NOT_IN_CELL in _detail["reason"]
+                    else "askable_pick_fell_back"
+                )
+                _artifact_bundle["status"] = "failed"
+                _ri = dict(_artifact_bundle.get("resolved_intent") or {})
+                for _k in ("verb_iri", "subject_uri", "subject_instance_id"):
+                    _v = _pre_resolved.get(_k)
+                    if _v not in (None, ""):
+                        _ri.setdefault(_k, _v)
+                _ri.setdefault("disposition", _direct.kind)
+                _ri.setdefault("failure_cause", {
+                    "exception": _ap_cause,
+                    "message": _detail["reason"],
+                    "where": "askable_pick_fall_back",
+                    "outcome": _direct.kind,
+                })
+                _artifact_bundle["resolved_intent"] = _ri
+                yield _perror(
+                    f"the picked measure's route is no longer valid: {_detail['reason']}",
+                    kind="verifying_route",
+                    retryable=True,
+                    cause=_ap_cause,
+                    missing_domains=(
+                        _direct.missing_domains
+                        if _ap_cause == "askable_pick_verb_not_visible" else None
+                    ),
+                )
+                yield _sse("stream_end", "{}")
+                await _dispatch_answer_artifact(_artifact_bundle)
+                return
             _direct = None
 
     if _direct is not None:
@@ -10922,10 +11043,14 @@ async def _generate_dagster_stream_inner(
         entity_refs=entity_refs,
         # Forwarded rather than dropped - the carry. `{}` until the slot-filler is called.
         slots=dict(intent_extraction.get("slots") or {}),
-        bound_slots=dict(request.bound_slots or {}),
+        bound_slots=dict(
+            _askable_pick_bound_slots if _is_askable_pick_turn else (request.bound_slots or {})
+        ),
         spoken_slot=request.spoken_slot,
         spoken_answer=request.spoken_answer,
         pre_resolved=_pre_resolved,
+        # A picked measure's message is a label: the supervisor must not slot-fill it.
+        **({"message_is_label": True} if _is_askable_pick_turn else {}),
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )
@@ -12640,6 +12765,21 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
     # has nothing to hand `dispatch_pre_resolved` as `subject_uri`. All of this runs BEFORE
     # the stream opens so the caller gets one clean HTTP status rather than a pipeline_error
     # buried inside an SSE body it already started reading.
+    # A PICK IS NOT A SEED AND NOT AN ANSWER — refused first, by name, before either other
+    # field's own gates can answer a different 422 (or a 409) for the same request.
+    if request.askable_pick is not None and request.seed_panel is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="askable_pick and seed_panel cannot be sent together: send one or the other.",
+        )
+    if request.askable_pick is not None and request.answering_artifact_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "askable_pick and answering_artifact_id cannot be sent together: a picked "
+                "measure answers no ask. Send one or the other."
+            ),
+        )
     if request.seed_panel is not None:
         from .canvas_template import load_template, ratified_template_ids
 
@@ -12726,6 +12866,35 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                     f"`bindings`."
                 ),
                 **slot_refusal(_sp_template, _sp_unbound),
+            )
+
+    # ── A MEASURE PICKED FROM THE ASKABLE LIST — VALIDATED BEFORE THE STREAM OPENS ──────────
+    # The verb must be on THIS caller's `/askable_measures` list: the same list, read with the
+    # same domains (`current_user.entitled_domains`, which that route filters on — not the
+    # picker-narrowed `effective_domains`, which would refuse a measure the list itself shows).
+    # ONE message for "no such measure" and "not in your cells", so the response cannot tell
+    # an unknown verb from a withheld one.
+    if request.askable_pick is not None:
+        _ap_parts = _askable_pick_parts(request.askable_pick)
+        if _ap_parts is None:
+            raise HTTPException(
+                status_code=422,
+                detail='askable_pick must be {"verb": <string>, "bindings": <object>}.',
+            )
+        from starlette.concurrency import run_in_threadpool as _ap_threadpool
+
+        _ap_composed, _ap_entry = await _ap_threadpool(
+            _askable_pick_entry, _ap_parts[0], current_user.entitled_domains
+        )
+        if not _ap_composed:
+            raise HTTPException(
+                status_code=503,
+                detail="askable_pick cannot be checked: the askable measures list could not be read.",
+            )
+        if _ap_entry is None:
+            raise HTTPException(
+                status_code=422,
+                detail="askable_pick names a measure that is not on your askable list.",
             )
 
     # The span opens and closes in the one task that iterates the response body, and wraps

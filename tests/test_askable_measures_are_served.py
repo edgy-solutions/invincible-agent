@@ -91,7 +91,8 @@ def test_one_entry_per_declared_row_with_or_without_a_menu(monkeypatch):
             "verb": "mesh:" + r.verb, "name": r.name, "description": r.description,
             "phrasings": list(r.synonyms), "cells": sorted(r.cells),
             "shape": r.archetype, "unit": _unit_of(r),
-            "example_ask": r.example_ask or None, "group_label": r.group_label or None}
+            "example_ask": r.example_ask or None, "group_label": r.group_label or None,
+            "subject": measure_verbs.declared_subject()}
     verbs = [m["verb"] for m in got.measures]
     assert verbs == sorted(verbs)
 

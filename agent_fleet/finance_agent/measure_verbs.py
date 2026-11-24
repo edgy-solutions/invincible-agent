@@ -833,6 +833,12 @@ def _engine_main():
     return _main
 
 
+def declared_subject() -> str:
+    """The subject every declared measure registers on, as the engine registers it. A delegation
+    to the engine's own `_declared_input_uri`, never a second copy of that rule."""
+    return _engine_main()._declared_input_uri()
+
+
 def load_askable_builtins(
     policy_dir: Path | str | None = None,
     overlay_dirs: list[Path] | None = None,
@@ -851,7 +857,10 @@ def load_askable_builtins(
         if not r.name:
             continue
         entry = {"verb": by_fn[r.measure_id]["verb"], "name": r.name, "description": r.description,
-                 "phrasings": list(by_fn[r.measure_id]["synonyms"]), "cells": sorted(_main.DOMAINS)}
+                 "phrasings": list(by_fn[r.measure_id]["synonyms"]), "cells": sorted(_main.DOMAINS),
+                 # The engine's own registration for this verb. The BFF reads it to dispatch a
+                 # pick directly; the served `/askable_measures` entry does not carry it.
+                 "subject": by_fn[r.measure_id]["input_uri"]}
         # Optional keys, present only with a value. A built-in declares no shape, so none is served;
         # a unit is the engine's own (`VALUE_UNIT`), declared and never inferred.
         for k, v in (("example_ask", r.example_ask), ("group_label", r.group_label),
