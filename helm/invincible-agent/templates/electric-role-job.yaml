@@ -2,7 +2,7 @@
 Electric's own database role (electric.db.enabled; step 3 of the sync-service exposure plan).
 
 A hook Job, run as `postgres`, idempotent. It (1) creates the role if absent and sets its password from the Secret,
-(2) revokes every table privilege the role holds outside the list, then grants CONNECT, schema USAGE and SELECT on EXACTLY the tables policy/electric_shapes.yaml names (one transaction, psql -1), (3) makes the
+(2) revokes every table privilege the role holds outside the list, then grants CONNECT, schema USAGE and SELECT on EXACTLY the tables policy/electric_shapes.yaml names (one transaction: psql -1 with the script read as -f -), (3) makes the
 publication over those tables and sets REPLICA IDENTITY FULL, (4) optionally revokes REPLICATION from the main user.
 
 THE TABLE LIST IS READ FROM THE CHART'S COPY OF THE POLICY FILE (files/policy/electric_shapes.yaml; a seal keeps it
@@ -87,9 +87,10 @@ spec:
             - -c
             - |
               until pg_isready -h "$PGHOST" -p "$PGPORT" -U postgres -d "$PGDATABASE"; do sleep 2; done
-              psql -1 -v ON_ERROR_STOP=1 <<'SQL'
+              psql -1 -v ON_ERROR_STOP=1 -f - <<'SQL'
               SET log_statement = 'none';
               SET log_min_error_statement = 'panic';
+              SET log_min_duration_statement = -1;
               \getenv pw ELECTRIC_DB_PASSWORD
               DO $$
               DECLARE o text;

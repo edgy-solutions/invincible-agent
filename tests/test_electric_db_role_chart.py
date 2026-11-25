@@ -169,7 +169,9 @@ def test_1_the_job_revokes_what_the_role_holds_outside_the_list_before_any_grant
     assert "information_schema.role_table_grants" in block and "grantee = 'electric_reader'" in block
     keep = re.search(r"<> ALL \(ARRAY\[([^\]]*)\]\)", block).group(1)
     assert sorted(re.findall(r"'([^']+)'", keep)) == sorted(f"public.{t}" for t in want), "keep-set == the rendered list"
-    assert re.search(r"psql -1\b", script), "psql runs the whole script in one transaction (-1)"
+    line = next(l for l in script.splitlines() if l.lstrip().startswith("psql "))
+    assert re.search(r"(^| )-1( |$)", line) and re.search(r"(-f -|--file=-)( |$)", line), (
+        "psql -1 only wraps -f/-c actions: the script must come in as -f - for the transaction to exist")
     assert "ALL TABLES" not in script.upper()
 
 
@@ -195,6 +197,7 @@ def test_3_the_password_stays_out_of_argv_and_out_of_the_server_log():
     job = _job(_on())[0]
     script = _script(job)
     assert "SET log_statement = 'none';" in script and "SET log_min_error_statement = 'panic';" in script
+    assert "SET log_min_duration_statement = -1;" in script and script.index("SET log_min_duration_statement") < script.index("PASSWORD %L")
     assert script.index("SET log_min_error_statement") < script.index("PASSWORD %L")
     assert chr(92) + "getenv pw ELECTRIC_DB_PASSWORD" in script
     assert "-v pw=" not in script and "$ELECTRIC_DB_PASSWORD" not in script
