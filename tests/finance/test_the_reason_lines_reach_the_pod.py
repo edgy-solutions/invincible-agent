@@ -75,6 +75,31 @@ def test_an_upstream_info_handler_means_no_second_handler(monkeypatch):
     assert child.level == logging.NOTSET
 
 
+class _Collect(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.NOTSET)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+def test_an_upstream_handler_behind_a_warning_level_gets_only_the_level_lowered(monkeypatch):
+    """A handler on the chain, but the level filters INFO: `logging.basicConfig()` ran before the
+    import and left root at WARNING. Only the level on `_reason_log` is lowered. No second handler,
+    so a line reaches the handler already there exactly once."""
+    monkeypatch.delenv("FIN_REASON_LOG_AUTOCONFIG", raising=False)
+    parent, child = _bare()
+    seen = _Collect()
+    parent.addHandler(seen)  # the parent stays at WARNING
+    monkeypatch.setattr(engine, "_reason_log", child)
+    assert engine._ensure_reasons_visible() is True
+    assert child.level == logging.INFO
+    assert child.handlers == []
+    child.info("fin.resolve_empty reason=not_a_member")
+    assert [r.getMessage() for r in seen.records] == ["fin.resolve_empty reason=not_a_member"]
+
+
 def test_two_calls_on_a_bare_chain_attach_exactly_one_handler(monkeypatch):
     monkeypatch.delenv("FIN_REASON_LOG_AUTOCONFIG", raising=False)
     parent, child = _bare()
