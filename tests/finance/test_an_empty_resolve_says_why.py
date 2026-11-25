@@ -69,7 +69,7 @@ def bearer(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _level(caplog):
-    caplog.set_level(logging.INFO, logger=engine.log.name)
+    caplog.set_level(logging.INFO, logger=engine._reason_log.name)
 
 
 def _records(caplog):
