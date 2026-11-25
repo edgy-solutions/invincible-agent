@@ -375,6 +375,15 @@ def test_the_body_is_compared_to_the_bearer_ignoring_case_and_spaces(double, cli
     assert f["bearer"] == "user" and f["verified"] == "true"
     assert f["body_caller"] == "matches_bearer"
     caplog.clear()
-    # The control: another person's address reads differs_from_bearer.
+    # The control, under bearer-first: a verified person whose body names someone else is a 403
+    # and writes no empty line; differs_from_bearer is read from a verified service bearer.
+    r = client.post("/resolve_instance", json={"identifier": "qzxv wkjh", "user_email": BOB})
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["error"] == "caller_mismatch"
+    assert _records(caplog) == []
+    caplog.clear()
+    bearer(Who("svc:supervisor", verified=True))
     assert _resolve(client, "qzxv wkjh", user_email=BOB)["candidates"] == []
-    assert _one(caplog)["body_caller"] == "differs_from_bearer"
+    f = _one(caplog)
+    assert f["reason"] == "service_caller" and f["bearer"] == "svc"
+    assert f["body_caller"] == "differs_from_bearer"
