@@ -741,6 +741,44 @@ A declared row of any other class (a `ControlAccount`, say) loads, but no row ca
 it belongs to, so there is no program to check: it is listed and resolved to no one, not even a caller
 who may view every program.
 
+### 7a. When resolve or a listing comes back empty
+
+The engine's empty answer looks the same for every cause, so each empty answer writes one WARNING line
+saying why. `/resolve_instance` writes `fin.resolve_empty` when `candidates` is empty. `/enumerate_instances`
+writes `fin.enumerate_empty` when the outcome is `unsupported`, or `members` with none. A non-empty answer,
+`too_many` and a 503 write nothing.
+
+```
+fin.resolve_empty reason=<code> class=<name|-> matched=<n> withheld=<code:n,...|-> bearer=<none|user|svc> verified=<true|false|-> body_caller=<empty|matches_bearer|differs_from_bearer|no_bearer> dataset_urn_set=<true|false> declared_instances=<n>
+fin.enumerate_empty reason=<code> class=<name> members=<n> withheld=... bearer=... verified=... body_caller=... dataset_urn_set=... declared_instances=<n>
+```
+
+| reason | when |
+|---|---|
+| `empty_identifier` | resolve: the identifier is empty |
+| `bare_number_unscoped` | resolve: the identifier is all digits and no class was given |
+| `class_not_held` | a class was given that the engine does not resolve (a listing answers `unsupported`) |
+| `class_has_no_members` | a held class has no members |
+| `no_match` | resolve: nothing scored at or above the floor |
+| `no_identity` | every match was withheld: the body `user_email` is empty |
+| `service_caller` | every match was withheld: the caller is `svc:...` |
+| `directory_unconfigured` | every match was withheld: `TOPAZ_DIRECTORY_URL` is unset |
+| `not_a_member` | every match was withheld: the directory says the caller may not view the program |
+| `program_undecidable` | every match was withheld: its program cannot be decided |
+| `withheld_mixed` | withheld for more than one reason; `withheld` says which |
+
+The fields: `class` is the class's local name (`-` when none was given). `matched` (resolve) and `members`
+(listing) count before the visibility filter. `withheld` is the per-reason tally of members withheld, sorted
+by code. `bearer`, `verified` and `body_caller` report the verified bearer next to the body `user_email`
+the routes act on, so a verified person whose body arrives empty shows as `no_identity` with `bearer=user`
+and `body_caller=empty`. `dataset_urn_set` is whether `FIN_DATASET_URN` is set, and `declared_instances` is
+the count of declared instances of that class (all classes when none was given). The line never carries the
+identifier, an email or authz id, a program or instance id, or the dataset URN.
+
+Resolve reads the seed and the declared instances, never the `FIN_DATASET_URN` asset, so
+`dataset_urn_set=true` with `declared_instances=0` means the deployment's own programs cannot resolve until
+they are declared.
+
 ## 8. The fiscal calendar: declared by the deployment
 
 The finance service holds no fiscal calendar. A deployment declares its periods (their labels, their

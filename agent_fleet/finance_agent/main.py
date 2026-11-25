@@ -25,6 +25,7 @@ the first symptom three layers away. Prose names and component names are differe
 """
 from __future__ import annotations
 
+import collections
 import copy
 import hashlib
 import importlib
@@ -77,14 +78,14 @@ except ImportError:
 try:  # same three-shape idiom; `utils` is a sibling top-level module in the flattened image
     from utils.subject_coverage import dead_end_classes as _dead_end
     from utils.subject_coverage import unroutable_classes as _unroutable
-    from utils.program_membership import can_view_program
+    from utils.program_membership import can_view_program, directory_configured
     from utils.entitled_domains import entitled_domains
     from utils.recipient_readers import can_read_recipient
     from utils.export_capability import can_export
 except ImportError:
     from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
     from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
-    from agent_fleet.utils.program_membership import can_view_program
+    from agent_fleet.utils.program_membership import can_view_program, directory_configured
     from agent_fleet.utils.entitled_domains import entitled_domains
     from agent_fleet.utils.recipient_readers import can_read_recipient
     from agent_fleet.utils.export_capability import can_export
@@ -2197,22 +2198,43 @@ def _require_cell(fn: str, caller: str) -> None:
     )
 
 
-def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _why_refused(caller: str) -> str:
+    """Why `_can_view` said no, named AFTER it said so. Never decides anything."""
+    who = (caller or "").strip()
+    if not who:
+        return "no_identity"
+    if who.startswith("svc:"):
+        return "service_caller"
+    if not directory_configured():
+        return "directory_unconfigured"
+    return "not_a_member"
+
+
+def _visible_to(caller: str, members: list[dict[str, Any]],
+                why: Optional[collections.Counter] = None) -> list[dict[str, Any]]:
     """The members whose program the caller may view. Withheld is unknown: no marker is added.
 
     One check per distinct program, through `_can_view` (which holds the svc/empty rules).
-    `httpx.HTTPError` propagates.
+    `httpx.HTTPError` propagates. `why`, when given, counts one reason per WITHHELD member; it
+    is filled only after the predicate has answered, and changes no decision.
     """
     verdict: dict[str, bool] = {}
+    refusal: dict[str, str] = {}
     out: list[dict[str, Any]] = []
     for m in members:
         prog = _program_of(m["class_uri"], m["instance_id"])
         if prog is None:
+            if why is not None:
+                why["program_undecidable"] += 1
             continue
         if prog not in verdict:
             verdict[prog] = _can_view(prog, caller)
+            if not verdict[prog] and why is not None:
+                refusal[prog] = _why_refused(caller)
         if verdict[prog]:
             out.append(m)
+        elif why is not None:
+            why[refusal[prog]] += 1
     return out
 
 
@@ -2315,15 +2337,82 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
 _RESOLVE_FLOOR = 0.5
 
 
+def _local_name(uri: Optional[str]) -> str:
+    return (uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or "-") if uri else "-"
+
+
+def _empty_reason(*, identifier: Optional[str], class_uri: Optional[str], seen: int,
+                  withheld: "collections.Counter") -> str:
+    """The first cause, in pipeline order, that explains an empty answer."""
+    if identifier is not None:
+        needle = identifier.strip()
+        if not needle:
+            return "empty_identifier"
+        if class_uri is None and needle.isdigit():
+            return "bare_number_unscoped"
+    if class_uri is not None:
+        if class_uri not in _RESOLVABLE:
+            return "class_not_held"
+        if not _members_of(class_uri):
+            return "class_has_no_members"
+    if seen == 0:
+        return "no_match"
+    if len(withheld) == 1:
+        return next(iter(withheld))
+    return "withheld_mixed" if withheld else "no_match"
+
+
+def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str], seen: int,
+               withheld: "collections.Counter", user_email: str) -> None:
+    """One WARNING line saying why an answer came back empty (an empty answer says why, in the
+    log; the architect, 2026-11-24).
+
+    The engine's empty answer looks the same for every cause, and a verified person whose body
+    `user_email` arrives empty is told the same thing as a person with no grant. The line names
+    the cause and the bearer next to the body. It carries no identifier, query text, email,
+    authz id, program id, instance id or dataset URN.
+    """
+    reason = _empty_reason(identifier=identifier, class_uri=class_uri, seen=seen, withheld=withheld)
+    caller = _current_caller()
+    bearer_id = ((getattr(caller, "authz_id", None) or "") if caller is not None else "").strip()
+    if not bearer_id:
+        bearer, verified = "none", "-"
+    else:
+        bearer = "svc" if bearer_id.startswith("svc:") else "user"
+        verified = "true" if getattr(caller, "verified", False) else "false"
+    body = (user_email or "").strip().casefold()
+    if not body:
+        body_caller = "empty"
+    elif not bearer_id:
+        body_caller = "no_bearer"
+    else:
+        body_caller = "matches_bearer" if body == bearer_id.casefold() else "differs_from_bearer"
+    classes = [class_uri] if class_uri in _RESOLVABLE else ([] if class_uri else list(_RESOLVABLE))
+    declared = sum(1 for r in INSTANCES if r.class_uri in classes)
+    tally = ",".join(f"{k}:{withheld[k]}" for k in sorted(withheld)) or "-"
+    count_name = "matched" if event == "fin.resolve_empty" else "members"
+    log.warning(
+        "%s reason=%s class=%s %s=%d withheld=%s bearer=%s verified=%s body_caller=%s "
+        "dataset_urn_set=%s declared_instances=%d",
+        event, reason, _local_name(class_uri), count_name, seen, tally, bearer, verified,
+        body_caller, "true" if asset_inputs.dataset_urn() else "false", declared,
+    )
+
+
 @app.post("/resolve_instance")
 def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
     """Resolve a spoken finance name to an identifier in this model."""
     cands = [c for c in _candidates(req.identifier, req.class_uri)
              if c["score"] >= _RESOLVE_FLOOR]
+    seen = len(cands)
+    withheld: collections.Counter = collections.Counter()
     try:
-        cands = _visible_to(req.user_email, cands)
+        cands = _visible_to(req.user_email, cands, withheld)
     except httpx.HTTPError as e:
         raise HTTPException(503, f"program membership check failed: {e}") from e
+    if not cands:
+        _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
+                   seen=seen, withheld=withheld, user_email=req.user_email)
     return {
         "output_uri": MESH + "InstanceResolution",
         "query": req.identifier,
@@ -2360,6 +2449,8 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
                         the distinction exists to refuse.
     """
     if req.class_uri not in _RESOLVABLE:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri, seen=0,
+                   withheld=collections.Counter(), user_email=req.user_email)
         return {
             "output_uri": MESH + "InstanceEnumeration",
             "class_uri": req.class_uri,
@@ -2374,9 +2465,14 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
             "provider": "engine_fin_finance",
         }
     try:
-        members = _visible_to(req.user_email, _members_of(req.class_uri))
+        held = _members_of(req.class_uri)
+        withheld: collections.Counter = collections.Counter()
+        members = _visible_to(req.user_email, held, withheld)
     except httpx.HTTPError as e:
         raise HTTPException(503, f"program membership check failed: {e}") from e
+    if not members:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
+                   seen=len(held), withheld=withheld, user_email=req.user_email)
     if len(members) > req.limit:
         return {
             "output_uri": MESH + "InstanceEnumeration",
