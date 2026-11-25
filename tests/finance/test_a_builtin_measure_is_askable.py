@@ -70,9 +70,10 @@ def test_the_seed_layer_lists_exactly_the_built_ins():
     by_verb = {v["verb"]: v for v in engine.VERBS}
     for e in got:
         v = by_verb[e["verb"]]
-        assert {"verb", "name", "description", "phrasings", "cells"} <= set(e) <= {"verb", "name", "description", "phrasings", "cells", "unit"}
+        assert {"verb", "name", "description", "phrasings", "cells"} <= set(e) <= {"verb", "name", "description", "phrasings", "cells", "unit", "subject"}
         assert e["phrasings"] == list(v["synonyms"]) and e["phrasings"]
         assert e["cells"] == sorted(engine.DOMAINS)
+        assert e["subject"] == v["input_uri"]  # the engine's own registration, read by the BFF
         assert e["name"].strip() and e["description"].strip()
 
 
