@@ -1374,7 +1374,7 @@ class RouteIntentResponse(BaseModel):
 class PlanRequest(BaseModel):
     """Incoming request to the /plan endpoint."""
     query: str
-    domain: str = "MAINTENANCE"
+    domain: str | None = None
 
 
 class ResolveRequest(BaseModel):
@@ -1395,7 +1395,7 @@ class ResolveRequest(BaseModel):
     # that hit this with a SINGLE domain, and it was picking
     # `entitled_domains[0]` — the routing_domain lock bug confirmed
     # 2026-06-28. New callers should populate `domains` instead.
-    domain: str = "MAINTENANCE"
+    domain: str | None = None
     # NEW (2026-06-28): list of entitled domains to scope the
     # candidate pool. When provided (non-empty), supersedes `domain`.
     # The Weaviate hybrid search filters candidates by
@@ -4418,7 +4418,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             identifier=identifier,
             query=request.query,
             asked_domains=request.domains or ([request.domain] if request.domain else []),
-            # The grant is `domains` ONLY. The legacy single `domain` defaults to MAINTENANCE
+            # The grant is `domains` ONLY. The legacy single `domain` defaults to None
             # and ranks; forwarding it as an entitlement would grant what nobody granted.
             user_email=request.user_email, entitled_domains=list(request.domains or []),
         )
@@ -7169,7 +7169,7 @@ class ClassifyPredicateRequest(BaseModel):
     user_email: str = ""
     # Primary domain used as the BAML domain field. Match what /resolve
     # was called with for consistency.
-    domain: str = "MAINTENANCE"
+    domain: str | None = None
     # How many Weaviate candidates to put in front of the LLM. Higher =
     # better recall, more tokens. 10 mirrors /resolve's default.
     candidate_limit: int = 10
