@@ -2812,6 +2812,71 @@ def _log_no_verb_decision(
         context.log.warning("subtask_slots_decision (no verb) materialization failed: %s", exc)
 
 
+def decide_subtask_disposition(context, config, predicate, accepted_params, declared, resolution):
+    """ADR-0033's route | ask | abstain for one routed subtask, decided after `accept_slots`.
+
+    Public (no underscore) because it is the entry point a routing-only harness calls after
+    `accept_slots`, the way it calls `_classify_route` and `_fill_slots_from_query`.
+    """
+    _disp_enum = _make_enumerator(
+        context, user_email=config.user_email,
+        entitled_domains=list(config.entitled_domains or []),
+    )
+    disposition = decide_disposition(
+        accepted=accepted_params,
+        declared=declared,
+        resolution=resolution,
+        enumerate_class=_disp_enum,
+    )
+    _raise_if_identity_failed(_disp_enum)
+
+    # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
+    #
+    # The arity gate now FLAGS a single-asset verb on a set-shaped question rather than
+    # excluding it, so the disposition can offer a menu instead of the answer being lost.
+    # That is right for planning's verbs, where `arity_for` DERIVES "single" from a slot
+    # that is both required and a referent — the very slot `decide_disposition` asks about.
+    #
+    # IT IS NOT SAFE ON ITS OWN, AND THE GATE'S ORIGINAL DEFECT IS THE PROOF. `arity` is a
+    # DECLARED string on a mesh registration for every other engine, carrying no promise
+    # that the verb has an askable slot. `describeAsset` is exactly that: declared single,
+    # and the case the gate was built for — `show me data about customers` resolved to the
+    # class Dataset, routed to a single-asset profiler, and honestly returned `assets: []`.
+    # With no spoken-mandatory declaration, `decide_disposition` walks nothing, returns
+    # ROUTE, and that zero-asset answer comes straight back.
+    #
+    # So the flag is a DISPATCH PRECONDITION, not a hint. Asked-and-answered binds the
+    # instance and this never fires; nothing-to-ask abstains instead of dispatching. This is
+    # the half of the old gate that must survive its own removal — a set-shaped question
+    # still may not route to a single-asset verb SILENTLY.
+    # `needs_instance` is only ever set when the question named NO instance -- the gate
+    # flags on `query_is_set` -- so the remaining condition is whether the disposition had
+    # anything to ask about. A verb with a spoken-mandatory declaration is already handled:
+    # it either asked, or it routed because the slot got filled (a BIND answer arrives here
+    # as an accepted param, and abstaining on THAT would refuse a question the user just
+    # answered). A verb with no such declaration is the unaskable case.
+    _askable = any(
+        isinstance(d, dict) and d.get("kind") in _MUST_BE_SPOKEN_KINDS
+        for d in (decode_declarations(declared) or [])
+    )
+    if (
+        disposition.action == ROUTE
+        and (predicate or {}).get("needs_instance")
+        and not _askable
+    ):
+        context.log.info(
+            "arity_precondition verb_iri=%s ABSTAIN — declared single-asset, the question "
+            "named no instance, and the verb declares no spoken-mandatory slot, so there "
+            "was nothing to ask about. Dispatching would answer a set question with a "
+            "single-asset verb — the assets:[] defect the arity gate was built for.",
+            (predicate or {}).get("verb_iri"),
+        )
+        disposition = disposition._replace(
+            action=ABSTAIN, reason="needs_instance_no_ask",
+        )
+    return disposition
+
+
 def _unverified_expiry(token: str) -> Optional[float]:
     """The ``exp`` of a JWT, read WITHOUT verifying it (mirrors
     ``iagent.identity_vault._expiry_of``; mirrored so the supervisor process does not import
@@ -2994,6 +3059,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
             # does. the subtask could not run
             "route_status": "infra_error",
+            "disposition": "infra_error",
             "expert_response": {
                 "status": "INFRA_ERROR",
                 "summary": (
@@ -3056,6 +3122,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 # NOT `no_match`: the card must be able to tell "nothing covers this" from
                 # "something might, and the system would not guess which".
                 "route_status": "abstained",
+                "disposition": ABSTAIN,
                 "expert_response": {
                     "status": "no_verb_classified",
                     "reason": "no_verb_classified",
@@ -3081,7 +3148,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             context, disposition="fallback", no_verb_reason="no_predicate_matched",
             telemetry=telemetry,
         )
-        return _call_engine_a_fallback(
+        return {**_call_engine_a_fallback(
             context,
             sub_query=sub_query,
             config=config,
@@ -3089,7 +3156,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             fallback_score=None,
             rejected_predicate=None,
             telemetry=telemetry,
-        )
+        ), "disposition": "fallback"}
 
     # status == _ROUTING_MATCHED — apply the threshold against the LLM's
     # confidence (replaces the BM25 + yellow-zone gate machinery).
@@ -3113,7 +3180,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             telemetry=telemetry,
             rejected_verb_iri=str(predicate.get("verb_iri") or ""),
         )
-        return _call_engine_a_fallback(
+        return {**_call_engine_a_fallback(
             context,
             sub_query=sub_query,
             config=config,
@@ -3121,7 +3188,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             fallback_score=score,
             rejected_predicate=predicate,
             telemetry=telemetry,
-        )
+        ), "disposition": "fallback"}
 
     if not (predicate.get("endpoint") or "").strip():
         # A renderer (a `mesh:rendersAs` row) has no endpoint: it is a display format, not a
@@ -3141,6 +3208,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             "fallback_score": None,
             "sub_query": sub_query,
             "route_status": "abstained",
+            "disposition": ABSTAIN,
             "expert_response": {
                 "status": "no_endpoint",
                 "reason": "no_endpoint",
@@ -3322,62 +3390,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # information the user supplied, and both MUST still route. ADR-0033 #4: a system that
     # asks when it knows is worse than one that guesses when it doesn't.
     # -----------------------------------------------------------------------------------
-    _disp_enum = _make_enumerator(
-        context, user_email=config.user_email,
-        entitled_domains=list(config.entitled_domains or []),
+    disposition = decide_subtask_disposition(
+        context, config, predicate, accepted.params, declared, resolution,
     )
-    disposition = decide_disposition(
-        accepted=accepted.params,
-        declared=declared,
-        resolution=resolution,
-        enumerate_class=_disp_enum,
-    )
-    _raise_if_identity_failed(_disp_enum)
-
-    # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
-    #
-    # The arity gate now FLAGS a single-asset verb on a set-shaped question rather than
-    # excluding it, so the disposition can offer a menu instead of the answer being lost.
-    # That is right for planning's verbs, where `arity_for` DERIVES "single" from a slot
-    # that is both required and a referent — the very slot `decide_disposition` asks about.
-    #
-    # IT IS NOT SAFE ON ITS OWN, AND THE GATE'S ORIGINAL DEFECT IS THE PROOF. `arity` is a
-    # DECLARED string on a mesh registration for every other engine, carrying no promise
-    # that the verb has an askable slot. `describeAsset` is exactly that: declared single,
-    # and the case the gate was built for — `show me data about customers` resolved to the
-    # class Dataset, routed to a single-asset profiler, and honestly returned `assets: []`.
-    # With no spoken-mandatory declaration, `decide_disposition` walks nothing, returns
-    # ROUTE, and that zero-asset answer comes straight back.
-    #
-    # So the flag is a DISPATCH PRECONDITION, not a hint. Asked-and-answered binds the
-    # instance and this never fires; nothing-to-ask abstains instead of dispatching. This is
-    # the half of the old gate that must survive its own removal — a set-shaped question
-    # still may not route to a single-asset verb SILENTLY.
-    # `needs_instance` is only ever set when the question named NO instance -- the gate
-    # flags on `query_is_set` -- so the remaining condition is whether the disposition had
-    # anything to ask about. A verb with a spoken-mandatory declaration is already handled:
-    # it either asked, or it routed because the slot got filled (a BIND answer arrives here
-    # as an accepted param, and abstaining on THAT would refuse a question the user just
-    # answered). A verb with no such declaration is the unaskable case.
-    _askable = any(
-        isinstance(d, dict) and d.get("kind") in _MUST_BE_SPOKEN_KINDS
-        for d in (decode_declarations(declared) or [])
-    )
-    if (
-        disposition.action == ROUTE
-        and (predicate or {}).get("needs_instance")
-        and not _askable
-    ):
-        context.log.info(
-            "arity_precondition verb_iri=%s ABSTAIN — declared single-asset, the question "
-            "named no instance, and the verb declares no spoken-mandatory slot, so there "
-            "was nothing to ask about. Dispatching would answer a set question with a "
-            "single-asset verb — the assets:[] defect the arity gate was built for.",
-            (predicate or {}).get("verb_iri"),
-        )
-        disposition = disposition._replace(
-            action=ABSTAIN, reason="needs_instance_no_ask",
-        )
     # ── subtask_slots_decision — THE HOP THAT WAS NEVER THERE ────────────────────────
     #
     # `resolved_intent` on the AnswerArtifact has always been populated from
@@ -3522,6 +3537,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
             # does. an ask IS the answer for a matched route
             "route_status": "matched",
+            "disposition": disposition.action,
             "expert_response": ask_card(
                 disposition,
                 verb_iri=predicate.get("verb_iri") or "",
@@ -3772,8 +3788,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 })
             except Exception:  # pragma: no cover
                 pass
-            return _caller_identity_result(
-                config, predicate, sub_query, answerer_persona, _icause)
+            return {**_caller_identity_result(
+                config, predicate, sub_query, answerer_persona, _icause), "disposition": ROUTE}
 
     try:
         response = requests.post(
@@ -3811,8 +3827,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                     })
                 except Exception:  # pragma: no cover
                     pass
-                return _caller_identity_result(
-                    config, predicate, sub_query, answerer_persona, "session_expired")
+                return {**_caller_identity_result(
+                    config, predicate, sub_query, answerer_persona, "session_expired"),
+                        "disposition": ROUTE}
         # ValueError covers a 200 with an unparseable body — the engine answered with
         # something that is not JSON, which is a failure to answer, not a successful answer.
         # THE REFUSAL'S OWN BODY, because it names the fix and this route discarded it.
@@ -3857,6 +3874,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
             # does. routed to a specialist that was unreachable -- an honest failure beats a fabrication
             "route_status": "matched",
+            "disposition": ROUTE,
             "expert_response": {
                 # Same vocabulary discipline as Engine DA's envelope: a distinct status, never
                 # `success` carrying an explanation. `ungrounded` would be WRONG here — nothing
@@ -3963,6 +3981,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
         # does. `matched` unless the specialist said it abstained — see above the return.
         "route_status": route_status,
+        "disposition": ROUTE,
         "expert_response": data,
     }
 
