@@ -58,7 +58,7 @@ jobs:
         id: suite
         run: |
           set +e
-          uv run pytest tests/ -q -p no:cacheprovider -rfEs > suite-advisory.log 2>&1
+          uv run pytest tests/ -q -p no:cacheprovider -rsEf > suite-advisory.log 2>&1
           echo "exit=$?" >> "$GITHUB_OUTPUT"
           tail -n 40 suite-advisory.log
       - name: known vs new
