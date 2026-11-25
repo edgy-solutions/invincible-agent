@@ -90,6 +90,20 @@ def test_mapping_of_snapshots_and_failed_reads():
     assert len(calls) == 4  # a failed read is not cached
 
 
+def test_get_failure_reads_the_snapshot():
+    async def read(snap):
+        da, _ = _client(lambda r: httpx.Response(200, json=snap))
+        return await da.get_failure("a")
+
+    got = asyncio.run(read({**SNAP, "status": "FAILURE", "failed_step": "execute_subtask[0]",
+                            "trace_id": "trace-1"}))
+    assert got == {"failed_step": "execute_subtask[0]", "trace_id": "trace-1"}
+    got = asyncio.run(read({**SNAP, "status": "FAILURE", "failed_step": "", "trace_id": ""}))
+    assert got == {"failed_step": None, "trace_id": None}
+    da, _ = _client(lambda r: httpx.Response(500))
+    assert asyncio.run(da.get_failure("a")) == {}
+
+
 # ------------------------------------------------------------------ gateway
 @pytest.fixture(scope="module")
 def gw():

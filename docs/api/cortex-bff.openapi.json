@@ -647,9 +647,20 @@
       },
       "AskableMeasuresResponse": {
         "properties": {
+          "cell_source": {
+            "title": "Cell Source",
+            "type": "string"
+          },
           "composed": {
             "title": "Composed",
             "type": "boolean"
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Domains",
+            "type": "array"
           },
           "invalid": {
             "items": {
@@ -664,12 +675,26 @@
             },
             "title": "Measures",
             "type": "array"
+          },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona"
           }
         },
         "required": [
           "composed",
           "measures",
-          "invalid"
+          "invalid",
+          "persona",
+          "domains",
+          "cell_source"
         ],
         "title": "AskableMeasuresResponse",
         "type": "object"
@@ -3786,6 +3811,18 @@
               }
             ],
             "title": "Artifact Id"
+          },
+          "askable_pick": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Askable Pick"
           },
           "bound_slots": {
             "anyOf": [
@@ -6991,8 +7028,45 @@
     },
     "/askable_measures": {
       "get": {
-        "description": "The declared measures this caller can ask, for discovery. One entry per declared measure\nrow (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),\nwhether or not the row carries a `menu:` block. An entry is listed only when the caller holds\na domain in the row's declared cells, the same comparison the engine that declares the\nmeasure refuses on, so the list never names a measure the caller would be refused. The\nengine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's\n`declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the\nrow declares none). `example_ask` and `group_label` are served as declared, null otherwise.\n\nBuilt-in measures are listed from their listing rows, through the measure's engine's own\nloader. They declare no shape (`shape` is null).\n\nBuilt-ins are listed whatever the overlay env; declared rows are read only when\n`MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed\nload is named in `invalid` and logged at ERROR); it never means \"none\".",
+        "description": "The declared measures this caller can ask, for discovery. One entry per declared measure\nrow (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),\nwhether or not the row carries a `menu:` block. An entry is listed only when the caller holds\na domain in the row's declared cells, the same comparison the engine that declares the\nmeasure refuses on, so the list never names a measure the caller would be refused. The\nengine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's\n`declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the\nrow declares none). `example_ask` and `group_label` are served as declared, null otherwise.\n\nBuilt-in measures are listed from their listing rows, through the measure's engine's own\nloader. They declare no shape (`shape` is null).\n\nThe list is filtered to the cell an ask would run under, resolved by the ask's own rule\n(`_resolve_ask_cell`): with neither param, the caller's default cell (then the first cell,\nthen none); with params, both are required and every domain must be held under the\npersona, else the request is refused (400 / 403), never narrowed silently. The response\nnames that cell (`persona`, `domains`, `cell_source`).\n\nBuilt-ins are listed whatever the overlay env; declared rows are read only when\n`MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed\nload is named in `invalid` and logged at ERROR); it never means \"none\".",
         "operationId": "get_askable_measures_askable_measures_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "active_persona",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Active Persona"
+            }
+          },
+          {
+            "in": "query",
+            "name": "active_domains",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Active Domains"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -7003,6 +7077,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

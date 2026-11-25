@@ -1,0 +1,132 @@
+{{- /*
+Electric's own database role (electric.db.enabled; step 3 of the sync-service exposure plan).
+
+A hook Job, run as `postgres`, idempotent. It (1) creates the role if absent and sets its password from the Secret,
+(2) revokes every table privilege the role holds outside the list, then grants CONNECT, schema USAGE and SELECT on EXACTLY the tables policy/electric_shapes.yaml names (one transaction: psql -1 with the script read as -f -), (3) makes the
+publication over those tables and sets REPLICA IDENTITY FULL, (4) optionally revokes REPLICATION from the main user.
+
+THE TABLE LIST IS READ FROM THE CHART'S COPY OF THE POLICY FILE (files/policy/electric_shapes.yaml; a seal keeps it
+byte-equal to policy/electric_shapes.yaml), never typed in this chart. An absent or empty file FAILS the render:
+a role with no grants is not a safe default, it is a silent outage. Each name must be a plain identifier, because it
+is placed in SQL.
+
+Hook: post-install,post-upgrade at weight -3 (worker6's PV pin blocks helm at hook weight 2; read the roll notes
+before changing it). On an upgrade that turns this on, the new Electric pod can start before the role exists and
+restart once: the Secret is a normal resource, so a PRE hook cannot read it on the first enabling.
+*/ -}}
+{{- if and .Values.electric.enabled .Values.electric.db.enabled }}
+{{- $rows := (.Files.Get "files/policy/electric_shapes.yaml" | fromYaml).electric_shapes }}
+{{- if not $rows }}
+{{- fail "helm/invincible-agent/files/policy/electric_shapes.yaml is missing or names no table: Electric's role would have no grants" }}
+{{- end }}
+{{- $ident := "^[a-z_][a-z0-9_]*$" }}
+{{- $role := .Values.electric.db.role }}
+{{- $schema := .Values.electric.db.schema }}
+{{- $pub := .Values.electric.db.publication }}
+{{- range $v := list $role $schema $pub }}
+{{- if not (regexMatch $ident $v) }}{{ fail (printf "electric.db: %q is not a plain lower-case SQL identifier" $v) }}{{ end }}
+{{- end }}
+{{- /* psql getenv (keeps the password out of argv) is 15+. The version is read from the chart (the tag), never the cluster; a tag whose major is not >= 15 FAILS the render. */ -}}
+{{- $pgTag := toString .Values.utilImages.postgresClient.tag }}
+{{- if not (regexMatch "^(1[5-9]|[2-9][0-9])" $pgTag) }}{{ fail (printf "utilImages.postgresClient.tag %q: electric.db needs psql 15 or newer (psql getenv keeps the role password out of psql argv)" $pgTag) }}{{ end }}
+{{- $tables := list }}
+{{- range $rows }}
+{{- if not (regexMatch $ident .table) }}{{ fail (printf "electric_shapes.yaml: table %q is not a plain lower-case SQL identifier" .table) }}{{ end }}
+{{- $tables = append $tables (printf "%s.%s" $schema .table) }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-electric-role
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "electric-role" "root" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "electric-role" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: electric-role
+          image: {{ include "invincible-agent.image" (dict "name" "postgres-client" "registry" .Values.utilImages.postgresClient.registry "repository" .Values.utilImages.postgresClient.repository "tag" .Values.utilImages.postgresClient.tag "root" .) }}
+          env:
+            - name: PGHOST
+              value: {{ include "invincible-agent.pgHost" . }}
+            - name: PGPORT
+              value: {{ include "invincible-agent.pgPort" . | default "5432" | quote }}
+            - name: PGUSER
+              value: "postgres"
+            - name: PGDATABASE
+              value: {{ include "invincible-agent.pgDatabase" . }}
+            {{- if eq (default "postgres" .Values.postgresql.imageStyle) "bitnami" }}
+            - name: PGPASSWORD
+              value: {{ .Values.postgresql.auth.postgresPassword | default .Values.postgresql.auth.password | quote }}
+            {{- else }}
+            - name: PGPASSWORD
+              value: {{ .Values.postgresql.auth.password | quote }}
+            {{- end }}
+            - name: ELECTRIC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "invincible-agent.electricDbSecretName" . }}
+                  key: {{ include "invincible-agent.electricDbSecretKey" . }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U postgres -d "$PGDATABASE"; do sleep 2; done
+              psql -1 -v ON_ERROR_STOP=1 -f - <<'SQL'
+              SET log_statement = 'none';
+              SET log_min_error_statement = 'panic';
+              SET log_min_duration_statement = -1;
+              \getenv pw ELECTRIC_DB_PASSWORD
+              DO $$
+              DECLARE o text;
+              BEGIN
+                SELECT string_agg(pubname, ', ') INTO o FROM pg_publication WHERE pubname <> '{{ $pub }}';
+                IF o IS NOT NULL THEN
+                  RAISE EXCEPTION 'publications other than {{ $pub }} exist (%): a REPLICATION role can stream any publication in the database; step-0 item 3 (a)', o;
+                END IF;
+              END $$;
+              SELECT format('CREATE ROLE %I LOGIN REPLICATION PASSWORD %L', '{{ $role }}', :'pw')
+                WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ $role }}') \gexec
+              SELECT format('ALTER ROLE %I WITH LOGIN REPLICATION PASSWORD %L', '{{ $role }}', :'pw') \gexec
+              DO $$
+              DECLARE r record;
+              BEGIN
+                FOR r IN SELECT DISTINCT table_schema, table_name FROM information_schema.role_table_grants
+                         WHERE grantee = '{{ $role }}'
+                           AND (table_schema || '.' || table_name) <> ALL (ARRAY[{{ range $i, $t := $tables }}{{ if $i }}, {{ end }}'{{ $t }}'{{ end }}])
+                LOOP
+                  EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE %I.%I FROM %I', r.table_schema, r.table_name, '{{ $role }}');
+                END LOOP;
+              END $$;
+              GRANT CONNECT ON DATABASE "{{ include "invincible-agent.pgDatabase" . }}" TO "{{ $role }}";
+              GRANT USAGE ON SCHEMA "{{ $schema }}" TO "{{ $role }}";
+              {{- range $rows }}
+              GRANT SELECT ON TABLE "{{ $schema }}"."{{ .table }}" TO "{{ $role }}";
+              ALTER TABLE "{{ $schema }}"."{{ .table }}" REPLICA IDENTITY FULL;
+              {{- end }}
+              DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = '{{ $pub }}') THEN
+                  CREATE PUBLICATION "{{ $pub }}" FOR TABLE {{ range $i, $r := $rows }}{{ if $i }}, {{ end }}"{{ $schema }}"."{{ $r.table }}"{{ end }};
+                END IF;
+              END $$;
+              ALTER PUBLICATION "{{ $pub }}" SET TABLE {{ range $i, $r := $rows }}{{ if $i }}, {{ end }}"{{ $schema }}"."{{ $r.table }}"{{ end }};
+              {{- if .Values.electric.db.revokeReplicationFromMainUser }}
+              ALTER ROLE "{{ include "invincible-agent.pgUser" . }}" WITH NOREPLICATION;
+              {{- end }}
+              SQL
+{{- end }}
