@@ -70,6 +70,8 @@
 | 58 | #554 | `7509ca7d` | 74 | The gateway, the supervisor and engine O name no domain a caller was not given |
 | 59 | #563 | `cad87001` | Lane 1 | The 0.4.92 notes carry the finance listing's identity as a known issue |
 
+**Cortex in 0.4.92** (added after the tag, 2026-11-25): the chart pins cortex-ui `1660b84`, which is cortex release `cortex-ui-0.4.0` (digest `cf64568d`). The pin is unchanged since 0.4.91.
+
 **Not in 0.4.92:**
 - **#506**, an instance name is the whole phrase (74). It is a draft and unreviewed. It goes into the next release, in gov's queue after the pair.
 - **#561, #564 and #568**, the finance listing's identity fix (fin and 74). It comes in the next release; its known issue is below.
