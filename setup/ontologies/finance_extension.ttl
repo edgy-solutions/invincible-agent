@@ -171,6 +171,16 @@ fin:FundingStatusGrid a owl:Class ;
     rdfs:label "Funding Status Grid" ;
     rdfs:comment "Cells indexed by subject and period, each holding three nested quantities where each is a subset of the one above it, the two balances derived between them, and a verdict stated by the producer rather than derived by the reader. Refuses a cell whose nesting is violated. The verdict is required because two of the three quantities cannot distinguish the middle condition from the settled one." .
 
+fin:FiscalCalendarPeriods a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Fiscal Calendar Periods" ;
+    rdfs:comment "An ordered sequence of the periods of one declared fiscal calendar, each with its start and end dates, fiscal year, quarter and half, and at most one period marked as the period the data is reported through. Carries no amount." .
+
+fin:HierarchyChildren a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Hierarchy Children" ;
+    rdfs:comment "The descendants of one named element of a declared breakdown, to a stated depth, each with its level, its role and its parent, ordered by name within a level. States how many levels were requested and how many were returned. Carries no amount." .
+
 # =============================================================================
 # Money primitives - FIBO, referenced rather than reinvented (ADR-0045 Decision 2)
 # =============================================================================

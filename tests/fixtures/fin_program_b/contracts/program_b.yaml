@@ -19,6 +19,9 @@ period:
   column: period
   calendar: program_b_445
 
+# The breakdown, top first: four WBS levels, the control account, the work package.
+hierarchy: [wbs_1, wbs_2, wbs_3, wbs_4, control_account, work_package]
+
 columns:
   - {name: program_id, type: string, required: true, nullable: false}
   - {name: wbs_1, type: string, required: true, nullable: false}

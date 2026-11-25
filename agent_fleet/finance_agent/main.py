@@ -50,6 +50,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import export_dates
     import export_profiles
     import instance_overlays
+    import lookups
     import measure_verbs
     import measures
     import state_codec
@@ -65,6 +66,7 @@ except ImportError:
     from agent_fleet.finance_agent import export_dates
     from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import instance_overlays
+    from agent_fleet.finance_agent import lookups
     from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
@@ -472,6 +474,44 @@ VERBS: list[dict[str, Any]] = [
         "anti_synonyms": ["what will it cost", "why are we over", "CPI",
                           "which account is worst"],
     },
+    {
+        "fn": "fin_calendar_periods",
+        "verb": "mesh:finCalendarPeriods",
+        "input_uri": FIN + "Program",
+        "also_askable_of": [],
+        "desc": (
+            "The periods of the program's declared fiscal calendar, in the calendar's own order, "
+            "each with its start and end dates, fiscal year, quarter and half, and the status "
+            "period the data is reported through marked. A LOOKUP: no amount and no verdict. "
+            "NOT what anything cost in a period - that is finVarianceAnalysis. NOT the structure "
+            "of the work - that is finHierarchyChildren. OWNS the phrasings: fiscal calendar, "
+            "reporting periods, which period, what period are we in, status period, period "
+            "list, quarter of a period."
+        ),
+        "synonyms": ["fiscal calendar", "reporting periods", "which period", "what period are we in",
+                     "status period", "period list", "what quarter is this period"],
+        "anti_synonyms": ["what is under this account", "children of", "WBS breakdown",
+                          "what did it cost", "cost variance", "EAC"],
+    },
+    {
+        "fn": "fin_hierarchy_children",
+        "verb": "mesh:finHierarchyChildren",
+        "input_uri": FIN + "Program",
+        "also_askable_of": [],
+        "desc": (
+            "The children of a named element of the program's declared breakdown, down one level "
+            "or to a stated depth and no further than the work package: the WBS levels, the "
+            "control accounts and the work packages. A LOOKUP: no amount and no verdict. NOT the "
+            "periods of the calendar - that is finCalendarPeriods. NOT what an account cost or "
+            "who is driving a variance - that is finVarianceDrivers. OWNS the phrasings: what "
+            "is under, children of, WBS breakdown, which control accounts are under, work "
+            "packages of, the structure below."
+        ),
+        "synonyms": ["what is under", "children of", "WBS breakdown",
+                     "which control accounts are under", "work packages of", "the structure below"],
+        "anti_synonyms": ["which period", "fiscal calendar", "status period",
+                          "what did it cost", "cost variance", "EAC"],
+    },
 ]
 
 #: Verbs by function name, so the routes and the catalogue cannot drift.
@@ -562,12 +602,22 @@ def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]
     A dataset row that lists a version param (`version`, `version_a`, `version_b`) gets one more
     slot each, with the shape of `fin_eac_calculation`'s `method`, an existing required enum: its
     `values` are the row's contract's declared versions, in declared order. The list is the
-    contract's, never read from the data."""
+    contract's, never read from the data.
+
+    A flow row that lists `period` and `basis` gets the same shape for each: `period`'s `values`
+    are the labels of the ROW'S calendar in calendar order (never `fiscal_periods()`, which is the
+    default calendar), `basis`'s are `period` and `cumulative`."""
     slots = [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
     if row.contract is not None and row.contract.versions:
         (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
         slots += [{**enum, "name": n, "values": list(row.contract.versions)}
                   for n in measure_verbs._VERSION_PARAMS if n in row.params]
+    if any(n in row.params for n in measure_verbs._PERIOD_PARAMS):
+        (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
+        values = {"period": list(_row_calendar_labels(row) or ()),
+                  "basis": list(asset_inputs.PERIOD_BASES)}
+        slots += [{**enum, "name": n, "values": values[n]}
+                  for n in measure_verbs._PERIOD_PARAMS if n in row.params]
     return slots
 
 
@@ -1005,6 +1055,9 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
             "slots": missing,
         })
 
+    if fn in lookups.LOOKUP_FNS:
+        return _lookup_envelope(fn, params)
+
     try:
         # THE SAME SELECTION `_declared_envelope` makes: with the flag set a built-in computes over
         # the asset as the caller (ruled 2026-11-08), unless its row declares `source: seed`.
@@ -1069,6 +1122,55 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
         ),
         "rows": rows,
     }
+
+
+def _lookup_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
+    """The envelope of a built-in LOOKUP (`lookups.LOOKUP_FNS`): a governed read of the deployment's
+    declared dataset as the caller, shaped as INSTANCES_BY_PROPERTY with the answer's own keys beside
+    it. No amount, unit or verdict. Asset only: with no dataset configured the verb refuses (422
+    `no_dataset`) and never answers from the seed. A refusal is a 422 with its own `error` code."""
+    unknown = sorted(set(params) - set(lookups.LOOKUP_PARAMS[fn]))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"bad params for {fn}: {unknown}")
+    try:
+        depth = lookups.check_depth(1 if params.get("depth") is None else params["depth"]) if fn == "fin_hierarchy_children" else None
+        urn = asset_inputs.dataset_urn()
+        if urn is None:
+            raise lookups.LookupRefused(
+                "no_dataset", "this lookup reads the deployment's declared dataset; none is configured")
+        program_id = params["program_id"]
+        receipts: list[dict[str, Any]] = []
+        with _asset_read_errors(urn):
+            contract = asset_inputs.dataset_contract()
+            read = _ticketed_reader(receipts)
+            if fn == "fin_calendar_periods":
+                got = asset_inputs.read_calendar_status(read, urn, program_id=program_id, contract=contract)
+                answer = lookups.calendar_answer(got.calendar, got.status, got.status_column)
+            else:
+                levels = asset_inputs.hierarchy_levels(contract)
+                if not levels:
+                    raise lookups.LookupRefused(
+                        "hierarchy_not_declared",
+                        "the dataset contract declares no hierarchy; the lookup needs its level columns")
+                rows = asset_inputs.read_hierarchy_rows(read, urn, program_id=program_id, contract=contract)
+                answer = lookups.hierarchy_answer(
+                    program_id, params["element"], depth, contract.scope,
+                    [(contract.scope, asset_inputs.ROLE_SCOPE), *levels], rows)
+    except lookups.LookupRefused as exc:
+        raise HTTPException(status_code=422, detail={"error": exc.code, "message": exc.message}) from exc
+    except NotInModel as exc:
+        raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+    receipt = _the_receipt(receipts, urn)
+    envelope = {  # not `return {`: the wire seals select the built-in builder by that anchor
+        "measure": fn,
+        "output_uri": measures.OUTPUT_URI[fn],
+        "artifact_id": _artifact_id(fn, params, answer["rows"]),
+        "data_provenance": asset_inputs.provenance(urn, receipt),
+        "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, receipt),
+        **answer,
+    }
+    return envelope
 
 
 def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
@@ -1214,13 +1316,24 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     Same keys as `_declared_envelope` minus `series`/`reference`, which a flow has no use for."""
     urn, program_id = row.dataset_urn, params["program_id"]
     receipts: list[dict[str, Any]] = []
+    reads_period = "period" in row.params
+    scope = (params["period"], params["basis"]) if reads_period else None
     try:
         with _asset_read_errors(urn):
+            calendar_labels = _row_calendar_labels(row)
+            if reads_period and calendar_labels is None:
+                # The row's calendar is no longer declared (the env changed after load): as the series
+                # path, every period is outside it.
+                raise asset_inputs.ContractViolation("period_outside_calendar",
+                                                     "a period outside the fiscal calendar")
             read = asset_inputs.read_dataset_rows(
                 _ticketed_reader(receipts), urn, row.levels, row.value_columns, row.value_op,
                 row.per_path, program_id, row.contract,
-                **{n: params.get(n) for n in measure_verbs._VERSION_PARAMS if n in row.params},
-                version_column=row.contract.version_column, versions=row.contract.versions)
+                **{n: params.get(n) for n in (*measure_verbs._VERSION_PARAMS, *measure_verbs._PERIOD_PARAMS)
+                   if n in row.params},
+                version_column=row.contract.version_column, versions=row.contract.versions,
+                period_column=row.contract.period_column,
+                calendar_labels=(calendar_labels or ()))
             compare = walk = None
             if isinstance(read, asset_inputs.CompareRead):
                 paths = read.paths
@@ -1262,13 +1375,16 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         "value_label": row.render.get("value_label", row.name),
         "render": {**copy.deepcopy(row.render),
                    "other_label": importlib.import_module(row.resolved_module).OTHER_LABEL},
-        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
+        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn),
+                                                           period=scope),
         "data_source": {"kind": "asset", "urn": urn},
         "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
-        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
+        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare, period=scope))
+           is not None else {}),
         **({"version": params["version"]} if "version" in row.params else {}),
+        **({"period": params["period"], "basis": params["basis"]} if reads_period else {}),
         **({"compare": compare} if compare is not None else {}),
         **({"walk": walk} if walk is not None else {}),
         "rows": rows,
@@ -1389,7 +1505,7 @@ def _package_provenance(program_source: Optional[dict[str, Any]],
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
-    return name == "program_id" or name in measure_verbs._VERSION_PARAMS
+    return name == "program_id" or name in measure_verbs._VERSION_PARAMS or name in measure_verbs._PERIOD_PARAMS
 
 
 @app.post("/measure/{fn}")
