@@ -400,7 +400,7 @@ PENDING: dict[str, str] = {
     f"{RA}::_authorize_resolution::caller {{}} is not authorized (can_act) for audien": "task_grants",
     f"{GW}::_require_plan_write::not_entitled_to_change_the_plan | Changing plan state requires the": "groups",
     f"{GW}::canvas_seed::cell_cannot_see_verbs | seeded 0 of {{}} panels; every ask": "groups",
-    f"{GW}::orchestrate::cell_not_entitled | user {{}} is not entitled to perso": "groups",
+    f"{GW}::_resolve_ask_cell::cell_not_entitled | user {{}} is not entitled to perso": "groups",
     f"{GW}::federated_image::not entitled for this domain": "groups",
     "agent_fleet/ontology_service/main.py::notice_parts_route::not_entitled": "groups",
     "agent_fleet/ontology_service/main.py::where_used_route::not_entitled": "groups",

@@ -1969,6 +1969,10 @@ cortexBff:
     name: cortex-bff
     tag: ""
   port: 8090
+  # The answer path (ADR-0072 §4): unset (the default) answers on Dagster. "dagster" or "durable" only;
+  # the chart refuses any other value, and refuses "durable" unless supervisorService.enabled.
+  # Set only by a measurement window's overlay, never in a shipped values file.
+  answerPath: null
   resources:
     requests:
       cpu: 100m
@@ -2137,6 +2141,38 @@ electric:
   apiSecret:
     name: ""
     key: secret
+  # Electric's OWN database role (step 3 of the sync-service exposure plan). OFF by default: turning it on is a
+  # database write (a hook Job as `postgres`), moves Electric's slot and publication (shape handles reset, clients
+  # refetch once), and waits on the step-0 reads (does 1.0.13 have manual publishing; what else holds REPLICATION).
+  # When on: the Electric pod carries no envFrom (none of the main user's credentials), connects as `role`, and the
+  # Job grants that role SELECT on exactly the tables policy/electric_shapes.yaml names, and REVOKES every table
+  # privilege it holds on any other table (all in one transaction), so the grant set follows the list DOWN as well as up.
+  # THE REACH IS WIDER THAN THE SELECT GRANTS: the role holds REPLICATION, PostgreSQL has no privileges on publications,
+  # so it can stream ANY publication in the database, and a physical stream of the cluster wherever pg_hba has a
+  # matching `replication` line. The Job therefore FAILS if any publication other than `publication` exists (step-0 item
+  # 3 a); the pg_hba lines (item 3 b) are a roll blocker. The Job needs psql 15+ (utilImages.postgresClient.tag; the
+  # render fails below that) so the password is read from the environment, never argv, and its session sets
+  # log_statement=none and log_min_error_statement=panic. Its pod carries component `electric-role`: with
+  # networkPolicy.enabled the roll needs a networkPolicy.directCallers row `electric-role: [{store: postgresql, via: ...}]`
+  # (no default row; db-init has the same gap, untouched here). The table list is read from
+  # the chart's copy of that file (files/policy/electric_shapes.yaml, kept byte-equal by a seal), never typed here.
+  db:
+    enabled: false
+    role: electric_reader
+    # The role's password lives in a Secret, generated on first install and kept on upgrade (same `lookup` caveats
+    # and same `electric.apiSecret.name`-style escape as the API secret above: name a pre-made Secret for GitOps).
+    # The generated Secret carries `helm.sh/resource-policy: keep`. The password is alphanumeric when generated; a
+    # pre-made one must be URL-safe because it is placed in Electric's DATABASE_URL.
+    secret:
+      name: ""
+      key: password
+    # `CREATE PUBLICATION` over the allowed tables and `REPLICA IDENTITY FULL`, done by the Job. Electric 1.0.13 may
+    # still create/alter its own publication: whether it has a manual-publishing mode is step-0 item 2, UNANSWERED,
+    # so nothing here sets Electric's manual-publishing switch.
+    publication: electric_publication_default
+    schema: public
+    # Revoke REPLICATION from the main user. OFF: step-0 item 3 (what else relies on it) is unanswered.
+    revokeReplicationFromMainUser: false
   resources:
     requests:
       cpu: 100m

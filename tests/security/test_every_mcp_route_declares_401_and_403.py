@@ -77,7 +77,7 @@ ENVELOPELESS_403: dict[str, str] = {
     f"{GW}::act_on_human_task::not_authorized_to_act": DEBT,
     f"{GW}::act_on_human_task::not_authorized_to_act | <_restate_refusal_message>": DEBT,  # the Restate relay
     f"{GW}::canvas_seed::cell_cannot_see_verbs | seeded 0 of {{}} panels; every ask": DEBT,
-    f"{GW}::orchestrate::cell_not_entitled | user {{}} is not entitled to perso": DEBT,
+    f"{GW}::_resolve_ask_cell::cell_not_entitled | user {{}} is not entitled to perso": DEBT,
     f"{GW}::export_package::not_a_recipient_you_may_export_to": DEBT,
     f"{GW}::_export_package_from_template::not_a_recipient_you_may_export_to": DEBT,
     f"{GW}::export_package_artifact::caller {{}} is not entitled to the package for {{}}.": DEBT,  # a string detail

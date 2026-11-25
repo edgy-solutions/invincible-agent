@@ -118,6 +118,8 @@ agentFleet:
     # unset, the children land in "default". From 0.2.1 the boundary reads this key too, so it must
     # be set no later than that pin. Keep it equal to DEPLOY_ENV.
     LANGFUSE_TRACING_ENVIRONMENT: "sandbox"
+    # The sandbox declares it (the architect, 11-24): engine O's generations carry the prompt and reply text here; off by default everywhere else.
+    IAGENT_TRACE_MODEL_TEXT: "on"
     # A MEASURE IS AN OVERLAY ROW (proposal docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md).
     # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
     # invented to prove the contract. engine-fin reads the first, cortex-bff the second
@@ -396,6 +398,7 @@ engineFinance:
   env:
     FIN_DATASET_URN: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
     FIN_DATASET_BANNER: "SYNTHETIC earned-value fixture, not a real program."
+    FIN_DATASET_CONTRACT: "ev_fixture"
 
 engineCost:
   enabled: true

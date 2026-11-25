@@ -1004,3 +1004,16 @@ helpers, so the pair cannot name different objects. Override the name to use a p
 {{- define "invincible-agent.electricApiSecretKey" -}}
 {{- default "secret" .Values.electric.apiSecret.key -}}
 {{- end }}
+
+{{/*
+Electric's OWN database role: the Secret that holds its password and the key in it. electric.yaml (the pod's
+DATABASE_URL) and electric-role-job.yaml (the CREATE/ALTER ROLE) both read these two helpers, so the pod and the
+role cannot be given different passwords. Override the name to use a pre-made Secret.
+*/}}
+{{- define "invincible-agent.electricDbSecretName" -}}
+{{- default (printf "%s-electric-db" .Release.Name) .Values.electric.db.secret.name -}}
+{{- end }}
+
+{{- define "invincible-agent.electricDbSecretKey" -}}
+{{- default "password" .Values.electric.db.secret.key -}}
+{{- end }}

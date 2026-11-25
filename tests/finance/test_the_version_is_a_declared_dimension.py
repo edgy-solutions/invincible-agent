@@ -132,7 +132,7 @@ def _plain_raw():
 def _ev_versioned_raw():
     """The EV fixture's contract plus a version column: the sample-shaped control."""
     raw = yaml.safe_load(EV_CONTRACT.read_text(encoding="utf-8"))
-    raw["columns"].append({"name": "version", "type": "string", "required": True})
+    raw["columns"].append({"name": "version", "type": "string", "required": True, "nullable": False})
     raw["grain"] = [*raw["grain"], "version"]
     raw["version_dimension"] = {"column": "version", "values": [PMB, CTR, GOV]}
     return raw
@@ -146,7 +146,7 @@ def row_of(fn, contract, urn, levels, value, params, *, shape="FLOW_DECOMPOSITIO
                                "levels": levels, "value": value, "per_path": "sum"},
                    "other_threshold": "0"},
         "computation": {"module": "agent_fleet.finance_agent.measure_modules.variance_decomposition",
-                        "function": "flow_edges", "version": "1.3.0",
+                        "function": "flow_edges", "version": "1.4.0",
                         "derived_from": {"authority": "Test fixture, no external method",
                                          "clause": "A signed sum split down a hierarchy",
                                          "citation": "name-only", "transcription": "each edge is the signed sum beneath its child"}},
@@ -292,6 +292,20 @@ def test_a_version_param_on_an_unversioned_contract_is_refused(tmp_path, monkeyp
     row = row_of(FN_FILTER, "program_b_plain", URN_B, B_LEVELS, "amount", ["program_id", "version"])
     with pytest.raises(ValueError, match="declares no version"):
         load(tmp_path, monkeypatch, {FN_FILTER: row}, contracts={"program_b_plain": _plain_raw()})
+
+
+@pytest.mark.parametrize("row", [B_COMPARE, B_FILTER], ids=["compare", "filter"])
+def test_a_version_column_the_contract_leaves_nullable_is_refused_at_load(tmp_path, monkeypatch, row):
+    # every row over a versioned contract reads the version column, so it is held to nullable: false
+    # as the row's own columns are; else a null version falls out of the version filter unseen
+    raw = _b_raw()
+    for col in raw["columns"]:
+        if col["name"] == "version":
+            del col["nullable"]
+    fn = row["name"]
+    with pytest.raises(ValueError, match=r"version column 'version' without nullable: false"):
+        load(tmp_path, monkeypatch, {fn: row}, contracts={"program_b_versions": raw})
+    assert load(tmp_path, monkeypatch, {fn: row}, contracts={"program_b_versions": _b_raw()})[fn]  # control
 
 
 def test_a_multi_series_row_over_a_versioned_contract_is_refused(tmp_path, monkeypatch):
