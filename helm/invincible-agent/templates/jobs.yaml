@@ -125,9 +125,13 @@ spec:
               {{- if .Values.supervisorService.enabled }}
               {{- /* invincible-agent ADR-0072 §3: the SupervisorAnswer workflow. The BFF's
                      durable path posts to RESTATE_INGRESS/SupervisorAnswer/<id>/run/send;
-                     unregistered, that is Restate's 404. */}}
+                     unregistered, that is Restate's 404.
+                     `use_http_11`: the supervisor runs under uvicorn, which serves HTTP/1.1
+                     only, unlike the engines' hypercorn. Without it, Restate's discovery
+                     speaks HTTP/2 and fails (META0014), and this curl, having no -f, still
+                     exits 0: the 0.4.92 roll left SupervisorAnswer unregistered that way. */}}
               echo "Registering the supervisor (SupervisorAnswer)..."
-              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-supervisor{{ include "invincible-agent.svcDomain" . }}:{{ .Values.supervisorService.port }}/restate", "force": true}'
+              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-supervisor{{ include "invincible-agent.svcDomain" . }}:{{ .Values.supervisorService.port }}/restate", "force": true, "use_http_11": true}'
               {{- end }}
 
 ---
