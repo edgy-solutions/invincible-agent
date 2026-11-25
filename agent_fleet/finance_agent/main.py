@@ -32,6 +32,7 @@ import importlib
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager, contextmanager
 import threading
 from datetime import datetime, timezone
@@ -91,6 +92,56 @@ except ImportError:
     from agent_fleet.utils.export_capability import can_export
 
 log = logging.getLogger(__name__)
+
+# The reason lines (`fin.resolve_empty`, `fin.enumerate_empty`) go through their own logger, so the
+# engine can make THEM visible at INFO without touching root or `log`.
+_reason_log = logging.getLogger(f"{__name__}.reasons")
+_REASON_MARK = "_fin_reason_handler"
+
+
+def _emits_info(lg: logging.Logger) -> bool:
+    """Would an INFO record on `lg` reach a handler? Both the effective level and a handler on
+    the propagation chain must allow it (otherwise it falls to `logging.lastResort`, WARNING)."""
+    if lg.getEffectiveLevel() > logging.INFO:
+        return False
+    cur: Optional[logging.Logger] = lg
+    while cur:
+        if cur.handlers:
+            return True
+        cur = cur.parent if cur.propagate else None
+    return False
+
+
+def _ensure_reasons_visible() -> bool:
+    """Make the reason lines visible at INFO IF AND ONLY IF they would otherwise vanish.
+
+    Additive and deferential, as `iagent_mesh.transport_auth.ensure_gauge_visible` is: if the
+    records already emit, do nothing; if only the level filters them, lower the level on
+    `_reason_log` alone; only with no handler anywhere on the chain attach one stdout handler
+    to `_reason_log`, never to root. Idempotent. `FIN_REASON_LOG_AUTOCONFIG=0` disables it.
+    Returns True if this call changed anything.
+    """
+    if os.getenv("FIN_REASON_LOG_AUTOCONFIG", "1").lower() in ("0", "false", "no"):
+        return False
+    if _emits_info(_reason_log):
+        return False
+    changed = False
+    if _reason_log.getEffectiveLevel() > logging.INFO:
+        _reason_log.setLevel(logging.INFO)
+        changed = True
+    if _emits_info(_reason_log):
+        return changed
+    if not any(getattr(h, _REASON_MARK, False) for h in _reason_log.handlers):
+        h = logging.StreamHandler(sys.stdout)
+        h.setLevel(logging.INFO)
+        h.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+        setattr(h, _REASON_MARK, True)
+        _reason_log.addHandler(h)
+        changed = True
+    return changed
+
+
+_ensure_reasons_visible()
 
 # This engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml): who may
 # download a package for one of ITS recipient scopes (`export.RECIPIENT_SCOPES`). Identity, not a
@@ -2478,7 +2529,7 @@ def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str
     declared = sum(1 for r in INSTANCES if r.class_uri in classes)
     tally = ",".join(f"{k}:{withheld[k]}" for k in sorted(withheld)) or "-"
     count_name = "matched" if event == "fin.resolve_empty" else "members"
-    log.log(
+    _reason_log.log(
         level,
         "%s reason=%s class=%s %s=%d withheld=%s bearer=%s verified=%s body_caller=%s "
         "dataset_urn_set=%s declared_instances=%d",

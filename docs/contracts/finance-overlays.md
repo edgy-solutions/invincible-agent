@@ -748,6 +748,8 @@ saying why, at INFO for the normal case and WARNING for a fault (the architect, 
 writes `fin.enumerate_empty` when the outcome is `unsupported`, or `members` with none. A non-empty answer,
 `too_many` write nothing. A directory outage writes the line too (`directory_unreachable`), then answers its 503 as before.
 
+The engine makes these reason lines visible at INFO on stdout itself, and only when the deployment's logging would otherwise drop them; set `FIN_REASON_LOG_AUTOCONFIG=0` to turn that off.
+
 ```
 fin.resolve_empty reason=<code> class=<name|-> matched=<n> withheld=<code:n,...|-> bearer=<none|user|svc> verified=<true|false|-> body_caller=<empty|matches_bearer|differs_from_bearer|no_bearer> dataset_urn_set=<true|false> declared_instances=<n>
 fin.enumerate_empty reason=<code> class=<name> members=<n> withheld=... bearer=... verified=... body_caller=... dataset_urn_set=... declared_instances=<n>
