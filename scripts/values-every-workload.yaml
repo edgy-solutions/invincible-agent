@@ -56,3 +56,5 @@ keycloak:
   nonInteractiveUsers:
     - username: platform-registrar
       email: platform-registrar@example.com
+databaseSplit:
+  enabled: true
