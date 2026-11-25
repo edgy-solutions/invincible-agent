@@ -2145,7 +2145,16 @@ electric:
   # database write (a hook Job as `postgres`), moves Electric's slot and publication (shape handles reset, clients
   # refetch once), and waits on the step-0 reads (does 1.0.13 have manual publishing; what else holds REPLICATION).
   # When on: the Electric pod carries no envFrom (none of the main user's credentials), connects as `role`, and the
-  # Job grants that role SELECT on exactly the tables policy/electric_shapes.yaml names. The table list is read from
+  # Job grants that role SELECT on exactly the tables policy/electric_shapes.yaml names, and REVOKES every table
+  # privilege it holds on any other table (all in one transaction), so the grant set follows the list DOWN as well as up.
+  # THE REACH IS WIDER THAN THE SELECT GRANTS: the role holds REPLICATION, PostgreSQL has no privileges on publications,
+  # so it can stream ANY publication in the database, and a physical stream of the cluster wherever pg_hba has a
+  # matching `replication` line. The Job therefore FAILS if any publication other than `publication` exists (step-0 item
+  # 3 a); the pg_hba lines (item 3 b) are a roll blocker. The Job needs psql 15+ (utilImages.postgresClient.tag; the
+  # render fails below that) so the password is read from the environment, never argv, and its session sets
+  # log_statement=none and log_min_error_statement=panic. Its pod carries component `electric-role`: with
+  # networkPolicy.enabled the roll needs a networkPolicy.directCallers row `electric-role: [{store: postgresql, via: ...}]`
+  # (no default row; db-init has the same gap, untouched here). The table list is read from
   # the chart's copy of that file (files/policy/electric_shapes.yaml, kept byte-equal by a seal), never typed here.
   db:
     enabled: false
