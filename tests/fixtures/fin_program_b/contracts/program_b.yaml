@@ -20,19 +20,19 @@ period:
   calendar: program_b_445
 
 columns:
-  - {name: program_id, type: string, required: true}
-  - {name: wbs_1, type: string, required: true}
-  - {name: wbs_2, type: string, required: true}
-  - {name: wbs_3, type: string, required: true}
-  - {name: wbs_4, type: string, required: true}
-  - {name: control_account, type: string, required: true}
-  - {name: work_package, type: string, required: true}
-  - {name: ipt_1, type: string, required: true}
-  - {name: ipt_2, type: string, required: true}
-  - {name: period, type: string, required: true}
-  - {name: bcws, type: numeric, unit: USD, required: true, additive_over: [work_package, period]}
-  - {name: bcwp, type: numeric, unit: USD, required: true, additive_over: [work_package, period]}
-  - {name: acwp, type: numeric, unit: USD, required: true, additive_over: [work_package, period]}
+  - {name: program_id, type: string, required: true, nullable: false}
+  - {name: wbs_1, type: string, required: true, nullable: false}
+  - {name: wbs_2, type: string, required: true, nullable: false}
+  - {name: wbs_3, type: string, required: true, nullable: false}
+  - {name: wbs_4, type: string, required: true, nullable: false}
+  - {name: control_account, type: string, required: true, nullable: false}
+  - {name: work_package, type: string, required: true, nullable: false}
+  - {name: ipt_1, type: string, required: true, nullable: false}
+  - {name: ipt_2, type: string, required: true, nullable: false}
+  - {name: period, type: string, required: true, nullable: false}
+  - {name: bcws, type: numeric, unit: USD, required: true, nullable: false, additive_over: [work_package, period]}
+  - {name: bcwp, type: numeric, unit: USD, required: true, nullable: false, additive_over: [work_package, period]}
+  - {name: acwp, type: numeric, unit: USD, required: true, nullable: false, additive_over: [work_package, period]}
 
 rules:
   missing_column: "a required column, or a column a measure row names, is absent"
