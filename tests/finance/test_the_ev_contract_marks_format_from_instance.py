@@ -37,7 +37,7 @@ LINES = TEXT.split("\n")
 
 KEY_TAGS = {"format", "optional", "unread"}
 VALUE_TAGS = {"ev_fixture", "general"}
-RULE_TAGS = {"shared", "engine-fin", "ev_fixture"}
+RULE_TAGS = {"shared", "engine-fin"}
 ALL_TAGS = KEY_TAGS | VALUE_TAGS | RULE_TAGS
 TRAILER = re.compile(r"\s#((?:\s\[[a-z_-]+\])+)\s*$")
 TAG = re.compile(r"\[([a-z_-]+)\]")
@@ -221,17 +221,22 @@ def test_the_rule_tags_partition_the_rules():
     rules = set(yaml.safe_load(TEXT)["rules"])
     tagged = _rules_tagged()
     assert tagged["shared"] == rules & set(dataset_contracts.RULES)
-    own = tagged["engine-fin"] | tagged["ev_fixture"]
+    own = tagged["engine-fin"]
     assert own == rules - set(dataset_contracts.RULES)
-    assert not tagged["engine-fin"] & tagged["ev_fixture"]
     assert own <= asset_inputs.RULES | dataset_contracts.PRODUCER_CHECKED
 
 
-def test_the_ev_fixture_rules_are_the_earned_value_shape_s_own():
-    """Not engine-fin's on every dataset: the key and dependencies of this template."""
-    assert _rules_tagged()["ev_fixture"] == {
-        "program_name_not_unique", "program_bac_not_unique",
-        "work_package_in_two_accounts", "duplicate_work_package_period"}
+def test_the_earned_value_shape_s_key_and_dependencies_are_declared_not_named():
+    """The built-in read is held to the contract, so the template's key and dependencies refuse
+    under the shared ids; it names no rule of its own and carries no [ev_fixture] rule tag."""
+    raw = yaml.safe_load(TEXT)
+    assert raw["grain"] == ["work_package", "period"]
+    deps = {d["by"]: set(d["determines"]) for d in raw["dependencies"]}
+    assert {"program_name", "program_bac"} <= deps["program_id"]
+    assert "control_account" in deps["work_package"]
+    start = TOP["rules"][0]
+    block = [l for l in LINES[start + 1:start + 1 + len(raw["rules"])]]
+    assert not [l for l in block if "[ev_fixture]" in l]
 
 
 def test_the_marking_does_not_move_the_parse(tmp_path):
@@ -269,14 +274,13 @@ def _guide_table() -> dict[str, set[str]]:
 
 def test_the_guide_s_rule_table_is_the_template_s_and_the_reader_s():
     rows = _guide_table()
-    assert set(rows) == {"every contract", "every finance read", "the earned-value shape only"}
+    assert set(rows) == {"every contract", "every finance read"}
     tagged = _rules_tagged()
     # the shared row lists every id the shared reader raises, so it holds the template's
     # [shared] ids and may hold more (personal_data is raised by the reader, named by no template rule)
     assert rows["every contract"] == set(dataset_contracts.RULES)
     assert tagged["shared"] <= rows["every contract"]
     assert rows["every finance read"] == tagged["engine-fin"]
-    assert rows["the earned-value shape only"] == tagged["ev_fixture"]
 
 
 def test_the_guide_names_the_producer_checked_ids_the_reader_names():
