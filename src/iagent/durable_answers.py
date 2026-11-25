@@ -80,6 +80,13 @@ class DurableAnswers:
         return [{"stepKey": s.get("stepKey"), "status": s.get("status"), "endTime": s.get("endTime")}
                 for s in snap.get("steps") or []]
 
+    async def get_failure(self, answer_id: str) -> dict:
+        """The failed step and the trace id the snapshot carries (ADR-0072 8.1). `{}` on a failed read."""
+        snap = await self._snapshot(answer_id)
+        if snap is None:
+            return {}
+        return {"failed_step": snap.get("failed_step") or None, "trace_id": snap.get("trace_id") or None}
+
     async def get_ui_payload_output(self, answer_id: str) -> dict:
         # Always a fresh read: the payload is the answer, never a cached tick's.
         snap = await self._fetch(answer_id)
