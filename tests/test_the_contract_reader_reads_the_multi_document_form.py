@@ -53,15 +53,24 @@ def test_the_template_parses_whole():
     assert {k for c in got.values() for k in c.types.values()} <= dc.TYPES
 
 
-def test_TRIPWIRE_THE_TEMPLATE_NAMES_RULES_NO_READER_RAISES():
-    """dag-tools renamed `key_not_unique` to `duplicate_key` (ruled 2026-11-14), so that name is gone.
-    The template now names `null_value` and `non_finite` (ruled 2026-11-16), which this reader does
-    not raise yet. When the reader learns them (#426), this goes red, and this set becomes empty.
-    The control: the renamed rule is one the reader raises."""
+def test_every_rule_the_template_names_is_the_readers_or_the_producers():
+    """dag-tools renamed `key_not_unique` to `duplicate_key` (ruled 2026-11-14) and v0.16 names
+    `null_value`, `wrong_type` and `non_finite`, which this reader raises (ruled 2026-11-16). So no
+    rule the template names is unknown. The control: the template does name the new three."""
     got = dc.load_contracts(TEMPLATE)
-    assert {r for c in got.values() for r in dc.unknown_rules(c)} == {"null_value", "non_finite"}
+    assert {r for c in got.values() for r in dc.unknown_rules(c)} == set()
     named = {r for c in got.values() for r in c.rules}
-    assert "duplicate_key" in named & set(dc.RULES) and "key_not_unique" not in named
+    assert {"null_value", "wrong_type", "non_finite"} <= named <= set(dc.RULES) | dc.PRODUCER_CHECKED
+
+
+def test_the_template_declares_non_nullable_columns_the_reader_holds():
+    """The template's `nullable: false` reaches the reader: every document that names `null_value`
+    declares at least one non-nullable column, and each is a column it declares."""
+    got = dc.load_contracts(TEMPLATE)
+    naming = [c for c in got.values() if "null_value" in c.rules]
+    assert naming
+    for c in naming:
+        assert c.non_nullable and set(c.non_nullable) <= set(c.types), c.contract_id
 
 
 def test_the_template_names_the_producer_checked_rules_and_a_block_may():

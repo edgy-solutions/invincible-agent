@@ -491,8 +491,8 @@ def _check_dataset_series(inputs: dict) -> dict:
 def _join_contract(ds: dict, series_kind: bool) -> Any:
     """The contract a dataset row names, loaded, with the row's columns held to it. ValueError.
 
-    Every column the row reads is a contract column: a level, scope, period or status column a
-    string one, a value column a numeric one. The column a read filters on is the contract's scope,
+    Every column the row reads is a contract column declared `nullable: false` (the engine computes
+    on each one): a level, scope, period or status column a string one, a value column a numeric one. The column a read filters on is the contract's scope,
     and a series row's `per_program` and `status` columns are declared determined by it, so the
     read's dependency check is what leaves each one value across the program's rows.
 
@@ -530,6 +530,11 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
     if personal:
         raise ValueError(f"inputs.dataset names personal_data column(s) {personal} of contract {cid!r}; "
                          f"engine-fin releases no personal data")
+    nullable = _contracts.nullable(contract, (*strings, *numbers))
+    if nullable:
+        raise ValueError(f"inputs.dataset reads {nullable}, which contract {cid!r} does not declare "
+                         f"nullable: false: a null in a column a row reads is refused only when the contract "
+                         f"declares it non-nullable")
     wrong = sorted({*_contracts.not_of(contract, strings, {"string"}),
                     *_contracts.not_of(contract, numbers, _contracts.NUMBER_TYPES)})
     if wrong:
@@ -552,6 +557,12 @@ def _check_versions(ds: dict, params: tuple[str, ...], series_kind: bool) -> Non
     value that listed neither would sum every version together, a silent wrong answer."""
     contract = ds["contract"]
     cid, column = contract.contract_id, contract.version_column
+    if column and not series_kind and _contracts.nullable(contract, (column,)):
+        # Every row over a versioned contract reads its version column, so the column is held as the
+        # row's own columns are (`_join_contract`): a null version would pass `version_outside_list`
+        # (`is_in` skips nulls) and fall out of the version filter unseen.
+        raise ValueError(f"contract {cid!r} declares its version column {column!r} without nullable: false; "
+                         f"every row over it reads that column, so a null in it must be refused")
     listed = [p for p in _VERSION_PARAMS if p in params]
     if series_kind:
         if column:

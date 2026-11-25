@@ -54,6 +54,8 @@
   - **Fleet-wide, not finance's alone.** `meshRegistrar`, `primeSubstrate`, `ontologySeed` and `graphHost` are also off by default. What finance loses without each is not yet measured.
   - **Next, under the finance exception:** the release checks gain this configuration as a second render, and an operator readiness check reports each link for one person and one program.
 
+- **engine-fin: `FIN_DATASET_CONTRACT` is now required whenever `FIN_DATASET_URN` is set** (fin; #426, carrying #409). The finance read of that dataset is held to the contract the key names. The shared contract reader refuses `null_value` (a column declared `nullable: false`) and `non_finite` (a `numeric` or `float` column) for every contract, and engine-fin's own two checks retire into them. A contract's `version_dimension` column is held the same way: a row over a contract that leaves it nullable is refused at load. `values-sandbox.yaml` sets `FIN_DATASET_CONTRACT: "ev_fixture"`. **Before the roll:** engine-fin refuses to start (lifespan `RuntimeError`, "FIN_DATASET_URN is set but the deployment cannot honour it: FIN_DATASET_CONTRACT is required …") on any deployment that sets `FIN_DATASET_URN` without `FIN_DATASET_CONTRACT`; set the contract key in the same values change.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
