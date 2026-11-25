@@ -2338,7 +2338,10 @@ _RESOLVE_FLOOR = 0.5
 
 
 def _local_name(uri: Optional[str]) -> str:
-    return (uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or "-") if uri else "-"
+    """The class's local name, for the log. The URI is the CALLER'S text, so anything outside a
+    name's characters becomes `?`: a newline or a space in it must not forge a line or a field."""
+    name = (uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or "-") if uri else "-"
+    return "".join(ch if ch.isascii() and (ch.isalnum() or ch in "_.-") else "?" for ch in name[:64])
 
 
 def _empty_reason(*, identifier: Optional[str], class_uri: Optional[str], seen: int,

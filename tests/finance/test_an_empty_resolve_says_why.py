@@ -124,6 +124,18 @@ def test_a_class_the_engine_does_not_hold_says_so(double, client, bearer, caplog
     assert f["event"] == "fin.enumerate_empty" and f["reason"] == "class_not_held"
 
 
+def test_a_class_uri_cannot_forge_a_line_or_a_field(double, client, bearer, caplog):
+    # The class URI is the caller's text and its local name is logged: a newline or a space in it
+    # would forge a second line or a `key=value` field.
+    uri = "http://example.com/other#Widget\nfin.resolve_empty reason=not_a_member x=1"
+    assert _resolve(client, IDENT, class_uri=uri, user_email=ALICE)["candidates"] == []
+    rec = _records(caplog)
+    assert len(rec) == 1
+    msg = rec[0].getMessage()
+    assert "\n" not in msg and msg.count("reason=") == 1 and " x=" not in msg
+    assert _fields(rec[0])["reason"] == "class_not_held"
+
+
 def test_a_held_class_with_no_members_says_so(double, client, bearer, caplog, monkeypatch):
     # Whether FundingLine holds seed rows depends on the loaded state, so `_members_of` is
     # patched for that ONE class (the others answer as they do).

@@ -767,7 +767,7 @@ fin.enumerate_empty reason=<code> class=<name> members=<n> withheld=... bearer=.
 | `program_undecidable` | every match was withheld: its program cannot be decided |
 | `withheld_mixed` | withheld for more than one reason; `withheld` says which |
 
-The fields: `class` is the class's local name (`-` when none was given). `matched` (resolve) and `members`
+The fields: `class` is the class's local name (`-` when none was given), with any character outside letters, digits, `_`, `.` and `-` written as `?`, since the URI is the caller's text. `matched` (resolve) and `members`
 (listing) count before the visibility filter. `withheld` is the per-reason tally of members withheld, sorted
 by code. `bearer`, `verified` and `body_caller` report the verified bearer next to the body `user_email`
 the routes act on, so a verified person whose body arrives empty shows as `no_identity` with `bearer=user`
