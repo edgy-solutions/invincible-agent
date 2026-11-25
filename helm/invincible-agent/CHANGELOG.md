@@ -1,8 +1,123 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.92 — not yet cut
+## 0.4.92 — 2026-11-25
 
-**Opened at the 0.4.91 cut** (the architect, 2026-11-22: "Open `## 0.4.92 — not yet cut` now as a small PR, and after every cut from now on"). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.91 one. `Chart.yaml` stays at 0.4.91 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
+**0.4.92 is 0.4.91 (`950b3eb9`) plus the 59 merges below, `950b3eb9..cad87001`, merged by sha in this order. The set closed on 2026-11-25 with Chris's "go".**
+
+| order | PR | merge | lane | what |
+| --- | --- | --- | --- | --- |
+| 1 | #510 | `0e58ed44` | Lane 1 | CHANGELOG: open 0.4.92 as not yet cut |
+| 2 | #495 | `a790009f` | 74 | Engine A's log loses three noise lines; no library calls home |
+| 3 | #512 | `d3b19881` | Lane 1 | BFF: send no as_of to engine-fin; refuse one on the template path |
+| 4 | #508 | `7f9ad1ad` | fin | An export labels its two dates: the data's as-of and when it was generated |
+| 5 | #444 | `070c9b82` | 74 | Engine O's registration arms read where-used's rows instead of restating one |
+| 6 | #436 | `313cecd0` | saf | ingest-v1 1.9.2: HumanTask.task_id is a required string |
+| 7 | #410 | `82471d4c` | fin | ADR-0066 draft: contracts are data; one reader enforces what a contract declares |
+| 8 | #511 | `92410237` | Lane 1 | Identity prefix: record Q2-Q6 as ruled; the build starts as drafts |
+| 9 | #513 | `991b852b` | fin | A finance measure added by declaration alone, with its guide and the deployment checklist |
+| 10 | #518 | `c105ed21` | Lane 1 | Engine O's caller-binding line arrives on its own handler |
+| 11 | #489 | `9377b8ae` | saf | Chart: only the cortex-bff reaches Electric (NetworkPolicy, own switch, default off) |
+| 12 | #519 | `9b6f4c9f` | Lane 1 | FLOW_DECOMPOSITION: the projector row for declared finance measures |
+| 13 | #521 | `c8d5d897` | 74 | /menu_blocks is keyed by verb, and serves the declared measures' menu blocks |
+| 14 | #533 | `64fef422` | fin | The built-in finance measures get rows, so they appear in the askable list |
+| 15 | #527 | `f8fe6100` | fin | The xlsx and docx CDRL samples gain a Generated cell through profile rows |
+| 16 | #532 | `bc0f5eed` | fin | The BFF sends engine-cost no as_of, and refuses a caller's on every export path |
+| 17 | #526 | `5cad74f8` | fin | Engine-cost's package page labels its two dates, and engine-cost refuses a caller's as_of |
+| 18 | #523 | `76520ef1` | Lane 1 | Rulings register: R-120 to R-124 (identity prefix, as-of, export dates, readiness latch, scoring) |
+| 19 | #528 | `80dcbbae` | Lane 1 | The finance source reaches every finance card |
+| 20 | #525 | `ba70c92a` | 74 | Serve GET /askable_measures: the declared and built-in measures a caller can ask |
+| 21 | #529 | `d78250bd` | Lane 1 | The as-of setting, chart half (draft) |
+| 22 | #534 | `6645a07a` | fin | The fiscal calendar is declared by the deployment; the EV template marks format from instance; the guide answers two questions |
+| 23 | #537 | `322a3875` | 74 | List built-in measures whatever the overlay env; seal A4/A6 (contains #525) |
+| 24 | #535 | `360e5115` | Lane 1 | The suite advisory fetches the pinned Pyodide runtime, so the package seals run |
+| 25 | #505 | `745f4243` | 74 | acryl-datahub and huggingface_hub stop calling home: two more settings, proven at the wire |
+| 26 | #531 | `d6a12299` | 74 | Engine O writes its routing_decision row on the live path: /classify_predicate, every exit |
+| 27 | #540 | `babc5825` | 74 | Seal that the routing row names the bound caller, not the body (#531 follow-up) |
+| 28 | #536 | `09b1fcad` | Lane 1 | An engine's flat sibling module no longer outlives the test that imported it |
+| 29 | #486 | `74eda578` | saf | Electric: API secret, insecure off, proxy parameter allow-list (step 1) |
+| 30 | #538 | `81e4b3ef` | fin | A version is a declared dimension; a flow row compares two |
+| 31 | #541 | `d518fd11` | 74 | The /search_predicates routing row records the verified caller, not the body's user_id |
+| 32 | #543 | `33332b0a` | Lane 1 | The flat-module seal's inner pytest gets its own ini and rootdir |
+| 33 | #547 | `0324a52f` | Lane 1 | Sandbox values run engine O's routing calls at low reasoning effort |
+| 34 | #520 | `18b1e257` | fin | Guide: a step-by-step section for a finance team member |
+| 35 | #522 | `5bf9fb08` | fin | Proposal: a series measure by declaration, the series-operations module |
+| 36 | #544 | `21131feb` | 74 | Record every routing model call as a Langfuse generation; join three legs to the trace |
+| 37 | #539 | `d6a268ae` | fin | A comparison serves the difference and its percent of b |
+| 38 | #530 | `a93ddbfd` | fin | A finance answer cites the dataset it came from, with its as-of |
+| 39 | #497 | `a9185acc` | fin | Seal gov's two #468 follow-ups: a real seed name, a declared non-Program |
+| 40 | #420 | `83a6bba6` | Lane 1 | Chart: the supervisor Deployment, with the admission limit and queue length as values |
+| 41 | #496 | `7c07dbeb` | fin | Say an unavailable as-of; label an as-of advertised at load |
+| 42 | #556 | `7a8b7209` | Lane 1 | Known issue at 0.4.91: a near-expiry token stalls an answer; answers in flight during a roll |
+| 43 | #559 | `a88e8b0e` | Lane 1 | The release-tag test's helm and gh stubs are executable, so they run on Linux |
+| 44 | #560 | `3ddc2682` | Lane 1 | The 0.4.92 notes list what finance needs that is off by default at 0.4.91 |
+| 45 | #558 | `7120c16e` | Lane 1 | The answer path gets a chart key and refuses any value but its two names (ADR-0072 §4) |
+| 46 | #542 | `b54fe9bb` | Lane 1 | Chart: IAGENT_TRACE_MODEL_TEXT, off by default, on in the sandbox |
+| 47 | #426 | `0b702089` | fin | The shared reader refuses null_value and non_finite for every contract |
+| 48 | #549 | `5442cd15` | fin | Step 3: a flow row draws to a declared depth; program B grows its breakdown |
+| 49 | #551 | `1cd24543` | fin | Step 4: the All other edge keeps its members (variance_decomposition 1.4.0) |
+| 50 | #545 | `c3a626f3` | 74 | Ask a measure picked from the askable list the way a board ask is asked |
+| 51 | #555 | `1dfc5c7e` | 74 | A failed answer run ends with a card naming the failed step and the trace id |
+| 52 | #546 | `3efcba1d` | saf | Electric connects as its own database role (step 3, off by default) |
+| 53 | #566 | `2c67bb92` | fin | Program B's contract declares its columns nullable: false (master's finance reds) |
+| 54 | #567 | `f68e5810` | Lane 1 | ci: give master its own suite advisory, on every push |
+| 55 | #552 | `bca027df` | fin | Step 5: the walk has a start and an end total |
+| 56 | #557 | `71f2bffc` | 74 | A token that cannot be refreshed is released while valid; a paused run waits a bounded time and ends with a card |
+| 57 | #548 | `149f62e8` | 74 | Every subtask result says how it was disposed of |
+| 58 | #554 | `7509ca7d` | 74 | The gateway, the supervisor and engine O name no domain a caller was not given |
+| 59 | #563 | `cad87001` | Lane 1 | The 0.4.92 notes carry the finance listing's identity as a known issue |
+
+**Not in 0.4.92:**
+- **#506**, an instance name is the whole phrase (74). It is a draft and unreviewed. It goes into the next release, in gov's queue after the pair.
+- **#561, #564 and #568**, the finance listing's identity fix (fin and 74). It comes in the next release; its known issue is below.
+- **#504**, the classifier's subject and result (74). It was measured and did not help, and was closed unmerged with its branch kept. Its known issue is below.
+- **#565**, the database split (saf). It was approved after the set closed.
+- **#569** (fin), **#562** (fin, CI only), **#422** (perf) and the drafts.
+
+**Before the roll:**
+- **The values diff.** Show Chris the diff against the live release, re-run on this cut's tree with the release's digests, and wait for his approval.
+  - The three routing-effort keys, `engineO.env.IAGENT_ROUTING_EFFORT_SUBJECT`, `_VERB` and `_SLOTS`, stay `low`.
+  - Measured before the cut, at `f68e5810`: 7 effective values change, besides the digests:
+    - `IAGENT_TRACE_MODEL_TEXT`;
+    - `FIN_CALENDAR_OVERLAY_DIRS`;
+    - `FIN_DATASET_CONTRACT`;
+    - the three `supervisorService` keys;
+    - engine O's perf pin giving way to the release's digest.
+- **Every pod restarts.** The chart version moves, so every pod template changes. List STARTED Dagster runs first: a dead worker holds a slot.
+- **Finance needs two hook switches on: `taskGrantSync.enabled: true` (chart default `false`) and `topazManifestLoad.enabled: true` (chart default `false`).**
+  - The manifest Job (hook weight 2) creates the `program` type.
+  - The task-grant-sync Job (weight 3) then writes the program members. Nothing else in the chart writes them.
+  - The sandbox sets both. A deployment with either off has no program member, so finance refuses every program question.
+  - The full list is in "What finance needs that is off by default", below.
+- **Electric and the BFF roll together.** They read one API secret, and between the two rolls a shape read answers 401 or 502. A deployment that renders without cluster access (GitOps, `helm template | kubectl apply`) sets `electric.apiSecret.name` to a Secret made beforehand. Otherwise the secret rotates on every sync.
+- **engine-fin and `FIN_DATASET_CONTRACT`.** A deployment that sets `FIN_DATASET_URN` must set `FIN_DATASET_CONTRACT` in the same values change, or engine-fin refuses to start.
+- **`fin_calendar` in the policy repo.** A policy repo delivered by `policyOverlay` adds a `fin_calendar` directory before the roll. Without it, every period is refused (`period_outside_calendar`).
+- **`variance_decomposition` 1.4.0.** A deployment's own flow row that names `variance_decomposition` changes `version: "1.3.0"` to `"1.4.0"`, or engine-fin refuses the row and does not boot. First run `scripts/check_measure_verbs.py <policy-repo>/measure_verbs` from the release's checkout: it names every row the release would refuse, and exits 1.
+- **The supervisor Deployment (sandbox only).** The roll adds one Deployment and one Service, and registers the Restate deployment `SupervisorAnswer`. `cortexBff.answerPath` is unset, so no answer takes the durable path until a measurement window sets it.
+- **Engine O does not roll during a perf run.**
+
+**Known issues at 0.4.92:**
+- **The seed CronJob does not apply `program_members.yaml`** (nor `recipient_readers.yaml`).
+  - Its hourly run applies six syncs: personas and users, assets, reader grants, ontology compartments, task grants and capability grants.
+  - Program membership is written only by the `taskGrantSync` hook, at install and upgrade. So a membership change in the policy repo reaches Topaz at the next `helm upgrade`, not at the next scheduled run.
+  - The fix comes in the next release.
+- **Short-lived tokens: fixed in 0.4.92 by #557.** A token that cannot be refreshed is released while it is valid, a paused run waits a bounded time, and an expired session ends with a card saying to ask again. Still open:
+  - the UI's full-page sign-in, which drops a typed question when the identity provider issues the UI's client no refresh token (cortex's fix);
+  - whether the issuer exchanges a held token that has already expired (not measured).
+- **The finance listing route takes the person's identity from an unverified email.** The bullet is below; the fix comes in the next release.
+- **Questions asking which tables an asset uses are still misrouted. A fix was measured and did not help.**
+
+**After the roll:**
+- **One member of one program resolves `can_view_program`.**
+  - The program-member sync's own readback runs inside the `task-grant-sync` hook Job. That Job is deleted when it succeeds (`hook-succeeded`), so its log is gone after a good roll. Read the relation directly instead.
+  - Run this in the cortex-bff image's working directory, where the seed job runs `python policy/sync/…`:
+    ```
+    cd policy/sync && python -c "from topaz_sync import TopazClient; c = TopazClient('<topazSeed.topazDirectoryUrl>'); print(c.check('program', '<program key>', 'can_view_program', '<member id>'))"
+    ```
+  - It must print `True` for one person whom `program_members.yaml` lists under that program.
+  - **The control:** the same call for a person not listed must print `False`.
+  - A `False` for the member means finance refuses that person's questions about that program.
+
+**The changes:**
 
 - **The sandbox runs engine O's routing calls at low reasoning effort** (Lane 1; the architect, 2026-11-24: "The speed setting passed and stays on. … Put the three routing-effort keys at low in the sandbox values for 0.4.92"). **Values change, sandbox only:** `values-sandbox.yaml` sets `engineO.env.IAGENT_ROUTING_EFFORT_SUBJECT`, `_VERB` and `_SLOTS` to `"low"`. Perf's run 2 measured this setting on the sandbox, and the sandbox has run with it since that roll; this makes the release carry what is live. The chart default is unchanged: unset, which is off. A deployment that wants it sets the same three keys in its own values.
 - **The supervisor Deployment, off by default** (Lane 1; invincible-agent ADR-0072 §3). **Chart change:** `supervisorService.enabled` renders `<release>-supervisor`: one replica, the cortex-bff image, Dagster user-code's env, and registration with the Restate admin; the default is `false`, and with it off the render is unchanged. `supervisorService.answerLimit` (default 2) and `supervisorService.queueMax` (no default; an enabled render fails without it) reach the process as `IAGENT_ANSWER_LIMIT` and `IAGENT_ANSWER_QUEUE_MAX`; each overlay sets them from its model-server measurement. **The sandbox turns it on** with `answerLimit: 2` and `queueMax: 4`, from perf's 11-16 sizing. **The roll** adds one Deployment and one Service and registers a new Restate deployment, `SupervisorAnswer`. The BFF's `IAGENT_ANSWER_PATH` is unchanged, so no answer takes this path until it is switched. The semaphore that reads the two envs is perf's #422; until it merges, the envs are set but nothing reads them. **Not yet ready for `networkPolicy.enabled: true`** (gov's review, 2026-11-24; the gate is off in every overlay): with it on, 12 of the supervisor's flows are denied. User-code is already denied 8 of them (fuseki, weaviate, keycloak, neo4j, restate ingress, topaz). Postgres (4 keys) is new, since user-code is allowed it. Before the gate goes on anywhere, the supervisor needs user-code's store ingress rows, postgres first.
@@ -43,16 +158,31 @@
   - **The minimum workable token lifetime, without the exchange: none is safe at 0.4.91.** A question stalls when the token it was sent with has less life left than the time to the answer's last engine call plus the 60 s margin. The UI renews its token only when 60 s remain (74's read of cortex-ui), so a question can carry a token with about 60 s left, whatever the lifetime. A longer lifetime makes a stall rarer. 74's estimate of the share of answers that pause is D / (L − 60), where L is the lifetime and D the time from question to last engine call. With D ≈ 80 s, the median answer measured on 2026-11-15, that is about 15% at 10 minutes and about 2% at an hour. Use an hour or more; the chart's own realm default is 3600 s.
   - **The reload that drops the question is the UI's, not the vault's** (74's read of cortex-ui's code; not confirmed from a log). When the identity provider issues the UI's client no refresh token, the browser's silent renewal fails about a minute before each expiry, and the UI signs in again by a full-page redirect. A question typed into the chat is lost, with or without an answer running. The provider issuing a refresh token to the UI's client stops it. That fix is cortex's.
   - **With the exchange set,** a run whose engine call falls inside the margin gets a fresh token. Not measured: whether the issuer exchanges a held token that has already expired. If it does not, a run whose next engine call comes after the token's expiry still pauses.
-  - **The fix is 74's** (#557, in review; the architect's proposed ruling, 2026-11-24): release a still-valid token, less a clock-skew allowance, and let the callee check expiry; bound the re-authentication wait, then fail with a card that says the session expired; fail a vault `not_found` at once. The supervisor's redeem loop already fails a `not_found` at once, at 0.4.91 and now; it polls only on `awaiting_reauth`. The endless polling seen after a BFF restart is not that loop, and is not yet explained. Rolling with answers in flight: `docs/runbooks/rolling-a-service.md`.
+  - **The fix is 74's** (#557, merged for 0.4.92; the architect's proposed ruling, 2026-11-24): release a still-valid token, less a clock-skew allowance, and let the callee check expiry; bound the re-authentication wait, then fail with a card that says the session expired; fail a vault `not_found` at once. The supervisor's redeem loop already fails a `not_found` at once, at 0.4.91 and now; it polls only on `awaiting_reauth`. The endless polling seen after a BFF restart is not that loop, and is not yet explained. Rolling with answers in flight: `docs/runbooks/rolling-a-service.md`.
 
-- **What finance needs that is off by default at 0.4.91** (Lane 1; the architect, 2026-11-24: "List what finance needs that is off by default at 0.4.91. That list is the first deliverable, and it goes into the 0.4.92 notes"). Finance has not answered on a deployment other than the sandbox since about 0.4.84, and no release check could have shown it, because every check renders the sandbox overlay, which sets all of the items below. Read at the tag `invincible-agent-0.4.91`. It applies to a deployment with an external identity provider, a git policy source, and every other switch at its chart default. **Notes only; no chart change in this PR.**
-  1. **The engine.** `engineFinance.enabled` defaults to `false`.
-  2. **The measure verbs, the likely start of the break.** engine-fin reads `MEASURE_VERB_OVERLAY_DIRS` (required), and `FIN_INSTANCE_OVERLAY_DIRS` and `FIN_EXPORT_PROFILE_OVERLAY_DIRS` (both optional). If they are unset, it declares no measure and no instance, so every finance question is refused. The sample verbs moved out of the code into `policy/overlays/sample/` across 0.4.82–0.4.85. The chart sets the three variables only in `values-sandbox.yaml` (`agentFleet.env`, marked sandbox only), pointing at the sample baked into the image. On any other deployment, set `policyOverlay.enabled: true` with a `ref` (a full sha or a tag). That mounts the deployment's own `measure_verbs`, `fin_instances` and `fin_export_profiles` dirs from the policy repo named by `topazSeed.policySource.git`, and sets the variables. With `networkPolicy.enabled: true`, the git host must also be in `networkPolicy.extraEgress`. 0.4.92 adds a fourth dir, `fin_calendar` (`FIN_CALENDAR_OVERLAY_DIRS`, optional), in fin's fiscal-calendar bullet above.
-  3. **The `program` type in Topaz.** Either of two jobs loads it from the chart's Topaz manifest. `topazManifestLoad.enabled` (default `false`) loads it at install and upgrade, as a hook before the grant sync. The topaz-seed CronJob loads it on every run while `topazSeed.loadManifest` is on, which is the default and applies to a git source too. So a deployment that enables `topazSeed`, as item 4 needs, gets the type without `topazManifestLoad`. Read from the schedule (`0 * * * *`), not measured: it gets it at the first scheduled run, up to an hour after install, unless a run is started by hand. What the seed job alone costs is not measured.
-  4. **The person and their program membership in Topaz.** `topazSeed.enabled` defaults to `false`. Its hourly syncs write the users and the `program member` relations. `taskGrantSync.enabled` also defaults to `false`; it writes the program members at install and upgrade. With a git policy source, `topazSeed.policySource.type` is `git` and `git.repoUrl` is set (the default type is `image`).
-  5. **The engine's client at the identity provider.** The realm reconcile job runs only with `keycloak.enabled` and `keycloak.reconcileClients.enabled`. With an external provider, no job creates the engine clients (`iagent-finance-agent` among them), so the provider's operator must.
-  - **Fleet-wide, not finance's alone.** `meshRegistrar`, `primeSubstrate`, `ontologySeed` and `graphHost` are also off by default. What finance loses without each is not yet measured.
-  - **Next, under the finance exception:** the release checks gain this configuration as a second render, and an operator readiness check reports each link for one person and one program.
+- **What finance needs that is off by default** (Lane 1; the architect, 2026-11-24 and 11-25).
+  - **How it was read:** at the tag `invincible-agent-0.4.91`, and confirmed by rendering the chart in a second configuration: an external identity provider (`keycloak.enabled: false`), a git policy source (`topazSeed.policySource.type: git`), and every other switch at its chart default.
+  - **What the render shows:** with those values, engine-fin has no measure-verb directory, and no Job loads the Topaz manifest or writes a program member. With the switches below, each of those renders.
+  - Finance has not answered on a deployment other than the sandbox since about 0.4.84. Every release check rendered the sandbox overlay, which sets all of these. **Read this before loading real data.**
+  1. **The engine.** `engineFinance.enabled`, default `false`.
+  2. **The measure verbs.** `policyOverlay.enabled` (default `false`) with `policyOverlay.ref` (no default: a full sha or a tag).
+     - Without it, engine-fin has no `MEASURE_VERB_OVERLAY_DIRS`. It declares no measure and refuses every finance question.
+     - With it, engine-fin gets `MEASURE_VERB_OVERLAY_DIRS`, `FIN_INSTANCE_OVERLAY_DIRS`, `FIN_EXPORT_PROFILE_OVERLAY_DIRS`, and `FIN_CALENDAR_OVERLAY_DIRS` (new at 0.4.92). The BFF gets `MEASURE_VERB_OVERLAY_DIRS`.
+     - The sandbox sets these variables by hand, to the sample baked into the image.
+     - With `networkPolicy.enabled: true`, the git host goes in `networkPolicy.extraEgress`.
+  3. **The `program` type in Topaz: `topazManifestLoad.enabled: true`** (default `false`).
+     - It loads the chart's manifest at install and upgrade, at hook weight 2, before the program-member sync at weight 3.
+     - The seed CronJob also loads the manifest (`topazSeed.loadManifest`, default `true`), but only on its hourly schedule. On a first install, the hook's program-member sync would run before the type exists.
+  4. **Program membership: `taskGrantSync.enabled: true`** (default `false`).
+     - Its hook Job is the only part of the chart that applies `program_members.yaml`. It runs `program_member_sync`, then `task_grant_sync` and `recipient_reader_sync`, at install and upgrade, and reads back that each member resolves `can_view_program`.
+     - The seed CronJob does not apply `program_members.yaml` (a known issue at 0.4.92). A membership change reaches Topaz at the next helm upgrade.
+     - *Corrected at the cut: the list read at 0.4.91 said the CronJob writes the program member relations. It does not.*
+  5. **The people and their grants.** `topazSeed.enabled`, default `false`.
+     - Its hourly run applies six syncs: personas and users, assets, reader grants, ontology compartments, task grants and capability grants.
+     - With a git source, set `policySource.type: git` and `git.repoUrl`. Both hook Jobs read the same source.
+  6. **The engine's client at the identity provider.** With an external provider, no Job creates `iagent-finance-agent` or the other engine clients. The provider's operator creates them.
+  - **Fleet-wide, not finance's alone:** `meshRegistrar`, `primeSubstrate`, `ontologySeed` and `graphHost` are also off by default. What finance loses without each is not yet measured.
+  - **Next:** the release checks gain this configuration as a second render, and the operator readiness check (a proposal) reports each link for one person and one program.
 - **Electric can run as its own database role, reading only the tables the shapes policy names** (saf; step 3 of the sync-service exposure plan). New switch `electric.db.enabled`, **default off**: a bare render is unchanged. When on, a hook Job (as `postgres`, idempotent) creates `electric.db.role` with a password from the generated-and-kept Secret `<release>-electric-db`, grants `SELECT` on exactly the tables in `policy/electric_shapes.yaml` and revokes every table privilege the role holds elsewhere (one transaction, so the grants follow the list down as well as up) (the chart carries a byte-equal copy, `files/policy/electric_shapes.yaml`, read at render time: an empty list fails the render), makes the publication over them with `REPLICA IDENTITY FULL`, and can revoke `REPLICATION` from the main user (`electric.db.revokeReplicationFromMainUser`, off). The Electric pod then has no `envFrom` and no init container. The role holds `REPLICATION`, which reaches past its `SELECT` grants: it can stream any publication in the database (the Job FAILS if one other than `electric.db.publication` exists) and a physical stream wherever `pg_hba` has a matching `replication` line. The Job keeps the role password out of psql argv and the server log (psql 15+, read from the chart: the render fails below it). Its pod carries component `electric-role`; with `networkPolicy.enabled` the roll needs a `networkPolicy.directCallers` row for it to `postgresql` (none by default). **Roll blockers, unanswered:** step-0 item 2 (does 1.0.13 have a manual-publishing mode) and item 3 (a: publications; b: the `pg_hba` `replication` lines; and what else relies on the main user's `REPLICATION`). Turning it on resets Electric's slot and publication, so clients refetch once. Not in the ruled 0.4.91 list; rides the release after unless ruled.
 
 - **engine-fin: `FIN_DATASET_CONTRACT` is now required whenever `FIN_DATASET_URN` is set** (fin; #426, carrying #409). The finance read of that dataset is held to the contract the key names. The shared contract reader refuses `null_value` (a column declared `nullable: false`) and `non_finite` (a `numeric` or `float` column) for every contract, and engine-fin's own two checks retire into them. A contract's `version_dimension` column is held the same way: a row over a contract that leaves it nullable is refused at load. `values-sandbox.yaml` sets `FIN_DATASET_CONTRACT: "ev_fixture"`. **Before the roll:** engine-fin refuses to start (lifespan `RuntimeError`, "FIN_DATASET_URN is set but the deployment cannot honour it: FIN_DATASET_CONTRACT is required …") on any deployment that sets `FIN_DATASET_URN` without `FIN_DATASET_CONTRACT`; set the contract key in the same values change.
@@ -71,6 +201,11 @@
 - **A token that cannot be refreshed is released while it is valid, a paused run waits a bounded time, and an expired session ends with a card saying to ask again** (74; the architect's ruling of 2026-11-24). The 60 s refresh margin now applies only where the exchange is configured; otherwise the vault releases the token until `exp` minus `IDENTITY_VAULT_CLOCK_SKEW_SECONDS` (default 5), and the callee checks expiry itself. A run paused for re-authentication waits at most `IDENTITY_REAUTH_WAIT_SECONDS` (default 180, read by the BFF; settable through `cortexBff.env`); past it every redemption of the run answers `session_expired` (HTTP 410), the run fails at once, and the card says the sign-in expired and to ask again. An engine's 401 for a token that has itself expired is named as the session, not as an outage. A `not_found` from the vault still fails the run at once. **No chart change.**
 
 - **The gateway, the supervisor and engine O name no domain a caller was not given** (74; the architect, 11-24: "remove the legacy 'maintenance' default from the gateway's run config, the supervisor's fallback and engine O's request default. A caller with no domain gets no domain named, never one they may not hold. Fix the log line that prints it."). The gateway's run config carries no `domain` unless one is given. The supervisor sends `/plan`, `/resolve`, `/classify_predicate` and the specialist dispatch no `domain` when the caller has no entitled domain, where it sent a fixed literal before. Engine O's `PlanRequest`, `ResolveRequest` and `ClassifyPredicateRequest` default `domain` to none. The subject and predicate prompts name no domain when none is given. When a domain is given, both prompts render byte-identically to before (sealed against a golden), so every measured question is unchanged. The supervisor's fan-out log now prints the run's entitled domains, the ones routing reads, in place of the echoed legacy value, and tasks no longer carry an unread `domain`. Not covered here: engines N and W still apply their own default when no domain is sent, and there it is a graph label and search filter as well as prompt text, so removing it is a design change and is recorded as a follow-up, with engine O's `/classes` graph read and the interview path's defaults. No chart change.
+
+- **Known issue, at 0.4.91 and still in 0.4.92: engine-fin's program listing takes the person from an email in the request, not from a verified token** (Lane 1; the architect, 2026-11-25: "the finance listing route takes identity from an unverified email").
+  - **What happens.** `/enumerate_instances` and `/resolve_instance` choose the programs to show from the request body's `user_email`. Neither route reads the caller's bearer. So any workload that can reach the engine-fin Service can name another person's email and get back the programs that person may see, by name and identifier.
+  - **Nothing in the chart limits who reaches engine-fin.** The engines' NetworkPolicy is egress-only, and `networkPolicy.enabled` defaults to `false`.
+  - **The fix for the finance listing route comes in the next release.** It is a pair of PRs that land together: fin's, which makes engine-fin's two routes take the person from the verified bearer, and 74's in engine O.
 
 ## 0.4.91 — 2026-11-21
 
