@@ -70,7 +70,7 @@ def eo(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-        async def post(self, url, json=None):
+        async def post(self, url, json=None, headers=None):  # Engine O relays the person (ruled 11-19 Q2)
             calls.enumerate.append(json)
             body = instances.enumerate_class(STATE, json["class_uri"],
                                              bound_slots=json.get("bound_slots"))
