@@ -58,7 +58,9 @@ and it can be a source for an export profile (section 3). The row declares; it n
 folder with the engine's own loader and prints `REFUSED <path>: <message>` for each row the release would refuse at boot
 (a module version that does not match, a bad `depth`, a duplicate id), not only the first. Run it from the checkout of the
 release you are about to roll to, before the roll; it needs no cluster and no secret. It exits 0 when every row loads, 1 when
-any is refused, and 2 for a usage error (a directory that is not there).
+any is refused, and 2 for a usage error (a directory that is not there). It checks rows, not data: a rule the engine applies to the
+frame it reads, such as a `minus` row's `varies_within_path` under `per_path: once`, refuses when the row is asked,
+and the check cannot see it.
 
 Top-level keys. Required unless marked optional. A key not in this table is refused at load (a
 `formula`, for example), so nothing you put there can look as if it took effect.
@@ -180,6 +182,25 @@ differences under `inputs` and `render`:
 - The sink edge, and only the sink edge, also carries `members`: one `{target, value, value_exact,
   sign}` per collapsed child, ordered by value descending then target. Their signed values sum to
   the sink's signed value exactly. A member is terminal; an `item` edge has no `members` key.
+- A flow row whose value is `{minus: [a, b]}` or `{compare: ...}` also serves the envelope key `walk`:
+  `{start: {label, value, value_exact}, end: {label, value, value_exact}}`; a row of a single column
+  has no `walk` key. For `minus` the `start` is the program's total of column `b` and the `end` that
+  of column `a`, labelled by the two column names unless the row declares `render.walk_labels`. For `compare`
+  the `start` is version `b`'s total and the `end` version `a`'s, labelled by the two versions chosen;
+  `compare` does not change, and its totals equal `compare.total_b_exact` and `total_a_exact`.
+  `value_exact` is the exact total as a plain decimal string, never in exponent form and not
+  quantized; `value` is the cent-quantized float. Both are read in the same pass as the paths.
+  The invariant: `start` plus the signed sum of the level-1 edges equals `end`, exactly. Under
+  `per_path: once` a `minus` row's `(a, b)` PAIR must not vary within a path (rule
+  `varies_within_path`, naming both columns), since a constant `a - b` would otherwise leave the two
+  totals ambiguous. The card does not carry `walk` until the projector's declared tuple does.
+- `render.walk_labels` is optional: `{start: <label>, end: <label>}`, on a `{minus: [a, b]}` row only.
+  Both keys are required and no other key is allowed; each value is a non-empty string. When declared,
+  the `start` end is labelled with `start` and the `end` end with `end`, in place of the column names
+  (use it when a column name is not something a person reads). A row without it keeps the column
+  names. It is refused at load on a column row (which serves no walk) and on a `compare` row (whose
+  ends are the two versions the caller names, so a fixed label would be wrong for any other pair).
+  Nothing else in the envelope changes; `render` still travels whole to the card.
 - A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
   with rule `refused_by_module`; the message names no row value.
 
