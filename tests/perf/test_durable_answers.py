@@ -2,7 +2,6 @@
 import asyncio
 import inspect
 import json
-import logging
 import sys
 import time
 from pathlib import Path
@@ -112,15 +111,40 @@ def gw():
     return gateway
 
 
-def test_answer_path_flag(gw, monkeypatch, caplog):
+def test_answer_path_flag(gw, monkeypatch):
     monkeypatch.delenv("IAGENT_ANSWER_PATH", raising=False)
     assert gw._answer_path() == "dagster"
-    monkeypatch.setenv("IAGENT_ANSWER_PATH", " Durable ")
-    assert gw._answer_path() == "durable"
-    monkeypatch.setenv("IAGENT_ANSWER_PATH", "restate")
-    with caplog.at_level(logging.WARNING):
-        assert gw._answer_path() == "dagster"
-    assert any("restate" in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
+    for ok in ("dagster", "durable"):
+        monkeypatch.setenv("IAGENT_ANSWER_PATH", ok)
+        assert gw._answer_path() == ok
+    for bad in (" Durable ", "DURABLE", "", "restate"):
+        monkeypatch.setenv("IAGENT_ANSWER_PATH", bad)
+        with pytest.raises(ValueError):
+            gw._answer_path()
+
+
+class _PastTheCheck(Exception):
+    pass
+
+
+def test_A_BAD_ANSWER_PATH_REFUSES_THE_START(gw, monkeypatch):
+    async def boom():
+        raise _PastTheCheck()
+    monkeypatch.setattr(gw, "init_db", boom)
+
+    async def start():
+        async with gw.lifespan(gw.app):
+            pass
+
+    monkeypatch.setenv("IAGENT_ANSWER_PATH", "durabel")
+    with pytest.raises(ValueError):
+        asyncio.run(start())
+    monkeypatch.setenv("IAGENT_ANSWER_PATH", "durable")
+    with pytest.raises(_PastTheCheck):
+        asyncio.run(start())
+    monkeypatch.delenv("IAGENT_ANSWER_PATH", raising=False)
+    with pytest.raises(_PastTheCheck):
+        asyncio.run(start())
 
 
 def test_dagster_backend_resolves_at_call_time(gw, monkeypatch):
