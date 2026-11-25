@@ -68,6 +68,25 @@ MAX_ROWS_ENV = "FIN_ASSET_MAX_ROWS"
 DEFAULT_MAX_ROWS = 100_000
 URN_PREFIX = "urn:li:dataset:"
 PERIOD_BASES = ("period", "cumulative")    # a flow row's `basis`: the one period, or the program through it
+#: The finance namespace, STATED ONCE: `main.FIN` is this, and a contract's `fin:X` CURIE expands with it.
+FIN = "http://invincible-agent/fin#"
+FIN_CURIE = "fin:"
+
+#: The classes the engine can resolve (`main._RESOLVABLE`'s keys), registered by `main` when it
+#: builds the map: this module cannot import `main`. A contract's `dimensions` class must be one.
+_resolvable: frozenset[str] = frozenset()
+
+
+def register_resolvable(classes) -> None:
+    """Called once by `main`, with the keys of its `_RESOLVABLE` map."""
+    global _resolvable
+    _resolvable = frozenset(classes)
+
+
+def expand_class(curie: str) -> str:
+    """`fin:X` as the full class URI `_RESOLVABLE` is keyed by; any other string is returned as it
+    is, so it names no resolvable class and is refused where it is checked."""
+    return FIN + curie[len(FIN_CURIE):] if curie.startswith(FIN_CURIE) else curie
 
 #: engine-fin's ROLES: the columns its `FinanceState` is built from. The contract the deployment
 #: names (`FIN_DATASET_CONTRACT`) must declare them (`contract_problems`); they no longer fix what
@@ -323,6 +342,21 @@ def contract_problems(contract: Any) -> list[str]:
         problems.append(f"contract {cid!r} does not type column(s) as numbers: " + ", ".join(wrong))
     if contract.scope != SCOPE_ROLE:
         problems.append(f"contract {cid!r} is not scoped by {SCOPE_ROLE}, the column the read filters on")
+    # A dimension's members belong to programs, so a dimension with no scope has no program to
+    # place them in. Refused here, on its own id, so no contract reaches a read that withholds them all.
+    scopeless = [k for k, v in (("dimensions", contract.dimensions), ("hierarchy", contract.hierarchy),
+                                ("version_dimension", contract.version_column)) if v]
+    if contract.scope is None and scopeless:
+        problems.append(f"dimension_without_scope: contract {cid!r} declares {', '.join(scopeless)} under "
+                        "`scope: none`; a dimension's members are a program's, so the contract names its scope")
+    try:
+        dimension_columns(contract)
+    except ValueError as exc:
+        problems.append(str(exc))
+    for column, cls in contract.dimensions:
+        if expand_class(cls) not in _resolvable:
+            problems.append(f"contract {cid!r} dimension {column!r} names the class {cls!r}, which "
+                            "engine-fin does not resolve")
     if not contract.key or not set(contract.key) <= GRAIN_ROLES:
         problems.append(f"contract {cid!r} grain is not one row per ({', '.join(sorted(GRAIN_ROLES))})")
     for column, by in DETERMINED_ROLES:
@@ -726,9 +760,33 @@ def hierarchy_levels(contract: Any) -> tuple[tuple[str, str], ...]:
     return tuple(zip(columns, roles[-len(columns):]))
 
 
-def _read_projection(read: Callable[[str], Any], urn: str, *, program_id: str, contract: Any,
+#: The class each hierarchy role's members are, shipped standard terms (Q4: the control account and the
+#: work package are shipped levels; the WBS depth above them is declared).
+_ROLE_CLASS: Mapping[str, str] = {
+    ROLE_WBS: "WBSElement", ROLE_CONTROL_ACCOUNT: "ControlAccount", ROLE_WORK_PACKAGE: "WorkPackage",
+}
+
+
+def dimension_columns(contract: Any) -> tuple[tuple[str, str], ...]:
+    """`(column, class URI)` of every column whose values are members of a class: the hierarchy's
+    columns first (their class from their role, `hierarchy_levels`), then the contract's `dimensions`,
+    deduped by column, in order. A column declared twice with two classes is a ValueError."""
+    out: dict[str, str] = {}
+    for column, role in hierarchy_levels(contract):
+        out[column] = FIN + _ROLE_CLASS[role]
+    for column, cls in contract.dimensions:
+        uri = expand_class(cls)
+        if out.setdefault(column, uri) != uri:
+            raise ValueError(f"contract {contract.contract_id!r} column {column!r} is declared a member of "
+                             f"{out[column]!r} by its hierarchy and of {uri!r} by its dimensions")
+    return tuple(out.items())
+
+
+def _read_projection(read: Callable[[str], Any], urn: str, *, program_id: Optional[str], contract: Any,
                      columns: tuple[str, ...]) -> Any:
     """The rows of ONE program, of the named `columns` and no others, collected under `max_rows()`.
+    With `program_id=None`, the DISTINCT rows of EVERY program, and an empty frame is an answer
+    (`read_dimension_rows`).
 
     The schema is checked against the contract before a row is collected (`check_contract_schema`),
     the filter keeps the rows whose scope column is `program_id`, the cap applies before collect,
@@ -753,7 +811,10 @@ def _read_projection(read: Callable[[str], Any], urn: str, *, program_id: str, c
     check_contract_schema(schema, contract, tuple(named))
     cap = max_rows()
     try:
-        df = lf.filter(pl.col(contract.scope) == program_id).select(named).head(cap + 1).collect()
+        if program_id is None:
+            df = lf.select(named).unique().head(cap + 1).collect()
+        else:
+            df = lf.filter(pl.col(contract.scope) == program_id).select(named).head(cap + 1).collect()
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
@@ -762,7 +823,7 @@ def _read_projection(read: Callable[[str], Any], urn: str, *, program_id: str, c
              round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
     if df.height > cap:
         raise AssetTooLarge(cap)
-    if df.height == 0:
+    if df.height == 0 and program_id is not None:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
     check_contract_rows(df, contract, projected=True)
     return df
@@ -804,6 +865,60 @@ def read_hierarchy_rows(read: Callable[[str], Any], urn: str, *, program_id: str
     df = _read_projection(read, urn, program_id=program_id, contract=contract,
                           columns=(contract.scope, *contract.hierarchy))
     return tuple(df.select(list(contract.hierarchy)).unique().iter_rows())
+
+
+def read_dimension_rows(read: Callable[[str], Any], urn: str, *, contract: Any) -> Any:
+    """ONE governed read for the dimension members, as the caller: the scope column and every
+    dimension column (`dimension_columns`), and no other (no amount is selected). The DISTINCT rows
+    of EVERY program the caller's ticket lets them read (no program filter), capped by `max_rows()`,
+    and checked against the contract."""
+    return _read_projection(read, urn, program_id=None, contract=contract,
+                            columns=(contract.scope, *(c for c, _ in dimension_columns(contract))))
+
+
+def dimension_members(df: Any, urn: str, contract: Any, as_of: Any) -> dict[str, list[dict[str, Any]]]:
+    """The members the declarations and the asset's distinct rows give, by class URI. NO I/O.
+
+    One member per (class, value, program), null and empty values skipped. A DIMENSION COLUMN's
+    values come from the rows (`df`, as `read_dimension_rows` returns them). A VERSION or a PERIOD
+    never does: they are the contract's declared version list and its declared calendar's labels,
+    one member per program present in the scope column, so a caller sees one exactly when they can
+    view at least one of the dataset's programs. A value the data carries and no declaration lists
+    resolves to nothing."""
+    scope = contract.scope
+    programs = sorted({p for p in df[scope].to_list() if isinstance(p, str) and p})
+    out: dict[str, list[dict[str, Any]]] = {}
+    for column, cls in dimension_columns(contract):
+        seen: set[tuple[str, str]] = set()
+        for program, value in df.select([scope, column]).iter_rows():
+            ident = "" if value is None else str(value)
+            if not ident or not isinstance(program, str) or not program or (ident, program) in seen:
+                continue
+            seen.add((ident, program))
+            out.setdefault(cls, []).append({
+                "instance_id": ident, "label": ident, "class_uri": cls, "program": program,
+                "provenance": {"dataset": urn, "column": column, "as_of": as_of}})
+    declared: list[tuple[str, tuple[str, ...], dict[str, Any]]] = []
+    if contract.versions:
+        declared.append((FIN + "Version", contract.versions,
+                         {"contract": contract.contract_id, "declaration": "version_dimension"}))
+    try:
+        calendar = _fiscal_calendar.calendar_for(contract.calendar)
+    except _fiscal_calendar.FiscalCalendarError:
+        calendar = None
+    if calendar is not None and calendar.labels:
+        declared.append((FIN + "FiscalPeriod", calendar.labels,
+                         {"contract": contract.contract_id, "declaration": "calendar",
+                          "calendar_id": calendar.calendar_id}))
+    for cls, labels, provenance in declared:
+        for program in programs:
+            for label in labels:
+                out.setdefault(cls, []).append({
+                    "instance_id": label, "label": label, "class_uri": cls, "program": program,
+                    "provenance": dict(provenance)})
+    for members in out.values():
+        members.sort(key=lambda m: (m["instance_id"], m["program"]))
+    return out
 
 
 def require_grant(read: Callable[[str], Any], urn: str) -> None:

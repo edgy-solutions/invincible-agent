@@ -14,8 +14,13 @@ File shape (`*.yaml`, any number per directory, colon-separated directories):
         granted_by: ...
         ratified_by: ...
         reason: ...
+        program: ...            # OPTIONAL: the program it belongs to (never on a Program row)
 
-Every key is required and an unknown key is refused. Every refusal RAISES `InstanceOverlayError`
+Every key but `program` is required and an unknown key is refused. A non-Program row that names no
+`program` is withheld from every caller (deny by default); one that names it is visible to that
+program's members. A `Program` row IS its own program and may not name one.
+
+Every refusal RAISES `InstanceOverlayError`
 naming the file and the reason, so the engine does not boot half a declaration.
 
 The seed's own rule is kept, against the seed AND within the overlay: the resolver scores an exact
@@ -35,6 +40,8 @@ import yaml
 
 _ENV = "FIN_INSTANCE_OVERLAY_DIRS"
 _KEYS = ("class", "instance_id", "label", "granted_by", "ratified_by", "reason")
+_OPTIONAL = ("program",)
+_PROGRAM_CLASS = "Program"
 
 
 class InstanceOverlayError(ValueError):
@@ -49,6 +56,7 @@ class InstanceRow:
     granted_by: str
     ratified_by: str
     reason: str
+    program: str | None = None
 
 
 def FIN_INSTANCE_OVERLAY_DIRS() -> list[Path]:  # noqa: N802 -- named like the loaders it parallels
@@ -88,12 +96,19 @@ def _build(f: Path, n: int, row: Any, classes: Mapping[str, str], taken: dict[st
     missing = [k for k in _KEYS if k not in row]
     if missing:
         raise InstanceOverlayError(f"{where}: missing required key(s) {missing}")
-    extra = sorted(set(row) - set(_KEYS), key=str)
+    extra = sorted(set(row) - set(_KEYS) - set(_OPTIONAL), key=str)
     if extra:
-        raise InstanceOverlayError(f"{where}: unknown key(s) {extra}; the keys are {list(_KEYS)}")
+        raise InstanceOverlayError(
+            f"{where}: unknown key(s) {extra}; the keys are {list(_KEYS)} and optionally {list(_OPTIONAL)}")
     for k in _KEYS:
         if not isinstance(row[k], str) or not row[k].strip():
             raise InstanceOverlayError(f"{where}: `{k}` must be a non-empty string")
+    program = row.get("program")
+    if "program" in row and (not isinstance(program, str) or not program.strip()):
+        raise InstanceOverlayError(f"{where}: `program` must be a non-empty string")
+    if program is not None and row["class"] == _PROGRAM_CLASS:
+        raise InstanceOverlayError(
+            f"{where}: a Program row names no `program`: a program is its own program")
     if row["class"] not in classes:
         raise InstanceOverlayError(
             f"{where}: unknown class {row['class']!r}; the engine resolves {sorted(classes)}")
@@ -111,4 +126,4 @@ def _build(f: Path, n: int, row: Any, classes: Mapping[str, str], taken: dict[st
                 "the resolver scores an exact match 1.0 across classes and the router abstains on a tie")
     for token in mine:
         taken[token] = f"{f.name} row {n}"
-    return InstanceRow(uri, iid, label, row["granted_by"], row["ratified_by"], row["reason"])
+    return InstanceRow(uri, iid, label, row["granted_by"], row["ratified_by"], row["reason"], program)

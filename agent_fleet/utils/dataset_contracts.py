@@ -36,6 +36,11 @@ the scope: a list of at least two distinct string columns, each `nullable: false
 personal data, and the LAST declared to determine every other (each lower level determines the
 levels above it). The reader holds the shape only. What each level IS (the roles) is the engine's.
 
+DIMENSIONS. `dimensions` (optional) maps a declared column to the CLASS its values are members of
+(a CURIE string such as `fin:OBSElement`), in declared order. The reader holds the shape only: a
+column must be declared, a class is a non-empty string, and which classes exist is the reading
+engine's.
+
 VERSION DIMENSION. `version_dimension` (optional) declares `{column, values}`: the versions
 (baselines, estimates) the dataset's rows carry in `column`, in declared order; the column must be in grain. It is NOT the
 top-level `version`, which is the contract's own revision and is not read here. The values are
@@ -135,6 +140,7 @@ class DatasetContract:
     additive_over: dict[str, tuple[str, ...]] = field(default_factory=dict)  # column -> its `additive_over`
     status_column: str | None = None                         # top-level `status_period`, else None
     hierarchy: tuple[str, ...] = ()                          # top-level `hierarchy`, top first, else ()
+    dimensions: tuple[tuple[str, str], ...] = ()             # top-level `dimensions`: (column, class), declared order
 
     @property
     def scoped(self) -> bool:
@@ -300,12 +306,13 @@ def _parse(raw: dict) -> DatasetContract:
     version_column, versions = _parse_version(raw.get("version_dimension"), types, key)
     status_column = _parse_status_period(raw.get("status_period"), types, non_nullable, scope, dependencies)
     hierarchy = _parse_hierarchy(raw.get("hierarchy"), types, non_nullable, scope, set(personal), dependencies)
+    dimensions = _parse_dimensions(raw.get("dimensions"), types, set(personal))
     return DatasetContract(contract_id=contract_id, types=types, required=tuple(required),
                            key=key, scope=scope, dependencies=dependencies, rules=dict(rules),
                            non_nullable=tuple(non_nullable), personal=frozenset(personal),
                            calendar=calendar, version_column=version_column, versions=versions,
                            period_column=period_column, additive_over=additive,
-                           status_column=status_column, hierarchy=hierarchy)
+                           status_column=status_column, hierarchy=hierarchy, dimensions=dimensions)
 
 
 def _determined_by(dependencies: tuple[tuple[str, tuple[str, ...]], ...], column: str) -> frozenset[str]:
@@ -331,6 +338,26 @@ def _parse_status_period(value: Any, types: dict[str, str], non_nullable: list[s
         raise ValueError(f"status_period {value!r} is not declared determined by the scope {scope!r}; "
                          f"a dependency on the scope must determine it")
     return value
+
+
+def _parse_dimensions(value: Any, types: dict[str, str], personal: set[str]) -> tuple[tuple[str, str], ...]:
+    """The optional top-level `dimensions`: a mapping of a declared column to the class its values
+    are members of, in declared order; else `()`. The class is a string here (this reader knows no
+    engine's classes). A personal column is refused: its values would become the labels every
+    viewer of a program is offered. ValueError names the key and the column."""
+    if value is None:
+        return ()
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"dimensions is a mapping of column to class; {value!r} is not")
+    for col, cls in value.items():
+        if not isinstance(col, str) or col not in types:
+            raise ValueError(f"dimensions column {col!r} is not a declared column")
+        if col in personal:
+            raise ValueError(f"dimensions column {col!r} is personal data; a dimension's values are "
+                             "offered as members, so a dimension column is never personal")
+        if not isinstance(cls, str) or not cls.strip():
+            raise ValueError(f"dimensions column {col!r} names a class that is not a non-empty string")
+    return tuple((col, cls) for col, cls in value.items())
 
 
 def _parse_hierarchy(value: Any, types: dict[str, str], non_nullable: list[str], scope: str | None,

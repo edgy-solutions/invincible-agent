@@ -148,3 +148,48 @@ def test_a_whole_row_read_missing_a_key_column_still_fails_and_only_a_projection
     with pytest.raises(Exception):
         dataset_contracts.check_contract_rows(df, ev)
     dataset_contracts.check_contract_rows(df, ev, projected=True)
+
+
+# -- dimensions ----------------------------------------------------------------------------------
+
+def _with_dimensions(value, tmp_path):
+    raw = _raw()
+    raw["columns"].append({"name": "obs", "type": "string", "required": False, "nullable": False})
+    raw["columns"].append({"name": "region", "type": "string", "required": False, "nullable": False})
+    raw["dimensions"] = value
+    return _load(raw, tmp_path)
+
+
+def test_dimensions_parse_in_the_declared_order_and_are_empty_when_absent(tmp_path):
+    assert dataset_contracts.load_contract("ev_fixture", EV.parent).dimensions == ()
+    got = _with_dimensions({"region": "fin:OBSElement", "obs": "fin:OBSElement"}, tmp_path)
+    assert got.dimensions == (("region", "fin:OBSElement"), ("obs", "fin:OBSElement"))
+    assert [c for c, _ in asset_inputs.dimension_columns(got)] == ["control_account", "work_package", "region", "obs"]
+
+
+@pytest.mark.parametrize("value", [{"no_such_column": "fin:OBSElement"}, ["obs"], {}, {"obs": ""}, {"obs": 3}])
+def test_a_bad_dimensions_declaration_is_refused_at_load_naming_the_key(value, tmp_path):
+    with pytest.raises(ValueError) as exc:
+        _with_dimensions(value, tmp_path)
+    assert "dimensions" in str(exc.value)
+
+
+def test_a_personal_dimensions_column_is_refused_and_the_same_column_not_personal_loads(tmp_path):
+    raw = _raw()
+    raw["columns"].append({"name": "obs", "type": "string", "required": False, "nullable": False,
+                           "personal_data": True})
+    raw["dimensions"] = {"obs": "fin:OBSElement"}
+    (tmp_path / "p").mkdir()
+    with pytest.raises(ValueError, match="dimensions column 'obs' is personal data"):
+        _load(raw, tmp_path / "p")
+    del raw["columns"][-1]["personal_data"]  # the control: the same contract, the column not personal
+    (tmp_path / "c").mkdir()
+    assert _load(raw, tmp_path / "c").dimensions == (("obs", "fin:OBSElement"),)
+
+
+def test_a_column_declared_with_two_classes_by_hierarchy_and_dimensions_is_refused(tmp_path):
+    clash = _with_dimensions({"work_package": "fin:OBSElement"}, tmp_path)
+    with pytest.raises(ValueError, match="work_package"):
+        asset_inputs.dimension_columns(clash)
+    same = _with_dimensions({"work_package": "fin:WorkPackage"}, tmp_path)  # the same class twice is one column
+    assert [c for c, _ in asset_inputs.dimension_columns(same)] == ["control_account", "work_package"]
