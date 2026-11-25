@@ -648,6 +648,23 @@ def _listing_fields(raw: dict) -> dict[str, str]:
     return out
 
 
+def _check_walk_labels(wl: Any, kind: str, op: str) -> None:
+    """`render.walk_labels`: optional `{start, end}` naming the walk's two ends, on a `minus` row only.
+    ValueError (the file is named by `compose_rows`)."""
+    if kind != KIND_DATASET or op != "minus":
+        why = {"column": "a column row serves no walk",
+               "compare": "a compare row's ends are the two versions the caller names, so a fixed label "
+                          "would be wrong for any other pair"}.get(op, "only a dataset row serves a walk")
+        raise ValueError(f"render.walk_labels is declared on a row whose value is not {{minus: [a, b]}}: {why}")
+    if not isinstance(wl, dict):
+        raise ValueError("render.walk_labels must be a mapping {start: <label>, end: <label>}")
+    if set(wl) != {"start", "end"}:
+        raise ValueError(f"render.walk_labels must hold exactly start and end; it has {sorted(map(str, wl))}")
+    for k in ("start", "end"):
+        if not isinstance(wl[k], str) or not wl[k].strip():
+            raise ValueError(f"render.walk_labels.{k} must be a non-empty string")
+
+
 def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow | SourceRow:
     # Raises ValueError: `compose_rows` re-raises it as MeasureVerbError WITH THE FILE NAMED.
     fns, verbs = _names(builtins)
@@ -756,6 +773,8 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         raise ValueError(
             "render.other_label is declared by the row; the engine serves render.other_label from "
             "the module's OTHER_LABEL, so a row does not declare it")
+    if "walk_labels" in rnd:
+        _check_walk_labels(rnd["walk_labels"], kind, dataset.get("value_op", "column"))
     if rnd["shape"] not in COMPUTED_SHAPES:
         raise ValueError(
             f"render.shape {rnd['shape']!r}; this engine computes only {sorted(COMPUTED_SHAPES)} "
