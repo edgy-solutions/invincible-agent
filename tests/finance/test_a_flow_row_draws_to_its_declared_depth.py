@@ -12,6 +12,7 @@ Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:ca
 """
 from __future__ import annotations
 
+import copy
 import os
 import re
 import shutil
@@ -313,6 +314,21 @@ def test_a_bad_depth_is_refused_at_load(bad, monkeypatch, tmp_path):
     message = str(caught.value)
     assert f"inputs.dataset.depth must be an integer from 1 to {len(WBS_LEVELS) - 1}" in message, message
     assert "fin_b_bad_depth" in message, "the refusal names the file"
+
+
+def test_a_compare_row_does_not_take_depth(monkeypatch, tmp_path):
+    """The only-in-A / only-in-B counts are over the FULL paths; a table cut to `depth` would disagree with them."""
+    from tests.finance.test_the_version_is_a_declared_dimension import B_COMPARE, FN_B, load
+    (tmp_path / "control").mkdir()
+    control = load(tmp_path / "control", monkeypatch, {FN_B: B_COMPARE})
+    assert control[FN_B].value_op == "compare" and control[FN_B].depth is None, "control: the row loads without depth"
+    row = copy.deepcopy(B_COMPARE)
+    row["inputs"]["dataset"]["depth"] = 1
+    with pytest.raises(ValueError) as caught:
+        load(tmp_path, monkeypatch, {FN_B: row})
+    message = str(caught.value)
+    assert "depth is refused on a compare row" in message and "full paths" in message, message
+    assert FN_B in message, "the refusal names the file"
 
 
 def test_a_series_row_does_not_take_depth(monkeypatch, tmp_path):
