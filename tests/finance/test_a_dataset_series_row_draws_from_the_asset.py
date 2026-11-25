@@ -414,7 +414,7 @@ def test_a_module_without_reads_and_series_is_refused(tmp_path):
 def test_a_flow_function_wired_to_a_series_row_is_refused(tmp_path):
     raw = mutated(EAC, lambda r: r["computation"].update(
         module="agent_fleet.finance_agent.measure_modules.variance_decomposition", function="flow_edges",
-        version="1.3.0"))
+        version="1.4.0"))
     with pytest.raises(measure_verbs.MeasureVerbError, match="exactly"):
         load(raw, tmp_path)
 

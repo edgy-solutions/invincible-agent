@@ -81,6 +81,7 @@ def gate(parquet, declared, members, monkeypatch):
     monkeypatch.setattr(engine.asset_inputs, "_load_client", g.load)
     monkeypatch.setenv("FIN_DATASET_URN", URN)
     monkeypatch.setenv("FIN_DATASET_BANNER", BANNER)
+    monkeypatch.setenv("FIN_DATASET_CONTRACT", "ev_fixture")
     monkeypatch.setenv("CENTRAL_GATEWAY_URL", "http://gateway.test")
     return g
 
@@ -140,6 +141,7 @@ def test_the_engines_read_line_is_the_form_the_test_looks_for(post):
 def test_a_seed_answer_fails_though_its_figures_are_right(post, monkeypatch):
     """The one that matters: with the flag off the figures match, so only the source can catch it."""
     monkeypatch.delenv("FIN_DATASET_URN")
+    monkeypatch.delenv("FIN_DATASET_CONTRACT")
     problems = live.run_legs(CASE, post)
     assert legs_involving(problems, "did not come from the asset")
     assert legs_involving(problems, "BREACH: the denied subject was answered")
@@ -385,6 +387,7 @@ def test_the_live_function_passes_end_to_end_past_its_skip(unskipped):
 
 def test_the_live_function_fails_when_the_seed_answers(unskipped, monkeypatch):
     monkeypatch.delenv("FIN_DATASET_URN")
+    monkeypatch.delenv("FIN_DATASET_CONTRACT")
     with pytest.raises(AssertionError, match="did not come from the asset"):
         live.test_the_variance_set_reads_the_fixture_and_the_asset_gate_refuses()
 
