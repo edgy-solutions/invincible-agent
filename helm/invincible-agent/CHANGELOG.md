@@ -57,7 +57,7 @@
 - **Known issue, at 0.4.91 and still in 0.4.92: engine-fin's program listing takes the person from an email in the request, not from a verified token** (Lane 1; the architect, 2026-11-25: "the finance listing route takes identity from an unverified email").
   - **What happens.** `/enumerate_instances` and `/resolve_instance` choose the programs to show from the request body's `user_email`. Neither route reads the caller's bearer. So any workload that can reach the engine-fin Service can name another person's email and get back the programs that person may see, by name and identifier.
   - **Nothing in the chart limits who reaches engine-fin.** The engines' NetworkPolicy is egress-only, and `networkPolicy.enabled` defaults to `false`.
-  - **The fix is a pair of PRs that must land together:** fin's, which makes engine-fin's two routes take the person from the verified bearer, and 74's in engine O. Neither was approved by this release's noon cut-off.
+  - **The fix for the finance listing route comes in the next release.** It is a pair of PRs that land together: fin's, which makes engine-fin's two routes take the person from the verified bearer, and 74's in engine O.
 
 ## 0.4.91 — 2026-11-21
 
