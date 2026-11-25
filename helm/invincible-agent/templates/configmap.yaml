@@ -22,6 +22,21 @@ data:
   # Agent HTTP timeout
   AGENT_HTTP_TIMEOUT: "300"
 
+  {{- /* NO THIRD-PARTY CALLS HOME.
+  Four libraries reach the public internet by default, from every pod that imports them.
+  mem0 sends usage events to its vendor's analytics service. LiteLLM fetches its model cost
+  map from GitHub at import, and on a cluster with no route out it waits for the handshake
+  timeout before using the copy it ships with. The DataHub client library uploads a usage
+  event (with an anonymous client id) to its vendor's product-analytics service. The Hugging
+  Face client library's telemetry switch stops its usage ping to the model hub and the
+  installed-framework versions it adds to its user agent. None of these calls is ours to make.
+  A container env beats this envFrom, so one workload can still opt back in. (A template
+  comment, so the rendered ConfigMap carries only the four keys.) */}}
+  MEM0_TELEMETRY: "False"
+  LITELLM_LOCAL_MODEL_COST_MAP: "True"
+  DATAHUB_TELEMETRY_ENABLED: "false"
+  HF_HUB_DISABLE_TELEMETRY: "1"
+
   # LangGraph checkpointer
   LANGGRAPH_POSTGRES_URI: {{ include "invincible-agent.pgUriFor" (dict "concern" "checkpoints" "root" .) | quote }}
 
@@ -87,6 +102,10 @@ data:
   serves `composed: false` (not read), so it names the sample overlay that ships where_used_set.yaml. */}}
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "MENU_BLOCK_OVERLAY_DIRS") }}
   MENU_BLOCK_OVERLAY_DIRS: "/app/policy/overlays/sample/menu_blocks"
+  {{- end }}
+  {{- /* IAGENT_TRACE_MODEL_TEXT -- whether engine O's Langfuse generations carry the rendered prompt and the reply as TEXT (the architect, 2026-11-24, amending the 11-15 "no model text in any span" ruling: text only where a deployment declares it). "off" by default; the hashes, model, temperature, effort and token counts are recorded either way. A deployment turns it on in agentFleet.env. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "IAGENT_TRACE_MODEL_TEXT") }}
+  IAGENT_TRACE_MODEL_TEXT: "off"
   {{- end }}
   {{- /* CONTENT_KIND_OVERLAY_DIRS -- exactly parallel to TASK_KIND_OVERLAY_DIRS above, but
   for `src/iagent/content_kinds.py` (ingest/origin seam, ADR-0021/0041, SDK 0.9.7). Unlike

@@ -4171,6 +4171,194 @@ widening) is routed separately, in
 
 ---
 
+## R-120 — ONE REALM, MANY INSTANCES: THE IDENTITY PREFIX, SIX QUESTIONS
+
+**RULED 2026-11-20.** Source: the architect, relayed by Chris. Q1 was ruled first and Q2–Q6 later
+that evening. Each ruling is recorded where its question is asked, in
+[`docs/proposals/one-realm-many-instances-the-identity-prefix.md` §6](../proposals/one-realm-many-instances-the-identity-prefix.md)
+(#511). On 2026-11-22 the architect ordered the build: *"Identity prefix: start building it as
+draft PRs, as ruled on questions 1 to 6. Work shares one realm across instances, so this matters
+there."*
+
+**The requirement.** A deployment runs one instance of the chart per use (development, test,
+production), and all of them share one identity provider realm. A token issued for one instance
+must be refused by every other.
+
+**The six rulings.**
+
+1. **The prefix's shape.** *"A prefix that is the beginning of a role name is refused at render,
+   and so is one that does not end in the separator. An empty prefix stays the default."* Ruled
+   later the same day, both as proposed:
+   - the pattern `^[a-z][a-z0-9]{0,11}-$`, so the separator is part of the value;
+   - the composing function refuses a bad prefix at runtime too.
+2. **A shared realm needs a non-empty prefix.** *"The render also refuses `external` with an empty
+   prefix, unless a value declares this instance the only one in its realm."* That value is
+   `identity.soleInstanceInRealm`, default false.
+3. **No transition audience.**
+4. **The `azp`-prefix check goes in the BFF in the same release, and in the SDK later.**
+5. **`realmObjects`:** as proposed. A non-empty prefix with `managed` is refused unless
+   `realmOwner: true`.
+6. **One policy seed reference per instance** is a recommendation, not a render rule.
+
+**What it does NOT decide.** Which release first sets a non-empty prefix. With an empty prefix
+every path composes the bare role name and the `azp` check is skipped, so the build changes no
+running instance.
+
+**Built by:**
+- #516 (the chart half);
+- #517 (the code half: one `compose_client_id` per surface, and the BFF's `azp` refusal
+  `azp_not_this_instance`).
+
+Both are drafts under gov's review. Before any deployment sets a prefix, it also needs
+mesh-mcp's chart and the SDK's engine-side `azp` check.
+
+---
+## R-121 — AN AS-OF IS THE SOURCE'S OWN, OR IT IS SAID TO BE UNAVAILABLE; A CALLER NEVER SUPPLIES ONE
+
+**RULED 2026-11-20 and 2026-11-21.** Source: the architect, relayed by Chris, in three rulings. The
+quotes below are verbatim as the lanes' packets recorded them.
+
+1. **The answer (11-20):** *"when an as-of is unavailable, say so; never show a blank or a stale
+   date as current."*
+2. **The BFF (ruling (b), 11-21 evening Central):** *"drop it from the finance package call;
+   refuse it with a 422 on the template path; test that no caller date is sent. It merges
+   immediately before #508."*
+3. **The pair (11-21 evening):** *"#508 is held until Lane 1's BFF change is merged or is in the
+   same train position immediately before it. Review them as a pair."*
+
+**The rule.** An as-of names the data's own state, read from the source. A caller cannot set it:
+the BFF sends no caller date to engine-fin, and the template path refuses one with a 422. When the
+source gives no as-of, the answer says so in words. It never shows a blank, and never passes off a
+stale date as current.
+
+**Why.** A date the caller chose, or a stale date, looks the same as the source's own date, and the
+reader cannot tell them apart.
+
+**What it does NOT decide.**
+- **Where an as-of comes from when the source does not advertise one.** dag-tools 0.17.0 registers
+  no as-of reader (`AS_OF_READERS` is empty), so today every such read is "unavailable". That
+  setting is a separate proposal.
+- **Whether a person may ask for an older state of the data.** This ruling refuses a caller's date;
+  it does not rule out a later, declared as-of request.
+
+**Built by:**
+- #512 (the BFF half), merged 2026-11-23;
+- #496 (the answer half): open at the time of writing.
+
+---
+
+## R-122 — AN EXPORT CARRIES TWO DATES, EACH LABELLED
+
+**RULED 2026-11-21; wording given 2026-11-23.** Source: the architect, via Chris. The 11-21 ruling
+was relayed without verbatim wording. The architect gave this wording on 11-23, in review of this
+entry:
+
+> *"an export carries a data date from the source's own as-of and a generated date from the server
+> clock, each labelled. An unavailable as-of says so. A caller-supplied date is refused. Sample data
+> is labelled as sample. Fields per profile are rows."*
+
+**The rule.** An export has two dates with different meanings, and it labels both:
+- **the data date:** the source's own as-of, from the read receipt. When it is unavailable, the
+  field says so. It is never blank, and the generated date never stands in for it;
+- **the generated date:** from the server clock, when the file was made.
+
+Three more parts:
+- **A caller never supplies either date.** A request that names one is refused (R-121).
+- **Sample data says it is sample data,** in place of a data date.
+- **Which fields a profile shows is a row** of the profile, not code.
+
+**Why.** It is R-121 applied to a file. A file outlives the session that made it, so a reader has
+nothing but the labels to tell the two dates apart.
+
+**What it does NOT decide.** Which dates a given profile shows. That is configuration, and the
+profile row names it.
+
+**Built by:** #508, merged 2026-11-23, directly after #512 as R-121 requires.
+- The labels are in `agent_fleet/finance_agent/export_dates.py`: `AS_OF_UNAVAILABLE` and
+  `SAMPLE_DATA_AS_OF`.
+- The caller's date is refused by #512.
+
+---
+
+## R-123 — THE READINESS LATCH: NOT READY UNTIL THE FIRST CLEAN READ; THEN THAT READ IS SERVED FROM CACHE
+
+**RULED 2026-11-20, corrected 2026-11-21, restated 2026-11-22, worded 2026-11-23.** Source: the
+architect, via Chris. The rulings, verbatim:
+
+1. **11-20:** *"an unreadable completion declaration refuses completion with a clear error. It does
+   not warn and pass."*
+2. **11-21** (received 2026-11-22T05:12Z; quoted from gov's record): *"#494: a running BFF serves
+   its first good read from cache; only a start with unreadable files is not ready. That's the
+   ruling, corrected."*
+3. **11-22:** *"keep it as built. It refuses completions that could need fields and logs once.
+   Serving the last good copy is a possible later refinement."*
+4. **11-23,** the wording of this entry: *"not ready until the first clean read of the
+   declarations. After that a running BFF serves that read from cache, and only a start with
+   unreadable files is not ready."*
+
+**The rule.**
+- **Until the first clean read** of the completion declarations, the BFF is not ready. It refuses
+  every completion that could need declared fields, with a clear error, and logs once. It never
+  warns and lets the completion through. A failed read is not cached, so the next call reads
+  again.
+- **After the first clean read,** a running BFF serves that read from cache for the life of the
+  process. Files that break later do not make it not ready.
+- **Only a start with unreadable files is not ready.**
+
+This settles the question 74 put on 11-22, whether a running BFF refuses after a later break. It
+does not: that is 74's option (a), keep it as built. The 11-22 phrase "serving the last good copy
+is a possible later refinement" is overtaken. What #494 builds is the ruled rule.
+
+**What it does NOT decide.** Whether a restart that reads broken files is a deploy failure. Today
+it refuses completions from then on, which the rule allows.
+
+**Built by:** #494, a draft (head `c043a9e6`) at the time of writing; gov's last verdict was HOLD at
+`54476658`.
+
+---
+
+## R-124 — THE ROUTING SCORE: A SUBJECT IS RIGHT WHEN EXACT, A SUBCLASS, OR THE HOME OF THE EXPECTED VERB
+
+**RULED 2026-11-19, widened 2026-11-23.** Source: the architect, via Chris. The 11-19 ruling (exact
+or a subclass) was relayed without verbatim wording. The architect gave this wording on 11-23, in
+review of this entry:
+
+> *"a subject is right when exact or a subclass, or when the expected verb is compatible with the
+> resolved class, excluding verbs compatible with at least half the resolved subjects and
+> excluding request types as subjects. Both figures are reported."*
+
+**The rule.** perf scores a routed run's subject as right when any of these holds:
+1. the resolved class is exactly the expected class;
+2. it is a proper subclass of the expected class. Such a run is marked `matched_by_subclass`;
+3. **the expected verb is compatible with the resolved class.** This counts the referent routes,
+   such as a baseline question answered on `Program`. Two exclusions apply, and both are derived,
+   with no class or verb named:
+   - **a generic verb does not count:** one compatible with at least half the resolved subjects;
+   - **a request type is never a right subject:** a subclass of `mesh#Request` in the class
+     closure.
+
+The class closure comes from the ontology TTL, generated into `class-parents.json`. Every report
+names the TTL commit it was generated from.
+
+**Both figures are reported:** the figure under (1)–(2) alone, and the figure under the whole rule.
+On round B these are 0.383 and 0.492. The latter is perf's "narrow, request shapes excluded" form,
+from perf's 11-20 packet to the architect.
+
+**The acceptance bar for a routing PR (perf, 11-21).** The reference is round B (0.4.90, 515 runs,
+question set `questions-r2-b.yaml`). A PR:
+- must not raise the routed ambiguous questions above 6 of 8;
+- reports both subject figures beside the reference's 0.383 and 0.492.
+
+**What it does NOT decide.**
+- **The routed-verb variant.** perf's "(4a) as worded" counts a run when the *routed* verb, not the
+  expected one, is compatible with the resolved class, and has no exclusions. It scores round B at
+  0.863. It is not the ruled rule.
+- **The owner-persona headline.** Which figure leads perf's owner-persona reports is still open.
+
+**Applied in:** perf's round-B and night-2 re-scores; the bar governs #504 and #506 (both open).
+
+---
+
 ## Why this file exists at all
 
 Two lanes independently refused work today on the grounds that a cited ruling could not be

@@ -34,17 +34,17 @@ metadata:
   name: {{ .Release.Name }}-electric
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
-    {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 4 }}
 spec:
   replicas: {{ .Values.electric.replicas }}
   selector:
     matchLabels:
-      {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 6 }}
+      {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 6 }}
   template:
     metadata:
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
-        {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 8 }}
     spec:
       {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
@@ -116,7 +116,11 @@ spec:
             # `grant-replication` initContainer above grants REPLICATION
             # on every pod boot as an idempotent ALTER ROLE.
             {{- if .Values.electric.db.enabled }}
-            # Electric's OWN role (templates/electric-role-job.yaml): read-only on the allow-listed tables. The pod
+            # Electric's OWN role (templates/electric-role-job.yaml): SELECT on only the allow-listed tables. NOT "read-only on
+            # those tables": the role holds REPLICATION, and PostgreSQL has no privileges on publications, so it can stream ANY
+            # publication in the database (SELECT is checked only on the initial copy), and a physical stream of the cluster
+            # wherever pg_hba has a matching `replication` line. The Job refuses to run if another publication exists; the
+            # pg_hba lines are a roll blocker (step-0 item 3 b). The pod
             # carries no envFrom, so it holds none of the main user's credentials. Host, port and database come
             # from the chart helpers because envFrom (which supplied BPMN_POSTGRES_*) is gone.
             - name: ELECTRIC_DB_PASSWORD
@@ -196,7 +200,7 @@ metadata:
     {{- include "invincible-agent.labels" . | nindent 4 }}
 spec:
   selector:
-    {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.electric.port }}

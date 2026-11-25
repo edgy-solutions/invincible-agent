@@ -31,41 +31,58 @@ from fastapi import HTTPException, Request
 
 try:  # flat in the image (/app), packaged in the repo — the same two-way import `main` uses
     from entities import (
-        FISCAL_PERIODS, ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage,
+        ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage, fiscal_periods,
     )
 except ImportError:
     from agent_fleet.finance_agent.entities import (
-        FISCAL_PERIODS, ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage,
+        ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage, fiscal_periods,
     )
+
+try:  # the declared fiscal calendars, with the same two-way import
+    import fiscal_calendar as _fiscal_calendar
+except ImportError:
+    from agent_fleet.finance_agent import fiscal_calendar as _fiscal_calendar
 
 try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils in the repo
-    from utils.dataset_contracts import ContractViolation, check_contract_rows, check_contract_schema
+    from utils import dataset_contracts as _contracts
+    from utils.dataset_contracts import (
+        ContractViolation, check_contract_rows, check_contract_schema, check_contract_values,
+    )
 except ImportError:
+    from agent_fleet.utils import dataset_contracts as _contracts
     from agent_fleet.utils.dataset_contracts import (
-        ContractViolation, check_contract_rows, check_contract_schema,
+        ContractViolation, check_contract_rows, check_contract_schema, check_contract_values,
     )
 
-#: engine-fin's own refusals, beyond the shared reader's (`dataset_contracts.RULES`), until
-#: `state_from_rows` reads the contract (ruled 11-11).
+#: engine-fin's own refusals, beyond the shared reader's (`dataset_contracts.RULES`). The key, the
+#: dependencies, nulls and non-finite values are the named contract's, refused by the shared
+#: reader's ids.
 RULES = frozenset({
-    "duplicate_work_package_period", "non_finite", "null_value", "other_program_rows",
-    "period_outside_calendar", "program_bac_not_unique", "program_name_not_unique",
-    "varies_within_path", "work_package_in_two_accounts",
+    "other_program_rows", "period_outside_calendar", "varies_within_path", "version_outside_list",
 })
 URN_ENV = "FIN_DATASET_URN"
+CONTRACT_ENV = "FIN_DATASET_CONTRACT"
 BANNER_ENV = "FIN_DATASET_BANNER"
 GATEWAY_ENV = "CENTRAL_GATEWAY_URL"
 MAX_ROWS_ENV = "FIN_ASSET_MAX_ROWS"
 DEFAULT_MAX_ROWS = 100_000
 URN_PREFIX = "urn:li:dataset:"
 
-#: The contract's fixed column names. The set the read selects, so a column outside it is never
-#: collected.
+#: engine-fin's ROLES: the columns its `FinanceState` is built from. The contract the deployment
+#: names (`FIN_DATASET_CONTRACT`) must declare them (`contract_problems`); they no longer fix what
+#: the read selects, which is every column that contract declares and the asset carries.
 STRING_COLUMNS: tuple[str, ...] = (
     "program_id", "program_name", "control_account", "work_package", "period",
 )
 NUMERIC_COLUMNS: tuple[str, ...] = ("program_bac", "bcws", "bcwp", "acwp")
 COLUMNS: tuple[str, ...] = STRING_COLUMNS + NUMERIC_COLUMNS
+#: The roles the shape of the read rests on: the column a read is scoped by, the pair one row
+#: holds, and the columns that must each be determined by one other.
+SCOPE_ROLE = "program_id"
+GRAIN_ROLES = frozenset({"work_package", "period"})
+DETERMINED_ROLES: tuple[tuple[str, str], ...] = (
+    ("program_name", "program_id"), ("program_bac", "program_id"), ("control_account", "work_package"),
+)
 
 #: The `FinanceState` collections the contract's columns fill. Every other one is `uncarried`, and
 #: so is every entity field no column names (account and package BAC, WBS, OBS, technique): those
@@ -124,6 +141,11 @@ def dataset_urn() -> Optional[str]:
     return (os.environ.get(URN_ENV) or "").strip() or None
 
 
+def dataset_contract_id() -> Optional[str]:
+    """The contract the read is held to, named by the deployment, or None when unset."""
+    return (os.environ.get(CONTRACT_ENV) or "").strip() or None
+
+
 def dataset_banner() -> str:
     return (os.environ.get(BANNER_ENV) or "").strip()
 
@@ -137,19 +159,40 @@ def max_rows() -> int:
 #: The broker's ticket carries `ticket_id`, `issued_at` and `as_of` (dag-tools 0.13.0, #31), and
 #: `get_dataframe_with_ticket` hands back its receipt beside the frame. `main.mesh_ticketed_read`
 #: returns that pair, and every asset answer cites the receipt of the read it computed over. A
-#: receipt that names neither (a broker that stamps no as-of and issues no id) still says the
-#: ticket is pending rather than inventing one (ruled 2026-11-08), byte for byte this text. The
-#: URN stays last: the live leg reads `Source: <urn>` as the suffix.
+#: receipt that names no ticket id (a broker that issues none) still says the ticket is pending
+#: rather than inventing one (ruled 2026-11-08), byte for byte this text. The URN stays last: the
+#: live leg reads `Source: <urn>` as the suffix.
 TICKET_PENDING = "(ticket: pending)"
+
+#: Ruled 2026-11-20 (architect, via Chris): "when an as-of is unavailable, say so; never show a
+#: blank or a stale date as current." A receipt without an as-of says this, never nothing, with
+#: the broker's reason when the receipt carries one (`as_of_unavailable`: dag-tools' client
+#: allowlists it, and the broker sets one of four constant tokens, e.g.
+#: `no_reader_for_source_type`). The broker never fills a missing as-of with the issue time, and
+#: neither does this clause.
+AS_OF_UNAVAILABLE = "as-of unavailable"
+
+#: The broker's `as_of_source` for a version the producer advertised when the broker LOADED, not
+#: one read when this ticket was issued: it may be stale, so the clause labels it rather than
+#: showing it as current. `read_at_authorize`, and a receipt with no source (a broker before
+#: dag-tools 0.13.0 stamped none), cite the as-of bare.
+AS_OF_ADVERTISED_AT_LOAD = "advertised_at_load"
 
 
 def ticket_clause(receipt: Mapping[str, Any]) -> str:
-    """The receipt as the provenance clause: its as-of and its ticket id, each only if the receipt
-    carries it. Nothing is claimed that the receipt does not say: no as-of without one, and an
-    absent id is `pending`. A receipt with neither is exactly `TICKET_PENDING`."""
+    """The receipt as the provenance clause: its as-of and its ticket id. Nothing is claimed that
+    the receipt does not say, and nothing it lacks is left blank: an absent as-of is said to be
+    unavailable (with the broker's reason, if given), an as-of advertised at load is labelled so,
+    and an absent id is `pending`. A receipt with neither ends in exactly `TICKET_PENDING`."""
     as_of, ticket_id = receipt.get("as_of"), receipt.get("ticket_id")
     ticket = f"ticket: {ticket_id}" if ticket_id else "ticket: pending"
-    return f"(as of {as_of}, {ticket})" if as_of else f"({ticket})"
+    if not as_of:
+        reason = receipt.get("as_of_unavailable")
+        said = f"{AS_OF_UNAVAILABLE}: {reason}" if reason else AS_OF_UNAVAILABLE
+        return f"({said}) ({ticket})"
+    if receipt.get("as_of_source") == AS_OF_ADVERTISED_AT_LOAD:
+        return f"(as of {as_of}, advertised at load, not read for this ticket; {ticket})"
+    return f"(as of {as_of}, {ticket})"
 
 
 def provenance(urn: str, receipt: Mapping[str, Any]) -> str:
@@ -182,6 +225,17 @@ def check_config() -> None:
     if urn is None:
         return
     problems: list[str] = []
+    try:
+        declared = sorted(_fiscal_calendar.declared_calendars())
+    except _fiscal_calendar.FiscalCalendarError as exc:
+        problems.append(str(exc))
+    else:
+        if not declared:
+            problems.append(f"no fiscal calendar is declared ({_fiscal_calendar._ENV}); "
+                            "the dataset's periods are read in one")
+        elif len(declared) > 1:
+            problems.append(f"{len(declared)} fiscal calendars are declared ({declared}) and this read "
+                            "names none (its contract is not read yet)")
     if not urn.startswith(URN_PREFIX) or len(urn) == len(URN_PREFIX):
         problems.append(f"{URN_ENV} is not a '{URN_PREFIX}...' URN")
     if not dataset_banner():
@@ -195,6 +249,16 @@ def check_config() -> None:
                 raise ValueError
         except ValueError:
             problems.append(f"{MAX_ROWS_ENV} must be a positive integer")
+    contract_id = dataset_contract_id()
+    if contract_id is None:
+        problems.append(f"{CONTRACT_ENV} is required: it names the contract the read is held to")
+    else:
+        try:
+            contract = _contracts.load_contract(contract_id)
+        except Exception as exc:  # ValueError names it; a malformed file raises YAML, Key or TypeError
+            problems.append(f"{CONTRACT_ENV} {contract_id!r} cannot be loaded ({type(exc).__name__}: {exc})")
+        else:
+            problems.extend(contract_problems(contract))
     try:
         _load_client()
     except Exception as exc:  # ImportError, or a transitive import failing
@@ -224,51 +288,76 @@ async def capture_bearer(request: Request) -> None:
 
 # ── the contract ────────────────────────────────────────────────────────────────────────
 
-def check_schema(schema: Any) -> None:
-    """Every contract column is present, string columns are strings, numeric columns numeric.
-    `schema` is a polars Schema (lazy or eager)."""
-    import polars as pl
-
-    missing = [c for c in COLUMNS if c not in schema]
+def contract_problems(contract: Any) -> list[str]:
+    """What keeps `contract` from carrying engine-fin's roles, each a sentence naming it. Empty:
+    the contract declares every role column, requires it, declares it `nullable: false`, types it,
+    and holds the read's scope, one row per (work_package, period), and the dependencies the state
+    is built on."""
+    cid = contract.contract_id
+    problems: list[str] = []
+    missing = _contracts.undeclared(contract, COLUMNS)
     if missing:
-        raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
-    bad = [c for c in STRING_COLUMNS if schema[c] != pl.String]
-    bad += [c for c in NUMERIC_COLUMNS if not schema[c].is_numeric()]
-    if bad:
-        raise ContractViolation("wrong_type", "column(s) of the wrong type: " + ", ".join(bad))
+        problems.append(f"contract {cid!r} does not declare column(s): " + ", ".join(missing))
+    unrequired = sorted(set(COLUMNS) - set(contract.required))
+    if unrequired:
+        problems.append(f"contract {cid!r} does not require column(s) the read needs: " + ", ".join(unrequired))
+    loose = _contracts.nullable(contract, COLUMNS)
+    if loose:
+        problems.append(f"contract {cid!r} does not declare column(s) nullable: false, "
+                        "which the state is built from: " + ", ".join(loose))
+    wrong = _contracts.not_of(contract, STRING_COLUMNS, {"string"})
+    if wrong:
+        problems.append(f"contract {cid!r} does not type column(s) as string: " + ", ".join(wrong))
+    wrong = _contracts.not_of(contract, NUMERIC_COLUMNS, _contracts.NUMBER_TYPES)
+    if wrong:
+        problems.append(f"contract {cid!r} does not type column(s) as numbers: " + ", ".join(wrong))
+    if contract.scope != SCOPE_ROLE:
+        problems.append(f"contract {cid!r} is not scoped by {SCOPE_ROLE}, the column the read filters on")
+    if not contract.key or not set(contract.key) <= GRAIN_ROLES:
+        problems.append(f"contract {cid!r} grain is not one row per ({', '.join(sorted(GRAIN_ROLES))})")
+    for column, by in DETERMINED_ROLES:
+        if by not in contract.determined_by(column):
+            problems.append(f"contract {cid!r} does not declare {column} determined by {by}")
+    return problems
 
 
-def state_from_rows(df: Any, program_id: str) -> FinanceState:
+def dataset_contract() -> Any:
+    """The contract the deployment names, loaded and held to engine-fin's roles.
+
+    Boot refuses a contract that is unset, cannot be loaded, or does not carry the roles
+    (`check_config`), so a failure here means the deployment changed under a running engine. It is
+    `AssetUnavailable` (a 503, no figure computed); the cause goes to the log, never the answer."""
+    contract_id = dataset_contract_id()
+    try:
+        if contract_id is None:
+            raise ValueError(f"{CONTRACT_ENV} is not set")
+        contract = _contracts.load_contract(contract_id)
+        problems = contract_problems(contract)
+        if problems:
+            raise ValueError("; ".join(problems))
+    except Exception as exc:  # ValueError names it; a malformed file raises YAML, Key or TypeError
+        log.warning("the contract %s names cannot be read: %s: %s", CONTRACT_ENV, type(exc).__name__, exc)
+        raise AssetUnavailable("the named contract cannot be read") from None
+    return contract
+
+
+def state_from_rows(df: Any, program_id: str, contract: Any) -> FinanceState:
     """A real `FinanceState` from one program's rows. PURE over the frame.
 
-    Raises `NotInModel` for an empty frame, `ContractViolation` for any rule broken. The frame
-    is expected to hold the asked program ONLY; a row of another program is a violation, so a
-    read that forgot its filter fails loudly rather than blending programs."""
-    import polars as pl
-
-    check_schema(df.schema)
-    for c in COLUMNS:
-        if df[c].null_count():
-            raise ContractViolation("null_value", f"null value(s) in column {c}")
-    for c in NUMERIC_COLUMNS:
-        if df[c].dtype.is_float() and not df[c].is_finite().all():
-            raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
+    Raises `NotInModel` for an empty frame, `ContractViolation` for any rule broken. The values
+    (`check_contract_values`), the key and the dependencies are the `contract`'s, as for a dataset
+    row's read.
+    The frame is expected to hold the asked program ONLY; a row of another program is a
+    violation, so a read that forgot its filter fails loudly rather than blending programs."""
+    check_contract_schema(df.schema, contract, COLUMNS)
+    # Before other_program_rows, so a null outranks it; check_contract_rows reruns it, a no-op here.
+    check_contract_values(df, contract)
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r} in this window")
     if (df["program_id"] != program_id).any():
         raise ContractViolation("other_program_rows", "rows of another program in the read")
-    if df["program_name"].n_unique() > 1:
-        raise ContractViolation("program_name_not_unique", "more than one program_name for the program")
-    if df["program_bac"].n_unique() > 1:
-        raise ContractViolation("program_bac_not_unique", "program_bac differs between rows")
-    per_wp = df.group_by("work_package").agg(pl.col("control_account").n_unique().alias("n"))
-    if (per_wp["n"] > 1).any():
-        raise ContractViolation("work_package_in_two_accounts",
-                                "a work_package appears under more than one control_account")
-    if df.select(["work_package", "period"]).is_duplicated().any():
-        raise ContractViolation("duplicate_work_package_period",
-                                "more than one row for a (work_package, period)")
-    if not df["period"].is_in(list(FISCAL_PERIODS)).all():
+    check_contract_rows(df, contract)
+    if not df["period"].is_in(list(fiscal_periods())).all():
         raise ContractViolation("period_outside_calendar",
                                 "a period outside the fiscal calendar")
 
@@ -302,14 +391,15 @@ def state_from_rows(df: Any, program_id: str) -> FinanceState:
 # ── the read ────────────────────────────────────────────────────────────────────────────
 
 def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
-              periods: Optional[list[str]]) -> Any:
+              periods: Optional[list[str]], contract: Any) -> Any:
     """The program's rows (and the window's, if `periods` is given) as a collected frame.
 
     `read` is `main`'s ticketed reader: it returns the caller's LazyFrame (keeping the read's
     receipt for the answer's provenance), or raises
     `HTTPException` for an identity it will not read as (passed through untouched). The filter,
     the column select and the row cap are all applied to the lazy frame, so a row of another
-    program, or a column outside the contract, is never collected. One timing line per read."""
+    program, or a column the `contract` does not declare, is never collected: the select is every
+    contract column the asset carries, as `read_dataset_rows` selects. One timing line per read."""
     import polars as pl
 
     t0 = time.perf_counter()
@@ -325,13 +415,13 @@ def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)  # type only: text may hold a credential
         raise AssetUnavailable("the asset could not be scanned") from None
-    check_schema(schema)
+    selected = check_contract_schema(schema, contract, COLUMNS)
     cap = max_rows()
-    q = lf.filter(pl.col("program_id") == program_id)
+    q = lf.filter(pl.col(contract.scope) == program_id)
     if periods is not None:
         q = q.filter(pl.col("period").is_in(periods))
     try:
-        df = q.select(list(COLUMNS)).head(cap + 1).collect()
+        df = q.select(selected).head(cap + 1).collect()
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
@@ -343,9 +433,21 @@ def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
     return df
 
 
+class CompareRead(NamedTuple):
+    """What `read_dataset_rows` returns for a comparison of two versions."""
+    paths: list[tuple[tuple[str, ...], Decimal]]    # every path in either version: a less b
+    total_a: Decimal                                # the sum over version a's reduced paths
+    total_b: Decimal
+    only_in_a: int                                  # paths version a holds and version b does not
+    only_in_b: int
+
+
 def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, ...],
                       value_columns: tuple[str, ...], value_op: str, per_path: str,
-                      program_id: str, contract: Any) -> list[tuple[tuple[str, ...], Any]]:
+                      program_id: str, contract: Any, *, version: Optional[str] = None,
+                      version_a: Optional[str] = None, version_b: Optional[str] = None,
+                      version_column: Optional[str] = None, versions: tuple[str, ...] = (),
+                      ) -> "list[tuple[tuple[str, ...], Any]] | CompareRead":
     """`read_rows` for a dataset-kind row: the rows of ONE program, held to the row's `contract`.
 
     The schema is checked against the contract before a row is collected (`check_contract_schema`;
@@ -354,16 +456,31 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     every contract column the asset carries is selected, and the row cap is applied before collect,
     so it counts rows read, before any reduction. Every outcome maps as `read_rows` maps it. An
     empty frame raises `NotInModel`, as `state_from_rows` does for a program the asset does not
-    hold. Nulls and non-finite values are checked in the row's columns, then the contract's key and
-    dependencies (`check_contract_rows`); a message names the rule and the column, never a row's
+    hold. The contract's value rules, key and dependencies are checked over every contract column the
+    frame carries (`check_contract_rows`); a message names the rule and the column, never a row's
     value.
 
     RETURNS the `(path below the root, Decimal amount)` list `run_dataset` takes. A row's amount is
     `Decimal(str(x))`, or for `value_op == "minus"` `Decimal(str(a)) - Decimal(str(b))`. Under
     `per_path == "once"` the rows are grouped by the full level tuple, every row of a group must
     carry the same amount (else `varies_within_path`, naming the column(s), never a value), and the
-    amount is taken once per group; under `"sum"` every row stays."""
+    amount is taken once per group; under `"sum"` every row stays.
+
+    VERSIONS (a contract's declared list, `versions`, in `version_column`). The engine refuses a
+    version argument itself: one outside the list, or `version_a == version_b`, is `NotInModel`
+    before any read, naming the argument and the declared versions. Every row's version is held to
+    the list (`null_value`, `version_outside_list`, naming the column, never a value). `version`
+    keeps that version's rows and proceeds as above. `version_a`/`version_b` reduce each version's
+    rows per `(path, version)` by `per_path`, then return a `CompareRead`: for every path in either
+    version, a's amount less b's, a path absent from one version counting as zero there."""
     import polars as pl
+
+    for name, given in (("version", version), ("version_a", version_a), ("version_b", version_b)):
+        if given is not None and given not in versions:
+            raise NotInModel(f"{name} is not one of the declared versions {list(versions)}")
+    if version_a is not None and version_a == version_b:
+        raise NotInModel("version_a and version_b are the same version; a comparison needs two")
+    named_version = (version_column,) if version_column else ()
 
     t0 = time.perf_counter()
     try:
@@ -378,7 +495,7 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
-    selected = check_contract_schema(schema, contract, (*levels, *value_columns))
+    selected = check_contract_schema(schema, contract, (*levels, *value_columns, *named_version))
     cap = max_rows()
     q = lf.filter(pl.col(levels[0]) == program_id)
     try:
@@ -391,31 +508,68 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
              round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
     if df.height > cap:
         raise AssetTooLarge(cap)
-    for c in (*levels, *value_columns):
-        if df[c].null_count():
-            raise ContractViolation("null_value", f"null value(s) in column {c}")
-    for c in value_columns:
-        if df[c].dtype.is_float() and not df[c].is_finite().all():
-            raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
+    # The contract's value rules first, so a null outranks version_outside_list (a null version would
+    # pass `is_in(...).all()`, which skips nulls, and then fall out of the version filter unseen);
+    # check_contract_rows reruns them below, a no-op here.
+    check_contract_values(df, contract)
+    if version_column and not df[version_column].is_in(list(versions)).all():
+        raise ContractViolation(
+            "version_outside_list",
+            f"row(s) carry a version not in the contract's declared list ({version_column})")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
+    # The key and the dependencies are checked across EVERY version, before the filter, on purpose: this
+    # fails closed. The key holds the version column (contract parse), so two versions never collide on
+    # it; a declared dependency holds across versions, and a broken row in a version nobody asked for
+    # still refuses the read.
     check_contract_rows(df, contract)
+    if version is not None:
+        df = df.filter(pl.col(version_column) == version)
+        if df.height == 0:
+            raise NotInModel(f"the asset holds no rows for program {program_id!r} in that version")
     n = len(levels) - 1
-    paths: list[tuple[tuple[str, ...], Any]] = []
-    for r in df.select([*levels[1:], *value_columns]).iter_rows():
-        amount = Decimal(str(r[n]))
-        if value_op == "minus":
-            amount -= Decimal(str(r[n + 1]))
-        paths.append((tuple(str(v) for v in r[:n]), amount))
-    if per_path == "once":
+    compare = version_a is not None
+
+    def reduced(rows: list[tuple[tuple[str, ...], Any]]) -> list[tuple[tuple[str, ...], Any]]:
+        """The rows as one amount per path: summed (every row stays), or under `once` taken once
+        (every row of a path carrying the same amount, else `varies_within_path`)."""
+        if per_path != "once":
+            return rows
         seen: dict[tuple[str, ...], Any] = {}
-        for path, amount in paths:
+        for path, amount in rows:
             if seen.setdefault(path, amount) != amount:
                 raise ContractViolation(
                     "varies_within_path",
                     ", ".join(value_columns) + " vary within one terminal path")
-        paths = list(seen.items())
-    return paths
+        return list(seen.items())
+
+    paths: list[tuple[tuple[str, ...], Any]] = []
+    by_version: dict[str, list[tuple[tuple[str, ...], Any]]] = {}
+    for r in df.select([*levels[1:], *value_columns, *(named_version if compare else ())]).iter_rows():
+        amount = Decimal(str(r[n]))
+        if value_op == "minus":
+            amount -= Decimal(str(r[n + 1]))
+        path = tuple(str(v) for v in r[:n])
+        if compare:
+            by_version.setdefault(r[-1], []).append((path, amount))
+        else:
+            paths.append((path, amount))
+    if not compare:
+        return reduced(paths)
+    sides: list[dict[tuple[str, ...], Decimal]] = []
+    for v in (version_a, version_b):
+        side: dict[tuple[str, ...], Decimal] = {}
+        for path, amount in reduced(by_version.get(v, [])):
+            side[path] = side.get(path, Decimal(0)) + amount
+        sides.append(side)
+    a, b = sides
+    if not (a or b):
+        raise NotInModel(f"the asset holds no rows for program {program_id!r} in either version")
+    zero = Decimal(0)
+    return CompareRead(
+        paths=[(p, a.get(p, zero) - b.get(p, zero)) for p in {**a, **b}],
+        total_a=sum(a.values(), zero), total_b=sum(b.values(), zero),
+        only_in_a=len(a.keys() - b.keys()), only_in_b=len(b.keys() - a.keys()))
 
 
 class SeriesRead(NamedTuple):
@@ -427,21 +581,26 @@ class SeriesRead(NamedTuple):
 
 def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, period: str,
                         status: str, per_period: tuple[str, ...], per_program: tuple[str, ...],
-                        program_id: str, contract: Any) -> SeriesRead:
+                        program_id: str, contract: Any,
+                        calendar: tuple[str, ...] | None = None) -> SeriesRead:
     """`read_rows` for a dataset row drawn as MULTI_SERIES: the rows of ONE program of the ROW'S
     columns, reduced the two ways the row may ask and no other.
 
     The schema is checked against the row's `contract` before a row is collected, as
     `read_dataset_rows` checks it. The filter keeps the rows whose `scope` column is `program_id`;
     every contract column the asset carries is selected, and the row cap applies before collect.
-    Every outcome maps as `read_rows` maps it, and an empty frame raises `NotInModel`. Nulls and
-    non-finite values are checked in the row's columns, then the contract's key and dependencies.
+    Every outcome maps as `read_rows` maps it, and an empty frame raises `NotInModel`. The
+    contract's value rules, key and dependencies are checked over every contract column the frame
+    carries (`check_contract_rows`).
 
     A `per_period` column is summed over the program's rows at each period (exactly, as Decimal).
     A `per_program` column, and the `status` column when the row names one, is declared determined
     by the scope (held at load), so the dependency check leaves it one value across the program's
     rows. A period, or the status, outside the fiscal calendar is `period_outside_calendar`. A
-    message names the rule and the column, never a row's value."""
+    message names the rule and the column, never a row's value.
+
+    `calendar` is the labels of the row's declared calendar, in order, looked up by the caller. None
+    (the row's calendar is no longer declared) is the empty calendar: every period is outside it."""
     import polars as pl
 
     t0 = time.perf_counter()
@@ -472,16 +631,10 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
              round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
     if df.height > cap:
         raise AssetTooLarge(cap)
-    for c in (*text, *numeric):
-        if df[c].null_count():
-            raise ContractViolation("null_value", f"null value(s) in column {c}")
-    for c in numeric:
-        if df[c].dtype.is_float() and not df[c].is_finite().all():
-            raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
     check_contract_rows(df, contract)
-    calendar = list(FISCAL_PERIODS)
+    calendar = list(calendar or ())
     if not df[period].is_in(calendar).all() or (status and df[status][0] not in calendar):
         raise ContractViolation("period_outside_calendar", "a period outside the fiscal calendar")
     sums: dict[str, dict[str, Decimal]] = {}

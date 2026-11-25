@@ -1,7 +1,7 @@
 """Generate the SAMPLE docx CDRL template: policy/overlays/sample/fin_export_profiles/cdrl_a002_cost_performance.docx.
 
 The docx twin of `scripts/generate_cdrl_sample_template.py`: a deliverable's LAYOUT only (a heading,
-one sentence, a 5x2 title table with its labels, a 2x5 table, a header row and one EMPTY body row); every number in a CDRL is
+one sentence, a 6x2 title table with its labels, a 2x5 table, a header row and one EMPTY body row); every number in a CDRL is
 written into it by `agent_fleet/finance_agent/cdrl.py` from a verb's answer.
 
 The bytes are DETERMINISTIC, because the profile row pins them by sha256 (a template whose bytes
@@ -31,7 +31,7 @@ DEFAULT_OUT = (REPO / "policy" / "overlays" / "sample" / "fin_export_profiles"
 
 TITLE = "CDRL A002 - Notional Cost Performance Report (SYNTHETIC)"
 NOTE = "The data item description DI-NOTIONAL-0002 is notional; it names no real data item."
-LABELS = ("Program", "Program id", "As of", "CDRL item", "Data item")   # table 1, column A
+LABELS = ("Program", "Program id", "Data as of", "Generated", "CDRL item", "Data item")   # table 1, column A
 HEADERS = ("Period", "Cum BCWP", "Cum ACWP", "Cum CPI", "TCPI")        # table 2, row 1
 BODY_ROWS = 1                                                           # table 2: one empty body row
 

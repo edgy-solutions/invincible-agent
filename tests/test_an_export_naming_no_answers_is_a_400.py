@@ -66,7 +66,7 @@ def test_control_a_template_with_no_answers_reaches_the_template_path(world, mon
     c, _ = world
     reached: list = []
 
-    async def _template(body, request, current_user, as_of):
+    async def _template(body, request, current_user):
         reached.append(body.template_id)
         return {"ok": True}
 

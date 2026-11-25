@@ -1612,15 +1612,8 @@
             "title": "Summary"
           },
           "task_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Id"
+            "title": "Task Id",
+            "type": "string"
           },
           "title": {
             "anyOf": [
@@ -1966,6 +1959,18 @@
               }
             ],
             "title": "Artifact Id"
+          },
+          "askable_pick": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Askable Pick"
           },
           "bound_slots": {
             "anyOf": [

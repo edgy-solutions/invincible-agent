@@ -174,7 +174,7 @@ def test_3_every_declared_field_is_carried_by_the_rows(fn):
 
 def _build(profiles, out, state=None):
     return cdrl.build_cdrl(
-        state or engine.STATE, profiles[PROFILE], program_id=PROGRAM, as_of="2026-10-28",
+        state or engine.STATE, profiles[PROFILE], program_id=PROGRAM, data_as_of="2026-09-30", generated_on="2026-10-28",
         out_dir=out, run_source=lambda fn, params: engine._cdrl_source(fn, params, caller="alice@example.com"))
 
 
@@ -188,8 +188,9 @@ def test_4_the_title_block(profiles, tmp_path):
     program = next(p for p in engine.STATE.programs if p.program_id == PROGRAM)
     assert ws["B2"].value == program.name
     assert ws["B3"].value == PROGRAM
-    assert ws["B4"].value == "2026-10-28"
-    assert ws["B5"].value == "A001"
+    assert ws["B4"].value == "2026-09-30"
+    assert ws["B5"].value == "2026-10-28"   # generated_on
+    assert ws["B6"].value == "A001"
 
 
 def test_4_one_row_per_period_in_order_each_cell_the_envelopes_value(profiles, tmp_path):
@@ -262,7 +263,7 @@ def test_5_the_hash_is_over_the_cells_written_and_the_manifest_is_not_one_of_the
             for c in row:
                 if c.value is None:
                     continue
-                if ws.title == "EV Summary" and (c.row == 7 or c.column == 1 and c.row <= 5
+                if ws.title == "EV Summary" and (c.row == 7 or c.column == 1 and c.row <= 6
                                                  or c.coordinate == "A1"):
                     continue  # the template's own text, not written by the producer
                 written.append([ws.title, c.coordinate, c.value])
@@ -522,7 +523,8 @@ def test_11_the_provenance_still_travels_in_the_envelope(profiles, declared, tmp
 def test_11_the_false_hash_is_not_a_stale_copy_of_the_true_one(profiles, declared, tmp_path):
     _, off = _build(_plain(declared, tmp_path), tmp_path / "off")
     _, on = _build(profiles, tmp_path / "on")
-    assert (off["program_id"], off["as_of"]) == (on["program_id"], on["as_of"])
+    assert (off["program_id"], off["data_as_of"], off["generated_on"]) == (
+        on["program_id"], on["data_as_of"], on["generated_on"])
     assert off["cells_sha256"] != on["cells_sha256"]   # Methods cells are hashed only when true
 
 

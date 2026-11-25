@@ -161,6 +161,10 @@ class SupervisorQueryConfig(Config):
     #: from the request body: the moment a named ask steers routing it becomes an
     #: authorization surface, and a client that could post a verb could route anywhere.
     pre_resolved: Dict[str, Any] = {}
+    #: THE QUERY IS A LABEL, NOT A QUESTION: a measure the person picked from the askable list.
+    #: The slot filler must not run on it (it would extract "slots" from a name the system
+    #: itself offered). False for every other turn; set only by the gateway for an askable pick.
+    message_is_label: bool = False
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
     # ADR-0008 fallback policy (ADR-0018 simplified: single threshold
@@ -391,6 +395,9 @@ def _resolve_subject(
     entity_refs: List[str] | None = None,
     domains: List[str] | None = None,
     user_email: str = "",
+    *,
+    trace_id: str = "",
+    session_id: str = "",
 ) -> tuple[str, float, str, str, list, str | None, str]:
     """Ask Engine O's /resolve for the subject ontology class.
 
@@ -465,7 +472,7 @@ def _resolve_subject(
             resp = requests.post(
                 f"{ONTOLOGY_SVC_URL}/resolve",
                 json=payload,
-                **_bearer_kwargs(_tok),
+                **_leg_headers(_tok, trace_id, session_id),
             # 15s was too tight under realistic engine-o load: BAML's
             # ClassifyDomainIntent runs ~5-10s, Recipe v2's
             # instance-resolution fan-out adds 3-5s for engine_d's
@@ -712,6 +719,9 @@ def _classify_route(
     entity_refs: List[str] | None = None,
     user_email: str = "",
     pre_resolved: Dict[str, Any] | None = None,
+    *,
+    trace_id: str = "",
+    session_id: str = "",
 ) -> tuple[str, Dict[str, Any] | None, dict]:
     """Three-stage SPO routing per ADR-0018 + ADR-0019: /resolve →
     /find_compatible_verbs → /classify_predicate.
@@ -927,6 +937,8 @@ def _classify_route(
         entity_refs=entity_refs,
         domains=list(entitled_domains) if entitled_domains else None,
         user_email=user_email,
+        trace_id=trace_id,
+        session_id=session_id,
     )
 
     # ADR-0019 Contract B — UNKNOWN-subject short-circuit. No
@@ -1223,9 +1235,14 @@ def _classify_route(
                 # so an unthreaded identity here is a 400 from engine-o, not a quiet
                 # attribution loss. Threaded the same way /resolve already receives it.
                 "user_email": user_email,
+                # The Dagster run id: what joins Engine O's routing_decision audit row to
+                # this run's own log and Langfuse trace. None (not "") when there is none,
+                # so Engine O mints its own id rather than recording an empty one.
+                "request_id": str(getattr(context, "run_id", "") or "") or None,
+                "audit_source": "user_request",
             },
             timeout=CLASSIFY_PREDICATE_TIMEOUT_S,  # LLM call inside; see the constant.
-            **_bearer_kwargs(_tok),
+            **_leg_headers(_tok, trace_id, session_id),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -1862,6 +1879,29 @@ def _bearer_kwargs(token: str) -> Dict[str, Any]:
     return {"headers": {"Authorization": f"Bearer {token}"}} if token else {}
 
 
+def _trace_join_headers(trace_id: str = "", session_id: str = "") -> Dict[str, str]:
+    """The trace and session names ONLY, for a leg that must join the run's trace.
+
+    NEVER A CREDENTIAL. `_telemetry_headers` mints a service token when no caller token is
+    given; the subject, verb and slots legs send a bearer only for a person's run, and acting
+    as the service when no person is behind the run is what the 2026-11-19 delegation ruling
+    forbids. So these legs take the NAMES from here and the Authorization from `_bearer_kwargs`.
+    """
+    h: Dict[str, str] = {}
+    if trace_id:
+        h["X-Trace-Id"] = trace_id
+    if session_id:
+        h["X-Session-Id"] = session_id
+    return h
+
+
+def _leg_headers(token: str, trace_id: str = "", session_id: str = "") -> Dict[str, Any]:
+    """``headers=`` for the subject / verb / slots legs: the bearer exactly as `_bearer_kwargs`
+    sends it, plus the trace names when known; no ``headers`` at all when both are empty."""
+    h = {**_bearer_kwargs(token).get("headers", {}), **_trace_join_headers(trace_id, session_id)}
+    return {"headers": h} if h else {}
+
+
 def _call_engine_a_fallback(
     context,
     sub_query: str,
@@ -2405,6 +2445,8 @@ def _fill_slots_from_query(
     acting_domains: "List[str] | None" = None,
     subject_uri: str = "",
     user_email: str = "",
+    trace_id: str = "",
+    session_id: str = "",
 ) -> "_FillResult":
     """Ask Engine O which parameters the speaker named, for the verb already routed.
 
@@ -2459,7 +2501,7 @@ def _fill_slots_from_query(
                 "user_email": user_email,
             },
             timeout=_fill_slots_budget(declarations),
-            **_bearer_kwargs(_tok),
+            **_leg_headers(_tok, trace_id, session_id),
         )
         if resp.status_code == 422:
             # A REFUSED PERSON IS NAMED, THEN DEGRADED. engine-o refuses `/fill_slots` with 422
@@ -2826,6 +2868,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         entity_refs=list(config.entity_refs) if config.entity_refs else None,
         user_email=config.user_email,
         pre_resolved=dict(config.pre_resolved or {}),
+        trace_id=getattr(config, "trace_id", "") or "",
+        session_id=getattr(config, "session_id", "") or "",
     )
 
     # ------------------------------------------------------------------
@@ -3169,7 +3213,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             resolution = {**resolution, **bound_resolution}
 
     _fill_slots_outcome = ""
-    if not spoken and declared:
+    if getattr(config, "message_is_label", False):
+        # THE QUERY IS A LABEL (a measure picked from the askable list): never slot-filled.
+        # An unbound mandatory parameter becomes the ask at the disposition point below.
+        pass
+    elif not spoken and declared:
         filled = _fill_slots_from_query(
             context,
             query=sub_query,
@@ -3181,6 +3229,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # nothing (subject_uri == "UNKNOWN" reads as absent to engine-o's gate too).
             subject_uri=str(telemetry.get("subject_uri") or ""),
             user_email=config.user_email,
+            trace_id=getattr(config, "trace_id", "") or "",
+            session_id=getattr(config, "session_id", "") or "",
         )
         spoken, resolution = filled.slots, filled.resolution
         _fill_slots_outcome = filled.fill_slots

@@ -128,7 +128,7 @@ def test_each_invalid_field_is_refused_naming_the_file(case, tmp_path):
 def test_a_function_with_other_keywords_is_refused(tmp_path):
     """The signature must be exactly keyword-only root, paths, other_threshold."""
     mod = tmp_path / "wrong_flow_mod.py"
-    mod.write_text('VERSION = "1.3.0"\nOTHER_LABEL = "x"\n\ndef flow_edges(*, root, paths):\n    return []\n',
+    mod.write_text('VERSION = "1.4.0"\nOTHER_LABEL = "x"\n\ndef flow_edges(*, root, paths):\n    return []\n',
                    encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
@@ -183,7 +183,7 @@ def test_a_row_declaring_other_label_is_refused(tmp_path):
     ids=["absent", "empty", "not-a-str", "none"])
 def test_a_module_without_a_usable_other_label_is_refused(body, tmp_path):
     mod = tmp_path / "no_label_flow_mod.py"
-    mod.write_text('VERSION = "1.3.0"\n' + body + "\ndef flow_edges(*, root, paths, other_threshold):\n"
+    mod.write_text('VERSION = "1.4.0"\n' + body + "\ndef flow_edges(*, root, paths, other_threshold):\n"
                    "    return []\n", encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
@@ -201,3 +201,24 @@ def test_a_minus_value_and_a_per_path_of_once_or_sum_are_accepted(tmp_path):
     for word in ("once", "sum"):
         (row,) = load(mutated(set_("inputs.dataset.per_path", word)), tmp_path)
         assert row.per_path == word and row.value_op == "column"
+
+
+def test_a_column_the_row_reads_must_be_declared_nullable_false(tmp_path, monkeypatch):
+    """A null in a column a row reads is refused only when the contract declares it non-nullable
+    (ruled 2026-11-16), and the engine computes on every named column, so the declaration is held
+    at load."""
+    doc = yaml.safe_load((REPO / "contracts" / "ev_fixture.yaml").read_text(encoding="utf-8"))
+    (acwp,) = [c for c in doc["columns"] if c["name"] == "acwp"]
+    assert acwp["nullable"] is False
+    del acwp["nullable"]
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    (loose / "ev_fixture.yaml").write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("DATASET_CONTRACT_DIR", str(loose))
+    with pytest.raises(measure_verbs.MeasureVerbError) as e:
+        load(RAW, tmp_path)
+    assert "acwp" in str(e.value) and "nullable: false" in str(e.value), str(e.value)
+    # the control: the same row under the unmodified contract loads
+    monkeypatch.setenv("DATASET_CONTRACT_DIR", str(REPO / "contracts"))
+    (row,) = load(RAW, tmp_path)
+    assert row

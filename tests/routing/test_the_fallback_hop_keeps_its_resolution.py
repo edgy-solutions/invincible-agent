@@ -201,6 +201,7 @@ def _resolve_payloads(entitled):
 
     ns = {
         "requests": _Requests,
+        "_PERSON_TOKEN_REFUSALS": ("session_expired", "caller_refused"),
         "ONTOLOGY_RESOLVE_URL": "http://engine-o:8084/resolve",
         "ONTOLOGY_TIMEOUT": 30,
         "outbound_auth_headers": lambda **k: {},
