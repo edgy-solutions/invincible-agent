@@ -372,12 +372,16 @@ def test_the_input_declared_pool_searches_and_serves_the_bound_grant(monkeypatch
 
     monkeypatch.setattr(eo, "predicate_hybrid_search", _search)
     monkeypatch.setattr(eo, "_served_class_uris", _served)
-    request = eo.ResolveRequest(query="q", user_email="bound@example.com", domains=["BOUND"])
-    assert request.domain == "MAINTENANCE", "the legacy default is a grant nobody granted"
+    # The legacy single `domain` no longer defaults to a literal; a body that still sends one is
+    # a grant nobody granted, and it must reach neither the search nor the served-class read.
+    request = eo.ResolveRequest(query="q", user_email="bound@example.com", domains=["BOUND"],
+                                domain="LEGACY_DOM")
+    assert eo.ResolveRequest(query="q").domain is None
     asyncio.run(eo._input_declared_pool(request, ["BOUND"]))
     assert got["kwargs"]["entitled_domains"] == ["BOUND"]
     assert got["kwargs"]["user_email"] == "bound@example.com"
     assert "MAINTENANCE" not in json.dumps(got, default=str)
+    assert "LEGACY_DOM" not in json.dumps(got, default=str)
     assert got["served"] == ["BOUND"]
 
 
