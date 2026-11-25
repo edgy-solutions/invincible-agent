@@ -198,6 +198,9 @@ def test_a_period_of_another_calendar_is_outside_program_b():
 def configured(monkeypatch):
     monkeypatch.setenv("FIN_DATASET_URN", ROW_URN)
     monkeypatch.setenv("FIN_DATASET_BANNER", "SYNTHETIC TEST ASSET")
+    # The URN read is held to the contract FIN_DATASET_CONTRACT names; boot refuses without it.
+    monkeypatch.setenv("FIN_DATASET_CONTRACT", "ev_fixture")
+    monkeypatch.setenv("DATASET_CONTRACT_DIR", str(CONTRACT.parent))
     monkeypatch.setenv("CENTRAL_GATEWAY_URL", "http://gateway.test")
     monkeypatch.setattr(asset_inputs, "_load_client", lambda: None)
 
