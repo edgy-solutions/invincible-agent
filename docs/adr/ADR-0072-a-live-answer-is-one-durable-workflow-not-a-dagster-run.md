@@ -78,8 +78,11 @@ Ingestion, ontology loads, assets, batch, `start_review_job` and the BPMN jobs s
 
 ### 4. The BFF chooses the path per request
 - **The flag** is `IAGENT_ANSWER_PATH`, `dagster` (the default) or `durable`. It is read per
-  request, so a values change switches it with no image change. Any other value logs a warning
-  and answers on `dagster`.
+  request, so a values change switches it with no image change. Unset means `dagster`.
+  **Amended 2026-11-24 (architect):** any other value refuses the BFF's start, and the chart
+  refuses it too. The chart key is `cortexBff.answerPath`, and `durable` renders only with
+  `supervisorService.enabled`. A mistyped flag would otherwise measure the Dagster path and
+  look like a result.
 - **On `durable`,** the BFF sends `run/send` and reads one `snapshot` every 0.25 s, with the same
   15-minute ceiling. Today it makes two GraphQL reads a second.
 

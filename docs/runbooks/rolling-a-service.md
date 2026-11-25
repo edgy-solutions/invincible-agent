@@ -100,6 +100,32 @@ one will not.
 `TASK_KIND_OVERLAY_DIRS` in the pod, then the gate's own answer read from INSIDE the serving pod
 rather than from the local tree — which had been wrong about the cluster twice that day.*
 
+## Answers in flight
+
+**Open (the architect, 2026-11-24):** a rule for rolling while answers are in flight is owed
+before the durable answer path becomes the default (ADR-0072 §5). Until it is written, this
+section records what a roll does to an answer in flight. The rule, when it comes, must cover
+each item below.
+
+- **cortex-bff: the identity vault does not survive a restart** (the architect, 2026-11-24:
+  "the vault's records don't survive a BFF restart. That goes into the rule for rolling with
+  answers in flight").
+  - The vault is in-process memory, never persisted, by design (`src/iagent/identity_vault.py`,
+    `IdentityVault`).
+  - A restart drops every held token. A Dagster-path answer in flight then fails at its next
+    engine call: the redemption gets `not_found`, which fails the step
+    (`src/iagent/defs/dynamic_supervisor.py`, `_redeem_caller_token`).
+  - The person has to ask again. The vault's own note says this applies to phrase-path runs;
+    button-path runs are unaffected.
+- **The code location: a rolled worker leaves its runs started.** Each such run keeps one of
+  Dagster's two run slots until someone ends it. List the started runs before the roll.
+- **The supervisor service (durable path): a new journaled step ahead of an await breaks every
+  suspended answer on wake** (ruled 2026-11-19). The chart sets no answer path by default, so no
+  durable answer is in flight during a roll today.
+
+**Until the rule is written,** check that no Dagster run is in the started state before rolling
+cortex-bff or the code location. Chris set that precondition for the perf rolls of 2026-11-24.
+
 ## Why, three failures deep
 
 Each of these happened this week, to people being careful.

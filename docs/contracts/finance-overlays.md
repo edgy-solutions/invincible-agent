@@ -139,7 +139,8 @@ differences under `inputs` and `render`:
   values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
   declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is
   a 502 `asset_contract_violation` with rule `version_outside_list`, naming the column and never a
-  value; a null version is `null_value`. Over such a contract, a row whose value is a column or
+  value; a null version is `null_value`, so the version column is declared `nullable: false` (a
+  contract that leaves it nullable refuses every row over it at load). Over such a contract, a row whose value is a column or
   `minus` lists `version` in `inputs.params` (else it would sum every version together, and the row
   is refused at load), and a compare row lists `version_a` and `version_b`. A row over a contract
   with no version lists none of them, and a `MULTI_SERIES` dataset row cannot read a versioned
@@ -148,14 +149,17 @@ differences under `inputs` and `render`:
 - `contract` names the dataset contract the asset is read under: `contracts/<contract>.yaml`
   (`contracts/ev_fixture.yaml` is the worked example; the engine reads that directory, or
   `DATASET_CONTRACT_DIR`). At load, every column the row names must be one the contract declares,
-  a level a string column and a value column a numeric one, and the root level must be the
-  contract's `scope`; anything else is refused naming the file. On every read the WHOLE contract is
-  enforced, not only the columns the row names, each as a 502 `asset_contract_violation` whose
-  message names the column(s) and never a value: a required column, or one the row names, absent is
-  `missing_column`; a column not of its declared type is `wrong_type`; two rows for one value of the
-  contract's `grain` is `duplicate_key`; and a `dependencies` entry (`by` determines each of
-  `determines`) broken by one `by` value carrying two values of such a column is
-  `not_determined_by`, naming both columns.
+  and declares `nullable: false`; a level must be a string column and a value column a numeric one;
+  and the root level must be the contract's `scope`. Anything else is refused naming the file. On
+  every read the WHOLE contract is enforced, not only the columns the row names, each as a 502
+  `asset_contract_violation` whose message names the column(s) and never a value:
+  - a required column, or one the row names, absent is `missing_column`;
+  - a column not of its declared type is `wrong_type`;
+  - a null in a column declared `nullable: false` is `null_value`;
+  - a NaN or infinity in a column declared `numeric` or `float` is `non_finite`;
+  - two rows for one value of the contract's `grain` is `duplicate_key`;
+  - a `dependencies` entry (`by` determines each of `determines`) broken by one `by` value
+    carrying two values of such a column is `not_determined_by`, naming both columns.
 - `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
@@ -680,13 +684,22 @@ Design: `docs/plans/fin-inputs-resolver.md`. Nothing here has run on a cluster.
 | --- | --- |
 | `FIN_DATASET_URN` | the asset, `urn:li:dataset:...`. Unset: the notional model answers, as before. |
 | `FIN_DATASET_BANNER` | required with the URN. It is shown beside every answer, so a synthetic asset cannot read as real. |
+| `FIN_DATASET_CONTRACT` | required with the URN: the id of the contract, in the contract directory, the read is held to. |
 | `CENTRAL_GATEWAY_URL` | required with the URN: the gateway that issues the read ticket. |
 | `FIN_ASSET_MAX_ROWS` | optional, default 100000. |
 
 With the URN set, the engine refuses to start if the banner or gateway is missing, the URN is not
-of the `urn:li:dataset:` form, or the mesh client cannot be imported.
+of the `urn:li:dataset:` form, the mesh client cannot be imported, the contract is unset or cannot
+be loaded, or it does not declare engine-fin's roles (the nine columns below, each required and of
+its type and declared `nullable: false`, the scope, the grain and the dependencies).
 
-**Columns.** Fixed names, file-backed assets only, one row per work package and period:
+**Columns.** File-backed assets only. These are the roles the named contract must declare, as
+required columns of these types, each declared `nullable: false`. It must be scoped by
+`program_id`, hold one row per (`work_package`, `period`) at most, and declare `program_name` and
+`program_bac` determined by `program_id` and `control_account` determined by `work_package`. The
+read selects every column the contract declares that the asset carries. It refuses with the shared
+reader's ids: a broken key or dependency as `duplicate_key` and `not_determined_by`, and a null or
+a NaN or infinity as `null_value` and `non_finite`:
 
 | column | type | rule |
 | --- | --- | --- |
@@ -774,6 +787,9 @@ the resolver scores an exact match 1.0 across every class and the router abstain
 
 A declared `Program` is visible only to the callers its `program_id` lists in
 `policy/program_members.yaml` (`grant_to`). A program with no row there is listed to no one.
+A declared row of any other class (a `ControlAccount`, say) loads, but no row can yet name the program
+it belongs to, so there is no program to check: it is listed and resolved to no one, not even a caller
+who may view every program.
 
 ## 8. The fiscal calendar: declared by the deployment
 
