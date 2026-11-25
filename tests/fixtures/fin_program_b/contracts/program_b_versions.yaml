@@ -13,12 +13,12 @@ version_dimension:
   column: version
   values: [PMB, EAC-CTR, EAC-GOV]
 columns:
-  - {name: program_id, type: string, required: true}
-  - {name: wbs_2, type: string, required: true}
-  - {name: wbs_3, type: string, required: true}
-  - {name: wbs_4, type: string, required: true}
-  - {name: wbs_5, type: string, required: true}
-  - {name: control_account, type: string, required: true}
-  - {name: period, type: string, required: true}
-  - {name: version, type: string, required: true}
-  - {name: amount, type: numeric, required: true}
+  - {name: program_id, type: string, required: true, nullable: false}
+  - {name: wbs_2, type: string, required: true, nullable: false}
+  - {name: wbs_3, type: string, required: true, nullable: false}
+  - {name: wbs_4, type: string, required: true, nullable: false}
+  - {name: wbs_5, type: string, required: true, nullable: false}
+  - {name: control_account, type: string, required: true, nullable: false}
+  - {name: period, type: string, required: true, nullable: false}
+  - {name: version, type: string, required: true, nullable: false}
+  - {name: amount, type: numeric, required: true, nullable: false}
