@@ -257,6 +257,8 @@ def askable() -> AskableMeasures:
     declared: list = []
     if os.getenv(_MEASURE_OVERLAY_ENV, ""):
         try:
+            from agent_fleet.finance_agent.measure_verbs import declared_subject
+            _subject = declared_subject()
             rows = _measure_rows()
             declared = [{"verb": _measure_verb(r), "name": r.name,
                          "description": r.description,
@@ -264,7 +266,9 @@ def askable() -> AskableMeasures:
                          "shape": r.archetype,
                          "unit": r.render.get("unit") if isinstance(r.render, dict) else None,
                          "example_ask": r.example_ask or None,
-                         "group_label": r.group_label or None}
+                         "group_label": r.group_label or None,
+                         # The engine's registration, kept off the served entry (see the route).
+                         "subject": _subject}
                         for r in rows]
             read = True
         except Exception as exc:
@@ -275,7 +279,8 @@ def askable() -> AskableMeasures:
         builtin = [{"verb": e["verb"], "name": e["name"], "description": e["description"],
                     "phrasings": list(e["phrasings"]), "cells": list(e["cells"]),
                     "shape": None, "unit": e.get("unit"),
-                    "example_ask": e.get("example_ask"), "group_label": e.get("group_label")}
+                    "example_ask": e.get("example_ask"), "group_label": e.get("group_label"),
+                    "subject": e.get("subject")}
                    for e in _builtin_measures()]
         read = True
     except Exception as exc:
