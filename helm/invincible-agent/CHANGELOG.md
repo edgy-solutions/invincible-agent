@@ -56,6 +56,8 @@
 
 - **engine-fin: `FIN_DATASET_CONTRACT` is now required whenever `FIN_DATASET_URN` is set** (fin; #426, carrying #409). The finance read of that dataset is held to the contract the key names. The shared contract reader refuses `null_value` (a column declared `nullable: false`) and `non_finite` (a `numeric` or `float` column) for every contract, and engine-fin's own two checks retire into them. A contract's `version_dimension` column is held the same way: a row over a contract that leaves it nullable is refused at load. `values-sandbox.yaml` sets `FIN_DATASET_CONTRACT: "ev_fixture"`. **Before the roll:** engine-fin refuses to start (lifespan `RuntimeError`, "FIN_DATASET_URN is set but the deployment cannot honour it: FIN_DATASET_CONTRACT is required …") on any deployment that sets `FIN_DATASET_URN` without `FIN_DATASET_CONTRACT`; set the contract key in the same values change.
 
+- **A flow row may declare `inputs.dataset.depth`** (fin; step 3). An integer from 1 to the number of levels below the root cuts each path to its first k levels after `per_path` is applied, so totals are unchanged; the verdict states `over k of n levels`. Absent, the flow is drawn at full depth as before. A compare row may not declare `depth` (refused at load): its only-in-A and only-in-B counts are taken over the full paths, so a cut table would disagree with its own verdict. **No chart change.**
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
