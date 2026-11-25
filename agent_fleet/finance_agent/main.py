@@ -2365,17 +2365,35 @@ def _empty_reason(*, identifier: Optional[str], class_uri: Optional[str], seen: 
     return "withheld_mixed" if withheld else "no_match"
 
 
+# The architect's ruling, 2026-11-25: a name that is not finance's, or a member not visible to
+# this person, is the NORMAL case (INFO); WARNING is for faults: no identity on a call that needs
+# one, and the directory unset or unreachable. `service_caller` is "no person identity on a call
+# that needs one": the body names a service and no person.
+_EMPTY_FAULTS = frozenset({"no_identity", "service_caller", "directory_unconfigured",
+                           "directory_unreachable"})
+
+
 def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str], seen: int,
-               withheld: "collections.Counter", user_email: str) -> None:
-    """One WARNING line saying why an answer came back empty (an empty answer says why, in the
+               withheld: "collections.Counter", user_email: str,
+               reason: Optional[str] = None) -> None:
+    """One line saying why an answer came back empty (an empty answer says why, in the
     log; the architect, 2026-11-24).
 
     The engine's empty answer looks the same for every cause, and a verified person whose body
     `user_email` arrives empty is told the same thing as a person with no grant. The line names
     the cause and the bearer next to the body. It carries no identifier, query text, email,
     authz id, program id, instance id or dataset URN.
+
+    The level follows the reason: WARNING when the reason is in `_EMPTY_FAULTS` (for
+    `withheld_mixed`, when any withheld code is), INFO otherwise. `reason`, when given (a
+    directory outage), is used instead of the derived one.
     """
-    reason = _empty_reason(identifier=identifier, class_uri=class_uri, seen=seen, withheld=withheld)
+    if reason is None:
+        reason = _empty_reason(identifier=identifier, class_uri=class_uri, seen=seen,
+                               withheld=withheld)
+    fault = reason in _EMPTY_FAULTS or (
+        reason == "withheld_mixed" and any(k in _EMPTY_FAULTS for k in withheld))
+    level = logging.WARNING if fault else logging.INFO
     caller = _current_caller()
     bearer_id = ((getattr(caller, "authz_id", None) or "") if caller is not None else "").strip()
     if not bearer_id:
@@ -2394,7 +2412,8 @@ def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str
     declared = sum(1 for r in INSTANCES if r.class_uri in classes)
     tally = ",".join(f"{k}:{withheld[k]}" for k in sorted(withheld)) or "-"
     count_name = "matched" if event == "fin.resolve_empty" else "members"
-    log.warning(
+    log.log(
+        level,
         "%s reason=%s class=%s %s=%d withheld=%s bearer=%s verified=%s body_caller=%s "
         "dataset_urn_set=%s declared_instances=%d",
         event, reason, _local_name(class_uri), count_name, seen, tally, bearer, verified,
@@ -2412,6 +2431,9 @@ def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
     try:
         cands = _visible_to(req.user_email, cands, withheld)
     except httpx.HTTPError as e:
+        _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
+                   seen=seen, withheld=withheld, user_email=req.user_email,
+                   reason="directory_unreachable")
         raise HTTPException(503, f"program membership check failed: {e}") from e
     if not cands:
         _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
@@ -2467,11 +2489,15 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
             "members": [],
             "provider": "engine_fin_finance",
         }
+    held: list[dict[str, Any]] = []
+    withheld: collections.Counter = collections.Counter()
     try:
         held = _members_of(req.class_uri)
-        withheld: collections.Counter = collections.Counter()
         members = _visible_to(req.user_email, held, withheld)
     except httpx.HTTPError as e:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
+                   seen=len(held), withheld=withheld, user_email=req.user_email,
+                   reason="directory_unreachable")
         raise HTTPException(503, f"program membership check failed: {e}") from e
     if not members:
         _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,

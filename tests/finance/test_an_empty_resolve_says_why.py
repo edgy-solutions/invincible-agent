@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import sys
+
+import httpx
 from pathlib import Path
 
 import pytest
@@ -67,7 +69,7 @@ def bearer(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _level(caplog):
-    caplog.set_level(logging.WARNING, logger=engine.log.name)
+    caplog.set_level(logging.INFO, logger=engine.log.name)
 
 
 def _records(caplog):
@@ -246,3 +248,95 @@ def test_too_many_logs_nothing(double, client, bearer, caplog):
     r = client.post("/enumerate_instances", json={"class_uri": CA, "limit": 1, "user_email": ALICE})
     assert r.json()["outcome"] == "too_many"
     assert _records(caplog) == []
+
+
+def _levelno(caplog):
+    recs = _records(caplog)
+    assert len(recs) == 1, [r.getMessage() for r in recs]
+    return recs[0].levelno
+
+
+def test_the_level_names_a_fault_not_the_normal_case(double, client, bearer, caplog, monkeypatch):
+    # The normal case: INFO.
+    _resolve(client, "qzxv wkjh", user_email=ALICE)  # no_match
+    assert _fields(_records(caplog)[0])["reason"] == "no_match"
+    assert _levelno(caplog) == logging.INFO
+    caplog.clear()
+    _resolve(client, IDENT, class_uri="http://example.com/other#Widget", user_email=ALICE)
+    assert _fields(_records(caplog)[0])["reason"] == "class_not_held"
+    assert _levelno(caplog) == logging.INFO
+    caplog.clear()
+    monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://directory.example.invalid")
+    _resolve(client, IDENT, user_email=BOB)
+    assert _fields(_records(caplog)[0])["reason"] == "not_a_member"
+    assert _levelno(caplog) == logging.INFO
+    caplog.clear()
+    _resolve(client, "  ", user_email=ALICE)
+    assert _fields(_records(caplog)[0])["reason"] == "empty_identifier"
+    assert _levelno(caplog) == logging.INFO
+    caplog.clear()
+    with monkeypatch.context() as m:
+        m.setattr(engine, "_program_of", lambda c, i: None)
+        _resolve(client, IDENT, user_email=ALICE)
+    assert _fields(_records(caplog)[0])["reason"] == "program_undecidable"
+    assert _levelno(caplog) == logging.INFO
+    caplog.clear()
+    # A fault: WARNING.
+    _resolve(client, IDENT, user_email="")
+    assert _fields(_records(caplog)[0])["reason"] == "no_identity"
+    assert _levelno(caplog) == logging.WARNING
+    caplog.clear()
+    _resolve(client, IDENT, user_email="svc:supervisor")
+    assert _fields(_records(caplog)[0])["reason"] == "service_caller"
+    assert _levelno(caplog) == logging.WARNING
+    caplog.clear()
+    monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
+    monkeypatch.undo()  # the real `can_view_program`, answering False for want of a directory
+    monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
+    _resolve(client, IDENT, user_email=ALICE)
+    assert _fields(_records(caplog)[0])["reason"] == "directory_unconfigured"
+    assert _levelno(caplog) == logging.WARNING
+
+
+def test_a_mixed_tally_with_a_fault_is_a_warning(double, client, bearer, caplog, monkeypatch):
+    real = engine._program_of
+    monkeypatch.setattr(engine, "_program_of", lambda c, i: None if i == "1.1" else real(c, i))
+    monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://directory.example.invalid")
+    # program_undecidable + not_a_member: both the normal case, so INFO.
+    assert _enum(client, CA, user_email=BOB)["members"] == []
+    f = _one(caplog)
+    assert f["reason"] == "withheld_mixed" and "program_undecidable:1" in f["withheld"]
+    assert _levelno(caplog) == logging.INFO
+    caplog.clear()
+    # program_undecidable + no_identity: one part of the tally is a fault, so WARNING.
+    assert _enum(client, CA, user_email="")["members"] == []
+    f = _one(caplog)
+    assert f["reason"] == "withheld_mixed"
+    assert "program_undecidable:1" in f["withheld"] and "no_identity:" in f["withheld"]
+    assert _levelno(caplog) == logging.WARNING
+
+
+def test_a_directory_outage_is_logged_and_still_a_503(client, bearer, caplog, monkeypatch):
+    def down(program, caller_id, **kw):
+        raise httpx.ConnectError("synthetic")
+
+    monkeypatch.setattr(engine, "can_view_program", down)
+    monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://directory.example.invalid")
+    seen = []
+    r = client.post("/resolve_instance", json={"identifier": IDENT, "user_email": ALICE})
+    assert r.status_code == 503 and "program membership check failed" in r.text
+    f = _one(caplog)
+    assert f["event"] == "fin.resolve_empty" and f["reason"] == "directory_unreachable"
+    assert _levelno(caplog) == logging.WARNING
+    seen.append(_records(caplog)[0].getMessage())
+    caplog.clear()
+    r = client.post("/enumerate_instances", json={"class_uri": CA, "limit": 100, "user_email": ALICE})
+    assert r.status_code == 503 and "program membership check failed" in r.text
+    f = _one(caplog)
+    assert f["event"] == "fin.enumerate_empty" and f["reason"] == "directory_unreachable"
+    assert _levelno(caplog) == logging.WARNING
+    seen.append(_records(caplog)[0].getMessage())
+    ids = [m["instance_id"] for m in engine._members_of(CA)] + [m["instance_id"] for m in engine._members_of(PROG)]
+    for msg in seen:
+        for banned in (IDENT, ALICE, BOB, PROGRAM, *ids):
+            assert banned not in msg, (banned, msg)

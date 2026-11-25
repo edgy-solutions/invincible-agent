@@ -743,29 +743,30 @@ who may view every program.
 
 ### 7a. When resolve or a listing comes back empty
 
-The engine's empty answer looks the same for every cause, so each empty answer writes one WARNING line
-saying why. `/resolve_instance` writes `fin.resolve_empty` when `candidates` is empty. `/enumerate_instances`
+The engine's empty answer looks the same for every cause, so each empty answer writes one line
+saying why, at INFO for the normal case and WARNING for a fault (the architect, 2026-11-25). `/resolve_instance` writes `fin.resolve_empty` when `candidates` is empty. `/enumerate_instances`
 writes `fin.enumerate_empty` when the outcome is `unsupported`, or `members` with none. A non-empty answer,
-`too_many` and a 503 write nothing.
+`too_many` write nothing. A directory outage writes the line too (`directory_unreachable`), then answers its 503 as before.
 
 ```
 fin.resolve_empty reason=<code> class=<name|-> matched=<n> withheld=<code:n,...|-> bearer=<none|user|svc> verified=<true|false|-> body_caller=<empty|matches_bearer|differs_from_bearer|no_bearer> dataset_urn_set=<true|false> declared_instances=<n>
 fin.enumerate_empty reason=<code> class=<name> members=<n> withheld=... bearer=... verified=... body_caller=... dataset_urn_set=... declared_instances=<n>
 ```
 
-| reason | when |
-|---|---|
-| `empty_identifier` | resolve: the identifier is empty |
-| `bare_number_unscoped` | resolve: the identifier is all digits and no class was given |
-| `class_not_held` | a class was given that the engine does not resolve (a listing answers `unsupported`) |
-| `class_has_no_members` | a held class has no members |
-| `no_match` | resolve: nothing scored at or above the floor |
-| `no_identity` | every match was withheld: the body `user_email` is empty |
-| `service_caller` | every match was withheld: the caller is `svc:...` |
-| `directory_unconfigured` | every match was withheld: `TOPAZ_DIRECTORY_URL` is unset |
-| `not_a_member` | every match was withheld: the directory says the caller may not view the program |
-| `program_undecidable` | every match was withheld: its program cannot be decided |
-| `withheld_mixed` | withheld for more than one reason; `withheld` says which |
+| reason | level | when |
+|---|---|---|
+| `empty_identifier` | INFO | resolve: the identifier is empty |
+| `bare_number_unscoped` | INFO | resolve: the identifier is all digits and no class was given |
+| `class_not_held` | INFO | a class was given that the engine does not resolve (a listing answers `unsupported`) |
+| `class_has_no_members` | INFO | a held class has no members |
+| `no_match` | INFO | resolve: nothing scored at or above the floor |
+| `no_identity` | WARNING | every match was withheld: the body `user_email` is empty |
+| `service_caller` | WARNING | every match was withheld: the caller is `svc:...` |
+| `directory_unconfigured` | WARNING | every match was withheld: `TOPAZ_DIRECTORY_URL` is unset |
+| `not_a_member` | INFO | every match was withheld: the directory says the caller may not view the program |
+| `program_undecidable` | INFO | every match was withheld: its program cannot be decided |
+| `withheld_mixed` | WARNING if any withheld code is a fault, else INFO | withheld for more than one reason; `withheld` says which |
+| `directory_unreachable` | WARNING | the directory could not be asked; the caller gets a 503, and the line is written |
 
 The fields: `class` is the class's local name (`-` when none was given), with any character outside letters, digits, `_`, `.` and `-` written as `?`, since the URI is the caller's text. `matched` (resolve) and `members`
 (listing) count before the visibility filter. `withheld` is the per-reason tally of members withheld, sorted
