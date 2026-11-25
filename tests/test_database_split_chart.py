@@ -122,3 +122,57 @@ def test_electrics_role_connects_to_the_projections_database_only():
     role = next(d for d in docs if d.get("kind") == "Job" and d["metadata"]["name"] == "r-electric-role")
     grants = re.findall(r'GRANT CONNECT ON DATABASE "([^"]+)"', _script(role))
     assert grants == [_PROJECTIONS]
+
+
+_EVERY = ["-f", str(_REPO / "scripts" / "values-every-workload.yaml")]
+
+
+def _every(split: bool) -> list[dict]:
+    # The census that sees EVERY workload: the image seal's file switches on the optional ones (supervisor among them),
+    # which a bare render leaves out. Pinned both ways, so a workload that names its own database fails here.
+    return _render("--set", f"databaseSplit.enabled={'true' if split else 'false'}", *_EVERY)
+
+
+def _dagster_env_owners(docs) -> dict[str, str]:
+    out = {}
+    for d in docs:
+        for c in _containers(d):
+            for e in c.get("env") or []:
+                if e["name"] == "DAGSTER_POSTGRES_DB":
+                    out[d["metadata"]["name"]] = e.get("value")
+    return out
+
+
+def test_with_every_workload_on_the_split_moves_every_dagster_consumer():
+    docs = _every(True)
+    owners = _dagster_env_owners(docs)
+    assert "r-supervisor" in owners, "control: the census reaches the supervisor"
+    assert len(owners) >= 5
+    assert set(owners.values()) == {_SPLIT["dagster"]}, owners
+    assert _checkpoint_db(docs) == _SPLIT["checkpoints"]
+
+
+def test_with_every_workload_on_and_the_split_off_every_consumer_names_the_shared_database():
+    docs = _every(False)
+    owners = _dagster_env_owners(docs)
+    assert "r-supervisor" in owners, "control: the census reaches the supervisor"
+    assert set(owners.values()) == {_PROJECTIONS}, owners
+    assert _checkpoint_db(docs) == _PROJECTIONS
+    assert _job(docs) == []
+
+
+@pytest.mark.parametrize("bad", ["Bad-Name", "x;drop", "1abc", "a b"])
+def test_a_split_database_name_that_is_not_a_plain_identifier_fails_the_render(bad):
+    r = _helm("--set", "databaseSplit.enabled=true", "--set", f"databaseSplit.databases.dagster={bad}")
+    assert r.returncode != 0 and "is not a plain lower-case SQL identifier" in r.stderr, r.stderr[-300:]
+
+
+def test_a_plain_identifier_renders_control_for_the_identifier_check():
+    assert _helm("--set", "databaseSplit.enabled=true", "--set", "databaseSplit.databases.dagster=zz_ok1").returncode == 0
+
+
+def test_the_create_names_the_charts_pg_user_as_owner():
+    # PUBLIC's CONNECT is revoked, so a database owned by `postgres` would refuse the app user.
+    script = _script(_job(_split("--set", "postgresql.auth.username=zz_owner"))[0])
+    for db in _SPLIT.values():
+        assert re.search(rf"CREATE DATABASE %I OWNER %I', '{db}', 'zz_owner'\)", script), script

@@ -68,7 +68,7 @@ spec:
             - name: DAGSTER_POSTGRES_PORT
               value: {{ include "invincible-agent.pgPort" . | quote }}
             - name: DAGSTER_POSTGRES_DB
-              value: {{ include "invincible-agent.pgDatabase" . | quote }}
+              value: {{ include "invincible-agent.pgDatabaseFor" (dict "concern" "dagster" "root" .) | quote }}
             - name: DAGSTER_POSTGRES_USER
               value: {{ include "invincible-agent.pgUser" . | quote }}
             - name: DAGSTER_POSTGRES_PASSWORD
