@@ -166,22 +166,32 @@ def test_no_match_says_what_was_read(double, client, bearer, caplog, monkeypatch
     assert _one(caplog)["dataset_urn_set"] == "true"
 
 
-def test_a_verified_person_whose_body_is_empty_is_named_as_no_identity(double, client, bearer, caplog):
+def test_a_verified_person_whose_body_is_empty_resolves_as_the_person(double, client, bearer, caplog):
+    # Changed by the bearer-first ruling (2026-11-25): this case was `no_identity` when the body
+    # alone named the caller. A verified bearer IS the caller, so an empty body resolves as them.
     bearer(Who(ALICE, verified=True))
+    assert _resolve(client, IDENT, user_email="")["candidates"]
+    assert _records(caplog) == []
+    assert (PROGRAM, ALICE) in double.calls
+
+
+def test_no_bearer_and_an_empty_body_is_named_as_no_identity(double, client, bearer, caplog):
     assert _resolve(client, IDENT, user_email="")["candidates"] == []
     f = _one(caplog)
     assert f["reason"] == "no_identity"
-    assert f["bearer"] == "user" and f["verified"] == "true" and f["body_caller"] == "empty"
+    assert f["bearer"] == "none" and f["verified"] == "-" and f["body_caller"] == "empty"
     assert int(f["matched"]) >= 1
 
 
 def test_a_service_caller_says_so(double, client, bearer, caplog):
+    bearer(Who("svc:supervisor"))
     assert _resolve(client, IDENT, user_email="svc:supervisor")["candidates"] == []
     f = _one(caplog)
     assert f["reason"] == "service_caller" and int(f["matched"]) >= 1
 
 
 def test_an_unset_directory_says_so(client, bearer, caplog, monkeypatch):
+    bearer(Who(ALICE))
     # No Double: the real `can_view_program` runs and answers False for want of a directory.
     monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
     assert _resolve(client, IDENT, user_email=ALICE)["candidates"] == []
@@ -190,9 +200,10 @@ def test_an_unset_directory_says_so(client, bearer, caplog, monkeypatch):
 
 def test_a_person_who_is_not_a_member_says_so(double, client, bearer, caplog, monkeypatch):
     monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://directory.example.invalid")
+    bearer(Who(BOB))
     assert _resolve(client, IDENT, user_email=BOB)["candidates"] == []
     f = _one(caplog)
-    assert f["reason"] == "not_a_member" and f["body_caller"] == "no_bearer"
+    assert f["reason"] == "not_a_member" and f["body_caller"] == "matches_bearer"
 
 
 def test_an_undecidable_program_says_so(double, client, bearer, caplog, monkeypatch):
@@ -208,6 +219,7 @@ def test_mixed_withholding_is_tallied(double, client, bearer, caplog, monkeypatc
     real = engine._program_of
     monkeypatch.setattr(engine, "_program_of", lambda c, i: None if i == "1.1" else real(c, i))
     monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://directory.example.invalid")
+    bearer(Who(BOB))
     assert _enum(client, CA, user_email=BOB)["members"] == []
     f = _one(caplog)
     assert f["reason"] == "withheld_mixed"
@@ -223,7 +235,7 @@ def test_a_listing_with_no_identity_says_so(double, client, bearer, caplog):
 
 def test_the_line_carries_no_identifier_email_or_program(double, client, bearer, caplog):
     seen = []
-    bearer(Who(ALICE))
+    bearer(Who(BOB))  # a verified non-member, empty body: a not_a_member line
     _resolve(client, IDENT, user_email="")
     seen.append(_records(caplog)[-1].getMessage())
     bearer(None)
@@ -239,12 +251,14 @@ def test_the_line_carries_no_identifier_email_or_program(double, client, bearer,
 
 
 def test_a_hit_logs_nothing(double, client, bearer, caplog):
+    bearer(Who(ALICE))
     assert _resolve(client, IDENT, user_email=ALICE)["candidates"]
     assert _enum(client, CA, user_email=ALICE)["members"]
     assert _records(caplog) == []
 
 
 def test_too_many_logs_nothing(double, client, bearer, caplog):
+    bearer(Who(ALICE))
     r = client.post("/enumerate_instances", json={"class_uri": CA, "limit": 1, "user_email": ALICE})
     assert r.json()["outcome"] == "too_many"
     assert _records(caplog) == []
@@ -258,6 +272,7 @@ def _levelno(caplog):
 
 def test_the_level_names_a_fault_not_the_normal_case(double, client, bearer, caplog, monkeypatch):
     # The normal case: INFO.
+    bearer(Who(ALICE))
     _resolve(client, "qzxv wkjh", user_email=ALICE)  # no_match
     assert _fields(_records(caplog)[0])["reason"] == "no_match"
     assert _levelno(caplog) == logging.INFO
@@ -267,10 +282,12 @@ def test_the_level_names_a_fault_not_the_normal_case(double, client, bearer, cap
     assert _levelno(caplog) == logging.INFO
     caplog.clear()
     monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://directory.example.invalid")
+    bearer(Who(BOB))
     _resolve(client, IDENT, user_email=BOB)
     assert _fields(_records(caplog)[0])["reason"] == "not_a_member"
     assert _levelno(caplog) == logging.INFO
     caplog.clear()
+    bearer(Who(ALICE))
     _resolve(client, "  ", user_email=ALICE)
     assert _fields(_records(caplog)[0])["reason"] == "empty_identifier"
     assert _levelno(caplog) == logging.INFO
@@ -282,10 +299,12 @@ def test_the_level_names_a_fault_not_the_normal_case(double, client, bearer, cap
     assert _levelno(caplog) == logging.INFO
     caplog.clear()
     # A fault: WARNING.
+    bearer(None)
     _resolve(client, IDENT, user_email="")
     assert _fields(_records(caplog)[0])["reason"] == "no_identity"
     assert _levelno(caplog) == logging.WARNING
     caplog.clear()
+    bearer(Who("svc:supervisor"))
     _resolve(client, IDENT, user_email="svc:supervisor")
     assert _fields(_records(caplog)[0])["reason"] == "service_caller"
     assert _levelno(caplog) == logging.WARNING
@@ -293,6 +312,7 @@ def test_the_level_names_a_fault_not_the_normal_case(double, client, bearer, cap
     monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
     monkeypatch.undo()  # the real `can_view_program`, answering False for want of a directory
     monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
+    bearer(Who(ALICE))  # `undo()` reverted the stub too
     _resolve(client, IDENT, user_email=ALICE)
     assert _fields(_records(caplog)[0])["reason"] == "directory_unconfigured"
     assert _levelno(caplog) == logging.WARNING
@@ -303,12 +323,14 @@ def test_a_mixed_tally_with_a_fault_is_a_warning(double, client, bearer, caplog,
     monkeypatch.setattr(engine, "_program_of", lambda c, i: None if i == "1.1" else real(c, i))
     monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://directory.example.invalid")
     # program_undecidable + not_a_member: both the normal case, so INFO.
+    bearer(Who(BOB))
     assert _enum(client, CA, user_email=BOB)["members"] == []
     f = _one(caplog)
     assert f["reason"] == "withheld_mixed" and "program_undecidable:1" in f["withheld"]
     assert _levelno(caplog) == logging.INFO
     caplog.clear()
     # program_undecidable + no_identity: one part of the tally is a fault, so WARNING.
+    bearer(None)
     assert _enum(client, CA, user_email="")["members"] == []
     f = _one(caplog)
     assert f["reason"] == "withheld_mixed"
@@ -322,6 +344,7 @@ def test_a_directory_outage_is_logged_and_still_a_503(client, bearer, caplog, mo
 
     monkeypatch.setattr(engine, "can_view_program", down)
     monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://directory.example.invalid")
+    bearer(Who(ALICE))
     seen = []
     r = client.post("/resolve_instance", json={"identifier": IDENT, "user_email": ALICE})
     assert r.status_code == 503 and "program membership check failed" in r.text

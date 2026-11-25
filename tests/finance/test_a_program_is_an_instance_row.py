@@ -167,6 +167,21 @@ def client():
         yield c
 
 
+class _Who:
+    def __init__(self, authz_id):
+        self.authz_id, self.verified, self.reason, self.raw = authz_id, True, "verified", {}
+
+
+def _bearer(monkeypatch, who):
+    """A listing decides for the verified bearer's person (ruled 2026-11-25), not the body."""
+    monkeypatch.setattr(engine, "_current_caller", lambda: _Who(who))
+
+
+@pytest.fixture(autouse=True)
+def _alice_bearer(monkeypatch):
+    _bearer(monkeypatch, ALICE)
+
+
 @pytest.fixture
 def allow_all(monkeypatch):
     monkeypatch.setattr(engine, "can_view_program", lambda program, caller, **kw: True)
@@ -207,6 +222,7 @@ def test_a_declared_program_is_listed_to_a_member_and_not_to_a_non_member(monkey
         lambda program, caller, **kw: caller in members.get(program, {}).get("grant_to", []))
 
     def listed(who):
+        _bearer(monkeypatch, who)
         r = client.post("/enumerate_instances", json={
             "class_uri": engine.FIN + "Program", "limit": 100, "user_email": who})
         assert r.status_code == 200, r.text

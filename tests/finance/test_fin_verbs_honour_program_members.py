@@ -280,7 +280,13 @@ def test_7_bff_relays_the_refusal(monkeypatch):
 
 # ── one predicate, four routes ───────────────────────────────────────────────
 @pytest.mark.parametrize("route", ["enumerate", "resolve", "measure", "package_export"])
-def test_8_svc_sees_nothing_on_every_route(route, double, built, client):
+def test_8_svc_sees_nothing_on_every_route(route, double, built, client, monkeypatch):
+    if route in ("enumerate", "resolve"):
+        # The two listings decide for the VERIFIED BEARER (ruled 2026-11-25): the service is
+        # presented as a verified `svc:` bearer, as the supervisor is, not as a body email alone.
+        class _Svc:
+            authz_id, verified, reason, raw = SVC, True, "verified", {}
+        monkeypatch.setattr(engine, "_current_caller", lambda: _Svc())
     if route == "enumerate":
         r = client.post("/enumerate_instances",
                         json={"class_uri": engine.FIN + "ControlAccount", "limit": 100,

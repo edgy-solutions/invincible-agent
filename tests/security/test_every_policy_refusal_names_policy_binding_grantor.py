@@ -278,6 +278,11 @@ NOT_POLICY: dict[str, str] = {
     f"{GW}::_entitled_artifact_rec::no caller identity on this request": AUTHN,
     f"{GW}::answer_case_signal::no_actor | a case signal needs an authentic": AUTHN,
     f"{FIN}::mesh_ticketed_read::a governed finance read requires the caller's id": AUTHN,
+    # lane fin (ruled 2026-11-25): a finance listing is the verified bearer's person. An unverified or
+    # expired bearer, or a body naming another person, is refused; signing in again lifts it, no grant does.
+    f"{FIN}::_listing_caller::session_expired | <_LISTING_NOT_VERIFIED>": AUTHN,
+    f"{FIN}::_listing_caller::bearer_not_verified | <_LISTING_NOT_VERIFIED>": AUTHN,
+    f"{FIN}::_listing_caller::caller_mismatch | the request body names a differe": AUTHN,
     "agent_fleet/graph_host/main.py::run_graph::{} runs as the INITIATOR and this request carrie": AUTHN,
     f"{GRW}::submit_decision::submit_decision requires `acted_by` (the caller'": AUTHN,
     f"{RA}::_authorize_resolution::approve requires `acted_by` (the caller's authz_": AUTHN,

@@ -776,6 +776,22 @@ and `body_caller=empty`. `dataset_urn_set` is whether `FIN_DATASET_URN` is set, 
 the count of declared instances of that class (all classes when none was given). The line never carries the
 identifier, an email or authz id, a program or instance id, or the dataset URN.
 
+**Who the caller is.** `/resolve_instance` and `/enumerate_instances` decide for the verified bearer's person
+(the architect, 2026-11-25: "the person is the verified token's subject"). A body `user_email` alone names nobody.
+The rule runs before any membership lookup:
+
+| inbound | result |
+|---|---|
+| no bearer | the caller is empty; the body is never used; everything is withheld as `no_identity` (WARNING) |
+| a bearer that is present but not verified | 401 `session_expired` (an expired token) or `bearer_not_verified` |
+| a verified `svc:` bearer | the service id, so the answer is empty with `service_caller`; the body is never used |
+| a verified person, body empty or the same person (compared after trim and case-fold) | the token's subject |
+| a verified person, body names someone else | 403 `caller_mismatch` |
+
+A 401 or 403 writes one WARNING line, `fin.listing_refused route=<resolve|enumerate> reason=<code>`, with no email,
+authz id or token text. The detail is `{"error": <code>, "message": ...}`. A directory outage is still a 503, decided
+after the caller. `/measure` and `/package_export` are unchanged: a service bearer still acts for the body's person.
+
 Resolve reads the seed and the declared instances, never the `FIN_DATASET_URN` asset, so
 `dataset_urn_set=true` with `declared_instances=0` means the deployment's own programs cannot resolve until
 they are declared.
