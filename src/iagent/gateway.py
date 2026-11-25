@@ -5087,10 +5087,10 @@ class SeedPortfolioCanvasRequest(_BaseModel):
 #   or dropped by arity, which is NOT a policy refusal; an unscoped re-check that failed is
 #   could-not-check, never a deny), seed_panel_unroutable (template declares no subject),
 #   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
-#   dagster_run_failed, ui_payload_fetch_error, ui_payload_timeout, acceptance_not_opened,
-#   engine_did_not_answer, render_ui_failed, stream_producer_error, stream_raised -- all
-#   faults of the seed/pipeline, not of the caller's grants. An absent cause is "unrecorded"
-#   and is never entitlement.
+#   dagster_run_failed, answer_run_failed, ui_payload_fetch_error, ui_payload_timeout,
+#   acceptance_not_opened, engine_did_not_answer, render_ui_failed, stream_producer_error,
+#   stream_raised -- all faults of the seed/pipeline, not of the caller's grants. An absent
+#   cause is "unrecorded" and is never entitlement.
 _SEED_ENTITLEMENT_CAUSES = frozenset({"seed_panel_verb_not_visible"})
 
 
@@ -8640,6 +8640,8 @@ def _perror(
     retryable: bool | None = None,
     cause: str | None = None,
     missing_domains: "list[str] | tuple[str, ...] | None" = None,
+    failed_step: str | None = None,
+    trace_id: str | None = None,
 ) -> str:
     """Emit a typed `pipeline_error` event.
 
@@ -8653,6 +8655,7 @@ def _perror(
                 downstream telemetry.
     missing_domains : the domains a verb declares that the caller's cell lacks; sent only on
                 the `seed_panel_verb_not_visible` cause, read back by `_seed_failure_from_data`.
+    failed_step, trace_id : on a failed run, the step that failed and the run's trace id (ADR-0072 8.1).
     """
     payload: dict = {"message": message}
     if kind:
@@ -8663,6 +8666,10 @@ def _perror(
         payload["cause"] = cause
     if missing_domains:
         payload["missing_domains"] = list(missing_domains)
+    if failed_step:
+        payload["failed_step"] = failed_step
+    if trace_id:
+        payload["trace_id"] = trace_id
     return _sse("pipeline_error", json.dumps(payload))
 
 
@@ -9916,6 +9923,19 @@ async def _get_step_stats(run_id: str) -> list[dict]:
         logger.error("Failed to get step stats: %s", exc)
         return []
 
+
+async def _dagster_run_failure(run_id: str) -> dict:
+    """The step a failed Dagster run failed at, from its step stats (ADR-0072 8.1).
+
+    The earliest-ending FAILURE step; a step with no end time sorts last. None when no step is recorded
+    as failed. Dagster holds no trace id of its own here: the stream supplies the one it put in the
+    run config."""
+    failed = [s for s in await _get_step_stats(run_id) if s.get("status") == "FAILURE" and s.get("stepKey")]
+    if not failed:
+        return {"failed_step": None, "trace_id": None}
+    failed.sort(key=lambda s: (s.get("endTime") is None, s.get("endTime") or 0, s["stepKey"]))
+    return {"failed_step": failed[0]["stepKey"], "trace_id": None}
+
 async def _get_ui_payload_output(run_id: str) -> dict:
     """Fetch the output value of the generate_ui_payload step via Metadata.
 
@@ -10190,7 +10210,7 @@ def _answer_path(environ=None) -> str:
 
 
 def _answer_backend():
-    """The launch and the four run reads for ONE stream, chosen at call time.
+    """The launch and the run reads for ONE stream, chosen at call time.
 
     Every dagster-side helper is looked up when it is CALLED (the lambdas), never bound here:
     the seam's tests monkeypatch the module-level names."""
@@ -10205,6 +10225,8 @@ def _answer_backend():
             status=client.get_run_status,
             events=client.get_run_events,
             steps=client.get_step_stats,
+            failure=client.get_failure,
+            failed_cause="answer_run_failed",
             payload=client.get_ui_payload_output,
             poll_s=client.poll_interval_s,
             max_ticks=int(round(900 / client.poll_interval_s)),
@@ -10214,6 +10236,8 @@ def _answer_backend():
         status=lambda rid: _get_run_status(rid),
         events=lambda rid: _get_run_events(rid),
         steps=lambda rid: _get_step_stats(rid),
+        failure=lambda rid: _dagster_run_failure(rid),
+        failed_cause="dagster_run_failed",
         payload=lambda rid: _get_ui_payload_output(rid),
         poll_s=1.0,
         max_ticks=900,
@@ -11139,6 +11163,7 @@ async def _generate_dagster_stream_inner(
     # Polling Loop
     emitted_steps = set()
     is_success = False
+    _run_failure: dict | None = None
 
     # Option A: the every-10s "Agents are reasoning (Elapsed: Ns)"
     # heartbeat is REMOVED. The cortex-ui ThinkingCard ticks the
@@ -11183,11 +11208,21 @@ async def _generate_dagster_stream_inner(
             break
         if status_data.get("status") == "FAILURE":
             VAULT.close(run_id)
+            # ADR-0072 8.1 (ruled 2026-11-15): name the step that failed and the run's trace id. The
+            # backend says which step; the trace id is the backend's if it holds one, else the one this
+            # stream put in the run config. The cause names the path, never `dagster` on the durable one.
+            _f = await _ab.failure(run_id) or {}
+            _run_failure = {
+                "failed_step": _f.get("failed_step") or None,
+                "trace_id": _f.get("trace_id") or trace_id or None,
+            }
             yield _perror(
                 "Pipeline failed.",
                 kind="retrieving",
                 retryable=False,
-                cause="dagster_run_failed",
+                cause=_ab.failed_cause,
+                failed_step=_run_failure["failed_step"],
+                trace_id=_run_failure["trace_id"],
             )
             # Architect-ruled failure-mode-1 fix per
             # [[optimistic-defaults-are-dishonest]]: the gateway sees
@@ -11576,6 +11611,21 @@ async def _generate_dagster_stream_inner(
             yield _sse("final_payload", json.dumps(result["payload"]))
             # Hop 1: capture rendered_output into the bundle.
             _mark_answer_complete(_artifact_bundle, result.get("payload"))
+    elif _run_failure is not None:
+        # A FAILED RUN ENDS WITH A CARD (ADR-0072 8.1). The run's own card when it made one (the final
+        # check fails AFTER generate_ui_payload: see assert_every_engine_answered), else the failure
+        # card. The bundle stays `failed` with no rendered output: a failure is not an answer.
+        result = await _ab.payload(run_id)
+        if "error" not in result and result.get("payload") is not None:
+            if result.get("referenced_uris"):
+                yield _sse("context_update", json.dumps({
+                    "type": "bindings",
+                    "data": result["referenced_uris"],
+                }))
+            _card = result["payload"]
+        else:
+            _card = _failure_card(_run_failure["failed_step"], _run_failure["trace_id"])
+        yield _sse("final_payload", json.dumps(_card))
     else:
         yield _perror(
             "Timeout or failed to fetch UI payload.",
@@ -11596,6 +11646,24 @@ async def _generate_dagster_stream_inner(
     # ONE WRITER, TWO CALLERS — the direct path calls the same function. See
     # `_dispatch_answer_artifact`.
     await _dispatch_answer_artifact(_artifact_bundle)
+
+
+def _failure_card(failed_step: str | None, trace_id: str | None) -> dict:
+    """The card a failed run ends with when it produced none of its own (ADR-0072 8.1, ruled
+    2026-11-15: "On a failed run the BFF delivers a failure card naming the step and the trace id;
+    it never stays silent."). An absent value is said to be absent, never invented."""
+    step = (failed_step or "").replace("`", "")
+    trace = (trace_id or "").replace("`", "")
+    lines = ["# The answer could not be completed", ""]
+    lines.append(f"The run failed at step `{step}`." if step else
+                 "The run failed. The step that failed was not recorded.")
+    lines.append("")
+    lines.append(f"Trace id: `{trace}`" if trace else "This run has no trace id.")
+    return {"components": [{
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "subject_concept": "system://mesh/alert",
+        "markdown_content": "\n".join(lines),
+    }]}
 
 
 def _mark_answer_complete(bundle: dict, payload: Any) -> None:
