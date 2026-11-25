@@ -134,7 +134,7 @@ def test_the_edges_equal_eac_less_bac_taken_once_per_work_package(post, flow_row
     assert status == 200, env
     assert served(env["rows"]) == expected_edges()
     assert len(env["rows"]) == 1 + 5 + 9 and not [e for e in env["rows"] if e["node_kind"] == "other"]
-    assert env["method"]["version"] == "1.3.0" and env["render"]["value_label"] == "EAC variance"
+    assert env["method"]["version"] == "1.4.0" and env["render"]["value_label"] == "EAC variance"
 
 
 def test_at_0_15_four_accounts_fold_into_one_sink_and_one_zero_is_drawn(post, flow_rows, monkeypatch):

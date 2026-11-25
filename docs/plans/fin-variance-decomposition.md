@@ -101,6 +101,7 @@ from the row, plus `render.other_label`. Each edge:
 | `sign` | `positive`, `negative` or `zero`: the sign of the target's net |
 | `level` | the target's depth, `len(target) - 1`; 0 for the root edge, 1 for the root's children |
 | `node_kind` | `other` for a sink, `item` for everything else |
+| `members` | on the sink edge only: `{target, value, value_exact, sign}` per collapsed child, value descending then target; the signed values sum to the sink's |
 
 1. **Level is data.** Each edge carries `level`, and a node's depth is also `len(path) - 1`. A sink
    is terminal at its own depth, and no edge spans levels.

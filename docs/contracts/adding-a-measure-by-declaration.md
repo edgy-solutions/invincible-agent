@@ -86,22 +86,21 @@ configured dataset with no calendar declared fails at boot.
 ### Which rule ids are general
 
 A contract's `rules` block gives each rule id a message. It cannot add a rule. The ids fall into
-three groups:
+two groups:
 
 | group | rule ids | raised by |
 |---|---|---|
-| **every contract** | `duplicate_key`, `missing_column`, `not_determined_by`, `personal_data`, `wrong_type` | the shared reader, on every read of every contract |
-| **every finance read** | `non_finite`, `null_value`, `other_program_rows`, `period_outside_calendar`, `varies_within_path`, `version_outside_list` | engine-fin, on its reads of any finance dataset (the last only over a contract that declares a `version_dimension`) |
-| **the earned-value shape only** | `program_name_not_unique`, `program_bac_not_unique`, `work_package_in_two_accounts`, `duplicate_work_package_period` | engine-fin's built-in read only |
+| **every contract** | `duplicate_key`, `missing_column`, `non_finite`, `not_determined_by`, `null_value`, `personal_data`, `wrong_type` | the shared reader, on every read of every contract |
+| **every finance read** | `other_program_rows`, `period_outside_calendar`, `varies_within_path`, `version_outside_list` | engine-fin, on its reads of any finance dataset (the last only over a contract that declares a `version_dimension`) |
 
-**The last four are the sample's own key and dependencies,** checked under fin's own ids:
-- one row per work package and period;
-- one name and one budget per program;
-- one control account per work package.
+**The sample's key and dependencies have no ids of their own.** It declares them:
+- one row per work package and period, as `grain`;
+- one name and one budget per program, and one control account per work package, under
+  `dependencies`.
 
-They belong to the earned-value shape the built-ins read, so data conformed to that shape meets
-them too. In your own contract, declare your key as `grain` and your dependencies under
-`dependencies`; the shared reader then refuses those as `duplicate_key` and `not_determined_by`.
+The built-in read is held to its deployment's contract like any other read, so the shared reader
+refuses those as `duplicate_key` and `not_determined_by`. In your own contract, declare your key
+as `grain` and your dependencies under `dependencies` the same way.
 
 `interval_overlap` and `orphan_reference` are checked by the producer, not the engine.
 
