@@ -83,6 +83,11 @@ refuses `period_outside_calendar`. A calendar is named: your contract names its 
 `period.calendar`; with one calendar declared it is the default and the key may be omitted. A
 configured dataset with no calendar declared fails at boot.
 
+Two optional contract keys are read for a flow row that reads one period or through it (below):
+`period.column`, the string column, declared `nullable: false`, that holds the period labels; and
+`additive_over` on a column, the list of declared columns along which summing it is meaningful. An
+`additive_over` that names a column the contract does not declare refuses the contract.
+
 ### Which rule ids are general
 
 A contract's `rules` block gives each rule id a message. It cannot add a rule. The ids fall into
@@ -113,6 +118,17 @@ then compares two with `value: {compare: {column: amount, by: version}}` and lis
 The paths are summed per version and subtracted (a path in one version only counts as zero in the
 other), and the verdict says how many paths only one version holds. A row that reads one version
 lists `version`; over a versioned contract a row that lists none is refused at load. Full contract:
+`docs/contracts/finance-overlays.md` section 2.
+
+### Reading one period, or through it
+
+A flow row sums every period of the program unless it says otherwise. To let a person ask for one fiscal
+period, or the program through it, list `period` and `basis` together in `inputs.params`. This needs two
+things in your contract: `period.column` (the string column, `nullable: false`, that holds the period
+labels) and, on each value column the row sums, `additive_over` naming that column (a cumulative read adds
+the column across periods, so the contract must say that is meaningful; a column that is a stock, or a
+figure repeated on each period's row, does not say it). The periods are cut in the order of your declared
+calendar, never as strings. The answer says which period and basis it read. Full contract:
 `docs/contracts/finance-overlays.md` section 2.
 
 ## 3. How it is checked

@@ -107,7 +107,8 @@ Design: `docs/plans/fin-variance-decomposition.md`. It uses the same top-level k
 differences under `inputs` and `render`:
 
 - `inputs.params` is `program_id` (`window` is refused: this kind has no period axis), plus
-  `version`, or `version_a` and `version_b`, when the row's contract declares a version dimension (below).
+  `version`, or `version_a` and `version_b`, when the row's contract declares a version dimension (below),
+  plus, on a flow row, `period` and `basis` (below).
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
   not consulted), `banner` (required, shown beside every answer), `contract` (required, below),
   `levels` (at least two distinct column names, root first; the root column is selected by
@@ -135,6 +136,25 @@ differences under `inputs` and `render`:
   A compare row (`value: {compare: …}`) may not declare `depth`, refused at load: its only-in-A and only-in-B counts are taken over the full paths, so a cut table would disagree with its own verdict.
   A person choosing the level of detail when asking is a later step, part of parity with how
   finance teams work, and it needs its own slot, census and refusal (ruled 2026-11-24).
+- **A flow row reads one period, or the program through it.** A flow row that lists neither reads every
+  period of the program. A row may list `period` and `basis` in `inputs.params`, both or neither
+  (a period with no basis would not say whether it is the one period or the program through it; a basis with
+  no period has nothing to read through), and the person chooses them as slots. `basis` is `period` (the
+  rows of that period alone) or `cumulative` (every period of the row's calendar up to and including it).
+  The row's contract must name its period column (`period.column`, a declared string column with
+  `nullable: false`), else the row is refused at load. Under `per_path: sum`, a cumulative read adds a column
+  across periods, so every value column must declare the period column in its `additive_over` (the axes
+  along which summing the column is meaningful); a row over a column that does not is refused at load, with
+  the message that a cumulative read would sum a column the contract does not declare additive over its
+  periods. `per_path: once` takes a path's amount once, and is exempt. The slot `period` lists the labels of
+  the ROW'S calendar, in calendar order; `basis` lists `period` and `cumulative`. The cut is by position in
+  that calendar, never by comparing labels as strings (`P10` sorts before `P2` as a string, and not in a 4-4-5
+  year). A period that is not in the row's calendar, or a basis that is neither value, is a 422 before the
+  asset is read; a row whose period is outside the calendar is a 502 `period_outside_calendar`; a period the
+  asset holds no rows for is a 422 naming the period. A comparison reads both versions over the same periods.
+  The answer names what it read: the envelope carries `period` and `basis`, and the verdict and the data
+  provenance say "period P7 alone" or "period P7, cumulative", so a period total is never read as the whole
+  program's. A series row refuses `period` and `basis` at load.
 - **A version is a declared dimension.** A contract may carry `version_dimension: {column: <string column>,
   values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
   declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is

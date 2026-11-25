@@ -67,6 +67,7 @@ GATEWAY_ENV = "CENTRAL_GATEWAY_URL"
 MAX_ROWS_ENV = "FIN_ASSET_MAX_ROWS"
 DEFAULT_MAX_ROWS = 100_000
 URN_PREFIX = "urn:li:dataset:"
+PERIOD_BASES = ("period", "cumulative")    # a flow row's `basis`: the one period, or the program through it
 
 #: engine-fin's ROLES: the columns its `FinanceState` is built from. The contract the deployment
 #: names (`FIN_DATASET_CONTRACT`) must declare them (`contract_problems`); they no longer fix what
@@ -201,9 +202,18 @@ def provenance(urn: str, receipt: Mapping[str, Any]) -> str:
     return f"{dataset_banner()} {ticket_clause(receipt)} Source: {urn}"
 
 
-def dataset_provenance(banner: str, urn: str, receipt: Mapping[str, Any]) -> str:
-    """`provenance` for a dataset-kind row, whose banner is the row's own, not the environment's."""
-    return f"{banner} {ticket_clause(receipt)} Source: {urn}"
+def period_phrase(period: str, basis: str) -> str:
+    """How an answer states the periods it read: "period P7 alone", or "period P7, cumulative"."""
+    return f"period {period} alone" if basis == "period" else f"period {period}, {basis}"
+
+
+def dataset_provenance(banner: str, urn: str, receipt: Mapping[str, Any],
+                       period: "tuple[str, str] | None" = None) -> str:
+    """`provenance` for a dataset-kind row, whose banner is the row's own, not the environment's.
+    A row that read one period, or the program through it, says so (`period` is `(period, basis)`),
+    so a period total is never read as the whole program's."""
+    read = f" Read: {period_phrase(*period)}." if period else ""
+    return f"{banner} {ticket_clause(receipt)}{read} Source: {urn}"
 
 
 def _load_client() -> tuple[Any, type, type]:
@@ -454,6 +464,8 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
                       program_id: str, contract: Any, *, version: Optional[str] = None,
                       version_a: Optional[str] = None, version_b: Optional[str] = None,
                       version_column: Optional[str] = None, versions: tuple[str, ...] = (),
+                      period: Optional[str] = None, basis: Optional[str] = None,
+                      period_column: Optional[str] = None, calendar_labels: tuple[str, ...] = (),
                       ) -> "list[tuple[tuple[str, ...], Any]] | CompareRead | MinusRead":
     """`read_rows` for a dataset-kind row: the rows of ONE program, held to the row's `contract`.
 
@@ -480,7 +492,19 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     the list (`null_value`, `version_outside_list`, naming the column, never a value). `version`
     keeps that version's rows and proceeds as above. `version_a`/`version_b` reduce each version's
     rows per `(path, version)` by `per_path`, then return a `CompareRead`: for every path in either
-    version, a's amount less b's, a path absent from one version counting as zero there."""
+    version, a's amount less b's, a path absent from one version counting as zero there.
+
+    PERIOD AND BASIS (`period_column`, the contract's period column; `calendar_labels`, the row's
+    calendar in CALENDAR ORDER). A row that lists them reads one fiscal period, or the program
+    through it. The engine refuses an argument itself, before any read: a `period` that is not one
+    of `calendar_labels`, or a `basis` other than `period` or `cumulative`, is `NotInModel`, naming
+    the argument and never the labels. Every row's period is held to the calendar (`null_value`,
+    `period_outside_calendar`, naming the column, never a value). Then, before the version split
+    (so both sides of a comparison read the same periods), `basis == "period"` keeps the rows whose
+    period is `period`, and `"cumulative"` keeps the rows whose position in the calendar is at or
+    before `period`'s. The cut is by position in `calendar_labels`, never by comparing the labels
+    as strings: `P10` sorts before `P2`. A cut that leaves no row is `NotInModel`, naming the
+    period and the basis."""
     import polars as pl
 
     for name, given in (("version", version), ("version_a", version_a), ("version_b", version_b)):
@@ -488,7 +512,15 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
             raise NotInModel(f"{name} is not one of the declared versions {list(versions)}")
     if version_a is not None and version_a == version_b:
         raise NotInModel("version_a and version_b are the same version; a comparison needs two")
+    if period is not None or basis is not None:
+        if period not in calendar_labels:
+            raise NotInModel("period is not a period of the row's calendar")
+        if basis not in PERIOD_BASES:
+            raise NotInModel(f"basis is not one of {list(PERIOD_BASES)}")
+        if not period_column:
+            raise NotInModel("the row's contract declares no period column")
     named_version = (version_column,) if version_column else ()
+    named_period = (period_column,) if period is not None else ()
 
     t0 = time.perf_counter()
     try:
@@ -503,7 +535,7 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
-    selected = check_contract_schema(schema, contract, (*levels, *value_columns, *named_version))
+    selected = check_contract_schema(schema, contract, (*levels, *value_columns, *named_version, *named_period))
     cap = max_rows()
     q = lf.filter(pl.col(levels[0]) == program_id)
     try:
@@ -524,6 +556,10 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
         raise ContractViolation(
             "version_outside_list",
             f"row(s) carry a version not in the contract's declared list ({version_column})")
+    if period is not None and not df[period_column].is_in(list(calendar_labels)).all():
+        raise ContractViolation(
+            "period_outside_calendar",
+            f"row(s) carry a period not in the row's calendar ({period_column})")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
     # The key and the dependencies are checked across EVERY version, before the filter, on purpose: this
@@ -531,6 +567,14 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     # it; a declared dependency holds across versions, and a broken row in a version nobody asked for
     # still refuses the read.
     check_contract_rows(df, contract)
+    if period is not None:
+        order = {label: i for i, label in enumerate(calendar_labels)}
+        at = order[period]
+        position = pl.col(period_column).replace_strict(order, return_dtype=pl.Int64)
+        df = df.filter(position == at if basis == "period" else position <= at)
+        if df.height == 0:
+            raise NotInModel(f"the asset holds no rows for program {program_id!r} "
+                             + (f"in period {period}" if basis == "period" else f"through period {period}"))
     if version is not None:
         df = df.filter(pl.col(version_column) == version)
         if df.height == 0:

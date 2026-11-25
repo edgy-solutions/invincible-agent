@@ -510,12 +510,22 @@ def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]
     A dataset row that lists a version param (`version`, `version_a`, `version_b`) gets one more
     slot each, with the shape of `fin_eac_calculation`'s `method`, an existing required enum: its
     `values` are the row's contract's declared versions, in declared order. The list is the
-    contract's, never read from the data."""
+    contract's, never read from the data.
+
+    A flow row that lists `period` and `basis` gets the same shape for each: `period`'s `values`
+    are the labels of the ROW'S calendar in calendar order (never `fiscal_periods()`, which is the
+    default calendar), `basis`'s are `period` and `cumulative`."""
     slots = [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
     if row.contract is not None and row.contract.versions:
         (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
         slots += [{**enum, "name": n, "values": list(row.contract.versions)}
                   for n in measure_verbs._VERSION_PARAMS if n in row.params]
+    if any(n in row.params for n in measure_verbs._PERIOD_PARAMS):
+        (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
+        values = {"period": list(_row_calendar_labels(row) or ()),
+                  "basis": list(asset_inputs.PERIOD_BASES)}
+        slots += [{**enum, "name": n, "values": values[n]}
+                  for n in measure_verbs._PERIOD_PARAMS if n in row.params]
     return slots
 
 
@@ -1162,13 +1172,24 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     Same keys as `_declared_envelope` minus `series`/`reference`, which a flow has no use for."""
     urn, program_id = row.dataset_urn, params["program_id"]
     receipts: list[dict[str, Any]] = []
+    reads_period = "period" in row.params
+    scope = (params["period"], params["basis"]) if reads_period else None
     try:
         with _asset_read_errors(urn):
+            calendar_labels = _row_calendar_labels(row)
+            if reads_period and calendar_labels is None:
+                # The row's calendar is no longer declared (the env changed after load): as the series
+                # path, every period is outside it.
+                raise asset_inputs.ContractViolation("period_outside_calendar",
+                                                     "a period outside the fiscal calendar")
             read = asset_inputs.read_dataset_rows(
                 _ticketed_reader(receipts), urn, row.levels, row.value_columns, row.value_op,
                 row.per_path, program_id, row.contract,
-                **{n: params.get(n) for n in measure_verbs._VERSION_PARAMS if n in row.params},
-                version_column=row.contract.version_column, versions=row.contract.versions)
+                **{n: params.get(n) for n in (*measure_verbs._VERSION_PARAMS, *measure_verbs._PERIOD_PARAMS)
+                   if n in row.params},
+                version_column=row.contract.version_column, versions=row.contract.versions,
+                period_column=row.contract.period_column,
+                calendar_labels=(calendar_labels or ()))
             compare = walk = None
             if isinstance(read, asset_inputs.CompareRead):
                 paths = read.paths
@@ -1210,13 +1231,16 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         "value_label": row.render.get("value_label", row.name),
         "render": {**copy.deepcopy(row.render),
                    "other_label": importlib.import_module(row.resolved_module).OTHER_LABEL},
-        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
+        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn),
+                                                           period=scope),
         "data_source": {"kind": "asset", "urn": urn},
         "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
-        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
+        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare, period=scope))
+           is not None else {}),
         **({"version": params["version"]} if "version" in row.params else {}),
+        **({"period": params["period"], "basis": params["basis"]} if reads_period else {}),
         **({"compare": compare} if compare is not None else {}),
         **({"walk": walk} if walk is not None else {}),
         "rows": rows,
@@ -1337,7 +1361,7 @@ def _package_provenance(program_source: Optional[dict[str, Any]],
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
-    return name == "program_id" or name in measure_verbs._VERSION_PARAMS
+    return name == "program_id" or name in measure_verbs._VERSION_PARAMS or name in measure_verbs._PERIOD_PARAMS
 
 
 @app.post("/measure/{fn}")
