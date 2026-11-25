@@ -385,5 +385,7 @@ def test_the_body_is_compared_to_the_bearer_ignoring_case_and_spaces(double, cli
     bearer(Who("svc:supervisor", verified=True))
     assert _resolve(client, "qzxv wkjh", user_email=BOB)["candidates"] == []
     f = _one(caplog)
-    assert f["reason"] == "service_caller" and f["bearer"] == "svc"
+    # The identifier matches nothing, so the reason is `no_match`: a service caller is tallied
+    # `service_caller` only when there are candidates to withhold (test_a_service_caller_says_so).
+    assert f["reason"] == "no_match" and f["bearer"] == "svc" and f["verified"] == "true"
     assert f["body_caller"] == "differs_from_bearer"
