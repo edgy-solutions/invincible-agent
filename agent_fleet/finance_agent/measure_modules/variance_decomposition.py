@@ -23,7 +23,14 @@ A child whose signed sum is exactly zero IS emitted (`value` 0, `sign` "zero", `
 renderer draws no band for it. That keeps every level reconcilable.
 
 CONSERVATION is the invariant: at every node, the signed children (the sink included) sum to the
-node's signed value (a zero edge adds nothing, and is still there to be read).
+node's signed value (a zero edge adds nothing, and is still there to be read). The members'
+signed values sum to the sink's signed value.
+
+MEMBERS. The sink edge (and only the sink edge; an item edge carries no `members` key) carries
+`members`: one `{target, value, sign}` per collapsed child, `target` the child's path (a list of
+strings), `value` the ABSOLUTE signed net (Decimal) and `sign` the sign of that net. They are
+ordered by value descending, then by target. A member is terminal: its own subtree is not walked
+or carried. Zero-net siblings are outside the collapse, so they are never members.
 
 THE COLLAPSE. A child's share is its absolute value over the sum of its siblings' absolute values
 (a parent whose children sum to zero in absolute value collapses nothing). Zero-net siblings are
@@ -46,7 +53,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Sequence
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 OTHER_LABEL = "All other"
 
 
@@ -69,14 +76,19 @@ def flow_edges(
 
     edges: list[dict[str, Any]] = []
 
+    def sign_of(net: Decimal) -> str:
+        return "positive" if net > 0 else "negative" if net < 0 else "zero"
+
     def emit(source: tuple[str, ...] | None, target: tuple[str, ...], net: Decimal,
-             node_kind: str) -> None:
-        edges.append({
+             node_kind: str) -> dict[str, Any]:
+        edge = {
             "source": None if source is None else list(source), "target": list(target),
             "value": abs(net),
-            "sign": "positive" if net > 0 else "negative" if net < 0 else "zero",
+            "sign": sign_of(net),
             "level": len(target) - 1, "node_kind": node_kind,
-        })
+        }
+        edges.append(edge)
+        return edge
 
     if (root,) in children:
         emit(None, (root,), sum(children[(root,)].values(), Decimal(0)), "item")
@@ -100,7 +112,11 @@ def flow_edges(
             stack.append(child)
         if below:
             sink_net = sum((live[c] for c in below), Decimal(0))
-            emit(parent, parent + (OTHER_LABEL,), sink_net, "other")
+            sink = emit(parent, parent + (OTHER_LABEL,), sink_net, "other")
+            sink["members"] = sorted(
+                ({"target": list(c), "value": abs(live[c]), "sign": sign_of(live[c])}
+                 for c in below),
+                key=lambda m: (-m["value"], m["target"]))
 
     edges.sort(key=lambda e: (e["level"], e["source"] or [], -e["value"], e["target"]))
     return edges

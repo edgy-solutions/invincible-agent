@@ -54,6 +54,12 @@ A measure row declares a number computed per month from a program's earned-value
 loads, a user can ask for it in chat ("What is the to-complete performance index for NP-MERIDIAN?")
 and it can be a source for an export profile (section 3). The row declares; it never calculates.
 
+**Check the folder before a roll.** `scripts/check_measure_verbs.py <policy-repo>/measure_verbs` builds every row file in the
+folder with the engine's own loader and prints `REFUSED <path>: <message>` for each row the release would refuse at boot
+(a module version that does not match, a bad `depth`, a duplicate id), not only the first. Run it from the checkout of the
+release you are about to roll to, before the roll; it needs no cluster and no secret. It exits 0 when every row loads, 1 when
+any is refused, and 2 for a usage error (a directory that is not there).
+
 Top-level keys. Required unless marked optional. A key not in this table is refused at load (a
 `formula`, for example), so nothing you put there can look as if it took effect.
 
@@ -103,7 +109,7 @@ differences under `inputs` and `render`:
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
   not consulted), `banner` (required, shown beside every answer), `contract` (required, below),
   `levels` (at least two distinct column names, root first; the root column is selected by
-  `program_id`), `value` and optionally `per_path`. `value` is a numeric column that is not one of the levels, or exactly
+  `program_id`), `value` and optionally `per_path` and `depth`. `value` is a numeric column that is not one of the levels, or exactly
   `{minus: [a, b]}`: two distinct numeric columns, neither a level, whose difference `a - b` is the
   row's amount (computed per row in exact Decimal), or exactly
   `{compare: {column: <amount>, by: <version column>}}`: the amount summed (or taken once, per
@@ -119,12 +125,20 @@ differences under `inputs` and `render`:
   the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
   group, and a group whose rows disagree is a 502 `asset_contract_violation` with rule
   `varies_within_path`, naming the column(s) and never a value). Anything else is refused at load.
-  The row cap counts rows read, before any reduction.
+  The row cap counts rows read, before any reduction. `depth` is optional: an integer from 1 to the
+  number of levels below the root (`len(levels) - 1`), never a bool, refused at load otherwise. The
+  paths are cut to their first `depth` levels after `per_path` has been applied, so totals are
+  unchanged, and the verdict says `over k of n levels`; absent, the flow is drawn at full depth.
+  The depth is the row's, not the caller's: `program_id` stays the dataset kind's only parameter.
+  A compare row (`value: {compare: …}`) may not declare `depth`, refused at load: its only-in-A and only-in-B counts are taken over the full paths, so a cut table would disagree with its own verdict.
+  A person choosing the level of detail when asking is a later step, part of parity with how
+  finance teams work, and it needs its own slot, census and refusal (ruled 2026-11-24).
 - **A version is a declared dimension.** A contract may carry `version_dimension: {column: <string column>,
   values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
   declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is
   a 502 `asset_contract_violation` with rule `version_outside_list`, naming the column and never a
-  value; a null version is `null_value`. Over such a contract, a row whose value is a column or
+  value; a null version is `null_value`, so the version column is declared `nullable: false` (a
+  contract that leaves it nullable refuses every row over it at load). Over such a contract, a row whose value is a column or
   `minus` lists `version` in `inputs.params` (else it would sum every version together, and the row
   is refused at load), and a compare row lists `version_a` and `version_b`. A row over a contract
   with no version lists none of them, and a `MULTI_SERIES` dataset row cannot read a versioned
@@ -133,14 +147,17 @@ differences under `inputs` and `render`:
 - `contract` names the dataset contract the asset is read under: `contracts/<contract>.yaml`
   (`contracts/ev_fixture.yaml` is the worked example; the engine reads that directory, or
   `DATASET_CONTRACT_DIR`). At load, every column the row names must be one the contract declares,
-  a level a string column and a value column a numeric one, and the root level must be the
-  contract's `scope`; anything else is refused naming the file. On every read the WHOLE contract is
-  enforced, not only the columns the row names, each as a 502 `asset_contract_violation` whose
-  message names the column(s) and never a value: a required column, or one the row names, absent is
-  `missing_column`; a column not of its declared type is `wrong_type`; two rows for one value of the
-  contract's `grain` is `duplicate_key`; and a `dependencies` entry (`by` determines each of
-  `determines`) broken by one `by` value carrying two values of such a column is
-  `not_determined_by`, naming both columns.
+  and declares `nullable: false`; a level must be a string column and a value column a numeric one;
+  and the root level must be the contract's `scope`. Anything else is refused naming the file. On
+  every read the WHOLE contract is enforced, not only the columns the row names, each as a 502
+  `asset_contract_violation` whose message names the column(s) and never a value:
+  - a required column, or one the row names, absent is `missing_column`;
+  - a column not of its declared type is `wrong_type`;
+  - a null in a column declared `nullable: false` is `null_value`;
+  - a NaN or infinity in a column declared `numeric` or `float` is `non_finite`;
+  - two rows for one value of the contract's `grain` is `duplicate_key`;
+  - a `dependencies` entry (`by` determines each of `determines`) broken by one `by` value
+    carrying two values of such a column is `not_determined_by`, naming both columns.
 - `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
@@ -160,6 +177,9 @@ differences under `inputs` and `render`:
   `render.other_label` is served by the engine from the module's `OTHER_LABEL`; a row does not
   declare it (a row that does is refused at load). A consumer marks the sink by `node_kind`, never
   by matching the label.
+- The sink edge, and only the sink edge, also carries `members`: one `{target, value, value_exact,
+  sign}` per collapsed child, ordered by value descending then target. Their signed values sum to
+  the sink's signed value exactly. A member is terminal; an `item` edge has no `members` key.
 - A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
   with rule `refused_by_module`; the message names no row value.
 
@@ -172,7 +192,7 @@ worked examples. The differences from a flow row:
 - `inputs.dataset` holds `urn`, `banner`, `contract` (as for a flow row), `scope` (the column the
   read filters to `program_id`, and the contract's `scope`),
   `period` (the x axis), optionally `status` (the column naming the period the program is reported
-  through), `per_period` and `per_program`. `levels`, `value`, `per_path` and
+  through), `per_period` and `per_program`. `levels`, `value`, `per_path`, `depth` and
   `inputs.other_threshold` are refused.
 - `per_period` maps a function keyword to a numeric column, summed exactly over the program's rows
   at each period. It must have at least one entry. `per_program` maps a keyword to a numeric column
@@ -643,13 +663,22 @@ Design: `docs/plans/fin-inputs-resolver.md`. Nothing here has run on a cluster.
 | --- | --- |
 | `FIN_DATASET_URN` | the asset, `urn:li:dataset:...`. Unset: the notional model answers, as before. |
 | `FIN_DATASET_BANNER` | required with the URN. It is shown beside every answer, so a synthetic asset cannot read as real. |
+| `FIN_DATASET_CONTRACT` | required with the URN: the id of the contract, in the contract directory, the read is held to. |
 | `CENTRAL_GATEWAY_URL` | required with the URN: the gateway that issues the read ticket. |
 | `FIN_ASSET_MAX_ROWS` | optional, default 100000. |
 
 With the URN set, the engine refuses to start if the banner or gateway is missing, the URN is not
-of the `urn:li:dataset:` form, or the mesh client cannot be imported.
+of the `urn:li:dataset:` form, the mesh client cannot be imported, the contract is unset or cannot
+be loaded, or it does not declare engine-fin's roles (the nine columns below, each required and of
+its type and declared `nullable: false`, the scope, the grain and the dependencies).
 
-**Columns.** Fixed names, file-backed assets only, one row per work package and period:
+**Columns.** File-backed assets only. These are the roles the named contract must declare, as
+required columns of these types, each declared `nullable: false`. It must be scoped by
+`program_id`, hold one row per (`work_package`, `period`) at most, and declare `program_name` and
+`program_bac` determined by `program_id` and `control_account` determined by `work_package`. The
+read selects every column the contract declares that the asset carries. It refuses with the shared
+reader's ids: a broken key or dependency as `duplicate_key` and `not_determined_by`, and a null or
+a NaN or infinity as `null_value` and `non_finite`:
 
 | column | type | rule |
 | --- | --- | --- |

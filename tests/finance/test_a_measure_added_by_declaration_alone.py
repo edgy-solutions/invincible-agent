@@ -169,7 +169,7 @@ def test_it_loads_from_the_shipped_sample_directory_beside_every_other_sample_ro
     assert row.verb == VERB
     assert row.kind == "dataset" and row.archetype == "FLOW_DECOMPOSITION"
     assert row.module == "agent_fleet.finance_agent.measure_modules.variance_decomposition"
-    assert (row.function, row.version) == ("flow_edges", "1.3.0")
+    assert (row.function, row.version) == ("flow_edges", "1.4.0")
     assert row.dataset_urn == ROW_URN
     assert (row.levels, row.value_op, row.value_columns) == (
         ("program_id", "control_account", "work_package"), "minus", ("bcwp", "acwp"))

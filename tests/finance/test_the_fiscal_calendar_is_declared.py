@@ -27,7 +27,7 @@ from agent_fleet.utils.dataset_contracts import ContractViolation  # noqa: E402
 from tests.finance.test_a_dataset_series_row_draws_from_the_asset import (  # noqa: E402,F401
     _clean_env, frame_012, gate, members, post, series_rows,
 )
-from tests.finance.test_fin_inputs_resolver import frame_of  # noqa: E402
+from tests.finance.test_fin_inputs_resolver import EV, frame_of  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 SAMPLE = REPO / "policy" / "overlays" / "sample" / "fin_calendar"
@@ -219,10 +219,10 @@ def test_with_no_calendar_periods_in_refuses_and_names_the_variable(no_calendar,
 
 def test_with_no_calendar_the_state_read_refuses_period_outside_calendar(monkeypatch):
     frame = frame_of()                              # built under the sample, then the calendar goes
-    assert asset_inputs.state_from_rows(frame, frame["program_id"][0]).facts
+    assert asset_inputs.state_from_rows(frame, frame["program_id"][0], EV()).facts
     monkeypatch.setenv(ENV, "")
     with pytest.raises(ContractViolation) as e:
-        asset_inputs.state_from_rows(frame, frame["program_id"][0])
+        asset_inputs.state_from_rows(frame, frame["program_id"][0], EV())
     assert e.value.rule == "period_outside_calendar"
 
 
@@ -262,13 +262,13 @@ def test_the_engine_reads_the_declared_labels_not_the_sample(cal_dir, monkeypatc
     pid = first3["program_id"][0]
     mapping = dict(zip(["FY26-01", "FY26-02", "FY26-03"], labels))
     relabelled = first3.with_columns(pl.col("period").replace(mapping))
-    assert asset_inputs.state_from_rows(relabelled, pid).facts
+    assert asset_inputs.state_from_rows(relabelled, pid, EV()).facts
     assert periods_in(None) == labels
     assert fiscal_periods() == tuple(labels)
     assert entities.period_order() == {p: i for i, p in enumerate(labels)}
     if cal_dir == PROGRAM_B:
         with pytest.raises(ContractViolation) as e:      # FY26 is outside this deployment's calendar
-            asset_inputs.state_from_rows(first3, pid)
+            asset_inputs.state_from_rows(first3, pid, EV())
         assert e.value.rule == "period_outside_calendar"
         with pytest.raises(NotInModel, match="unknown fiscal period"):
             periods_in(["FY26-01"])
@@ -280,10 +280,10 @@ def test_the_engine_reads_a_declared_fy27_calendar_not_the_sample(tmp_path, monk
     first3 = frame_of().filter(pl.col("period").is_in(["FY26-01", "FY26-02", "FY26-03"]))
     pid = first3["program_id"][0]
     with pytest.raises(ContractViolation) as e:
-        asset_inputs.state_from_rows(first3, pid)
+        asset_inputs.state_from_rows(first3, pid, EV())
     assert e.value.rule == "period_outside_calendar"
     relabelled = first3.with_columns(pl.col("period").str.replace("FY26", "FY27"))
-    assert asset_inputs.state_from_rows(relabelled, pid).facts      # the control: same frame, FY27
+    assert asset_inputs.state_from_rows(relabelled, pid, EV()).facts      # the control: same frame, FY27
     assert periods_in(None) == ["FY27-01", "FY27-02", "FY27-03"]
 
 

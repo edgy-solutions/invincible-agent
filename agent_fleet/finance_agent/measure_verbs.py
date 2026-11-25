@@ -270,6 +270,7 @@ class MeasureVerbRow:
     value_columns: tuple[str, ...] = ()   # one column, or the two of a `minus`
     value_op: str = "column"              # "column" (the one column), "minus" (first less second) or "compare"
     per_path: str = "sum"                 # "sum" (rows add) or "once" (a path's amount counted once)
+    depth: Optional[int] = None           # a flow drawn to its first k levels below the root; None: full depth
     other_threshold: Optional[Decimal] = None
     # A dataset row drawn as MULTI_SERIES (`_check_dataset_series`); every other row the defaults.
     scope_column: str = ""
@@ -342,9 +343,9 @@ def _check_dataset(inputs: dict) -> dict:
     ds = inputs["dataset"]
     if not isinstance(ds, dict):
         raise ValueError("inputs.dataset must be a mapping")
-    unknown = sorted(set(ds) - {"urn", "banner", "contract", "levels", "value", "per_path"})
+    unknown = sorted(set(ds) - {"urn", "banner", "contract", "levels", "value", "per_path", "depth"})
     if unknown:
-        raise ValueError(f"inputs.dataset carries {unknown}; it holds urn, banner, contract, levels, value and per_path only")
+        raise ValueError(f"inputs.dataset carries {unknown}; it holds urn, banner, contract, levels, value, per_path and depth only")
     urn, banner = _check_urn_banner(ds)
     levels = ds.get("levels")
     if (not isinstance(levels, list) or len(levels) < 2
@@ -384,6 +385,15 @@ def _check_dataset(inputs: dict) -> dict:
     per_path = ds.get("per_path", "sum")
     if per_path not in ("sum", "once"):
         raise ValueError("inputs.dataset.per_path must be 'sum' or 'once'")
+    depth = ds.get("depth")
+    if depth is not None and op == "compare":
+        raise ValueError("inputs.dataset.depth is refused on a compare row: its only-in-A and only-in-B "
+                         "counts are taken over the full paths, so a table cut to a depth would disagree "
+                         "with its own verdict")
+    if depth is not None and (not isinstance(depth, int) or isinstance(depth, bool)
+                              or not 1 <= depth <= len(levels) - 1):
+        raise ValueError(f"inputs.dataset.depth must be an integer from 1 to {len(levels) - 1} "
+                         f"(the levels below the root); got {depth!r}")
     raw_t = inputs.get("other_threshold")
     if raw_t is None:
         raise ValueError("missing required key 'inputs.other_threshold'")
@@ -396,7 +406,7 @@ def _check_dataset(inputs: dict) -> dict:
             f"inputs.other_threshold {raw_t!r} must be a Decimal string with 0 <= t < 1") from None
     return {"urn": urn, "banner": banner, "contract": ds["contract"], "levels": tuple(levels),
             "value_columns": columns, "value_op": op, "per_path": per_path, "other_threshold": threshold,
-            "compare_by": compare_by}
+            "compare_by": compare_by, "depth": depth}
 
 
 def _source(raw: dict) -> tuple[str, str, str]:
@@ -491,8 +501,8 @@ def _check_dataset_series(inputs: dict) -> dict:
 def _join_contract(ds: dict, series_kind: bool) -> Any:
     """The contract a dataset row names, loaded, with the row's columns held to it. ValueError.
 
-    Every column the row reads is a contract column: a level, scope, period or status column a
-    string one, a value column a numeric one. The column a read filters on is the contract's scope,
+    Every column the row reads is a contract column declared `nullable: false` (the engine computes
+    on each one): a level, scope, period or status column a string one, a value column a numeric one. The column a read filters on is the contract's scope,
     and a series row's `per_program` and `status` columns are declared determined by it, so the
     read's dependency check is what leaves each one value across the program's rows.
 
@@ -530,6 +540,11 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
     if personal:
         raise ValueError(f"inputs.dataset names personal_data column(s) {personal} of contract {cid!r}; "
                          f"engine-fin releases no personal data")
+    nullable = _contracts.nullable(contract, (*strings, *numbers))
+    if nullable:
+        raise ValueError(f"inputs.dataset reads {nullable}, which contract {cid!r} does not declare "
+                         f"nullable: false: a null in a column a row reads is refused only when the contract "
+                         f"declares it non-nullable")
     wrong = sorted({*_contracts.not_of(contract, strings, {"string"}),
                     *_contracts.not_of(contract, numbers, _contracts.NUMBER_TYPES)})
     if wrong:
@@ -552,6 +567,12 @@ def _check_versions(ds: dict, params: tuple[str, ...], series_kind: bool) -> Non
     value that listed neither would sum every version together, a silent wrong answer."""
     contract = ds["contract"]
     cid, column = contract.contract_id, contract.version_column
+    if column and not series_kind and _contracts.nullable(contract, (column,)):
+        # Every row over a versioned contract reads its version column, so the column is held as the
+        # row's own columns are (`_join_contract`): a null version would pass `version_outside_list`
+        # (`is_in` skips nulls) and fall out of the version filter unseen.
+        raise ValueError(f"contract {cid!r} declares its version column {column!r} without nullable: false; "
+                         f"every row over it reads that column, so a null in it must be refused")
     listed = [p for p in _VERSION_PARAMS if p in params]
     if series_kind:
         if column:
@@ -847,6 +868,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         kind=kind, dataset_urn=dataset.get("urn", ""), banner=dataset.get("banner", ""),
         levels=dataset.get("levels", ()), value_columns=dataset.get("value_columns", ()),
         value_op=dataset.get("value_op", "column"), per_path=dataset.get("per_path", "sum"),
+        depth=dataset.get("depth"),
         other_threshold=dataset.get("other_threshold"),
         scope_column=dataset.get("scope_column", ""), period_column=dataset.get("period_column", ""),
         status_column=dataset.get("status_column", ""), per_period=dataset.get("per_period", {}),
@@ -1010,8 +1032,13 @@ def run_dataset(paths, row: MeasureVerbRow, *, program_id: str) -> list[dict[str
     its `per_path`. The module is called once; each edge's `value` is emitted as `_emit_money`
     emits money (a cent-quantized float beside `value_exact`).
     """
-    edges = row.resolve()(root=program_id, paths=list(paths), other_threshold=row.other_threshold)
-    return _measures._emit_money(edges, money_fields=("value",))
+    cut = list(paths) if row.depth is None else [(tuple(p)[:row.depth], a) for p, a in paths]
+    edges = row.resolve()(root=program_id, paths=cut, other_threshold=row.other_threshold)
+    _measures._emit_money(edges, money_fields=("value",))
+    for edge in edges:
+        if "members" in edge:
+            _measures._emit_money(edge["members"], money_fields=("value",))
+    return edges
 
 
 def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]], *,
@@ -1030,7 +1057,9 @@ def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]], *,
     zeros = sum(1 for e in below if e["sign"] == "zero")
     sinks = sum(1 for e in below if e.get("node_kind") == "other")
     label = row.render.get("value_label", row.name)
-    text = (f"{label}: net {net:.2f} across {len(below)} edges over {len(row.levels) - 1} levels, "
+    n = len(row.levels) - 1
+    depth_text = f"{n}" if row.depth is None else f"{row.depth} of {n}"
+    text = (f"{label}: net {net:.2f} across {len(below)} edges over {depth_text} levels, "
             f"{sinks} 'All other' sink(s) from the collapse, "
             f"{zeros} edge(s) at zero")
     if compare is not None:
