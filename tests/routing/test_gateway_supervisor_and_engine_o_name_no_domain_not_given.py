@@ -18,6 +18,10 @@ by a literal. Where a domain IS present, behaviour and the rendered prompts are 
   d  gateway run config carries no legacy value and validates with domain None
   e  the fan-out log names the entitled domains, never the echoed plan domain
   f  engine O request models default `domain` to None
+  g  supervisor, no config domain: the /plan body carries no `domain` key; control: a set
+     domain is sent exactly
+  h  supervisor, a predicate with no domains: the specialist payload carries no `domain`
+     key; control: the first of the predicate's domains is sent exactly
 """
 from __future__ import annotations
 
@@ -253,3 +257,87 @@ def test_f_engine_o_request_models_default_to_no_domain():
     assert eo.PlanRequest(query="q").domain is None
     assert eo.ResolveRequest(query="q").domain is None
     assert eo.ClassifyPredicateRequest(query="q").domain is None
+
+
+# -- g: the supervisor's /plan body ---------------------------------------------------
+
+def _plan_body(monkeypatch, domain):
+    """The REQUEST body `create_task_plan` posts to engine O's /plan (no precomputed plan)."""
+    seen = []
+
+    def post(url, json=None, **_k):
+        seen.append((url, json))
+        return _resp(url, {"tasks": [], "extracted_concepts": []})
+
+    monkeypatch.setattr(ds.requests, "post", post)
+    cfg = ds.SupervisorQueryConfig(user_query="q", thread_id="th", entitled_domains=[],
+                                   domain=domain)
+    list(ds.create_task_plan.compute_fn.decorated_fn(_Ctx(), cfg))
+    plans = [body for url, body in seen if url == f"{ds.ONTOLOGY_SVC_URL}/plan"]
+    assert len(plans) == 1, seen
+    return plans[0]
+
+
+@pytest.mark.parametrize("domain", [None, ""])
+def test_g_no_config_domain_no_domain_key_in_the_plan_body(monkeypatch, domain):
+    body = _plan_body(monkeypatch, domain)
+    assert body == {"query": "q"}
+    assert "domain" not in body
+
+
+def test_g_control_a_config_domain_is_sent_exactly(monkeypatch):
+    assert _plan_body(monkeypatch, "X") == {"query": "q", "domain": "X"}
+
+
+# -- h: the specialist payload ----------------------------------------------------------
+
+class _EngineResp:
+    status_code = 200
+    text = ""
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"answer": "ok", "data": {}, "sources": []}
+
+
+_ENGINE_URL = "http://engine-x.invalid/do"
+
+
+def _specialist_payload(monkeypatch, predicate_domains):
+    """The payload the real `execute_subtask` posts to the matched predicate's endpoint, for a
+    run with no person (the service leg, so no vault redemption is involved)."""
+    monkeypatch.setattr("agent_fleet.utils.service_identity.mint_supervisor_token",
+                        lambda *a, **k: "svc-token", raising=False)
+    predicate = {"verb_iri": "mesh:aVerb", "endpoint": _ENGINE_URL, "owner_persona": "ANALYST",
+                 "score": 0.99}
+    if predicate_domains is not None:
+        predicate["domains"] = predicate_domains
+    monkeypatch.setattr(ds, "_classify_route",
+                        lambda *a, **k: (ds._ROUTING_MATCHED, dict(predicate), {}))
+    calls = []
+
+    def post(url, json=None, **_k):
+        calls.append((url, json))
+        return _EngineResp()
+
+    monkeypatch.setattr(ds.requests, "post", post)
+    cfg = ds.SupervisorQueryConfig(user_query="q", user_email="", user_persona="ANALYST",
+                                   entitled_domains=["X", "Y"], thread_id="t", trace_id="tr",
+                                   session_id="s")
+    ds.execute_subtask.compute_fn.decorated_fn(_Ctx(), cfg, {"sub_query": "q"})
+    payloads = [body for url, body in calls if url == _ENGINE_URL]
+    assert len(payloads) == 1, [u for u, _ in calls]
+    return payloads[0]
+
+
+@pytest.mark.parametrize("predicate_domains", [[], None], ids=["empty", "missing"])
+def test_h_a_predicate_with_no_domains_sends_no_domain_key(monkeypatch, predicate_domains):
+    payload = _specialist_payload(monkeypatch, predicate_domains)
+    assert "domain" not in payload, payload.get("domain")
+    assert _OLD_DEFAULT not in json.dumps(payload, default=str)
+
+
+def test_h_control_the_predicates_first_domain_is_sent_exactly(monkeypatch):
+    assert _specialist_payload(monkeypatch, ["X", "Y"])["domain"] == "X"
