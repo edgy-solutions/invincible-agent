@@ -1738,6 +1738,10 @@ _CALLER_IDENTITY_MESSAGES = {
         "The service that fetches your identity was refused, so nothing was attempted. "
         "This needs an operator rather than a retry."
     ),
+    "session_expired": (
+        "Your sign-in expired while this answer was being prepared, so the rest of it was "
+        "not attempted. Sign in again if you are asked to, then ask the question again."
+    ),
 }
 
 _CALLER_IDENTITY_DEFAULT_MESSAGE = (
@@ -1782,7 +1786,8 @@ def _redeem_caller_token(context, who, leg: str = "call") -> str:
 
     ``awaiting_reauth`` is a pause, not a failure: ask again after
     ``IDENTITY_REAUTH_POLL_SECONDS`` with a fresh call id. There is no timer here; the
-    bound is the reference's own life, after which the vault answers ``not_found``.
+    wait is bounded by the BFF's ``IDENTITY_REAUTH_WAIT_SECONDS``, after which the vault
+    answers ``session_expired`` and the call fails at once. ``not_found`` fails at once too.
     """
     run_id = str(getattr(context, "run_id", "") or "")
     if not run_id:
@@ -2871,6 +2876,55 @@ def decide_subtask_disposition(context, config, predicate, accepted_params, decl
     return disposition
 
 
+def _unverified_expiry(token: str) -> Optional[float]:
+    """The ``exp`` of a JWT, read WITHOUT verifying it (mirrors
+    ``iagent.identity_vault._expiry_of``; mirrored so the supervisor process does not import
+    the vault). It only decides how to NAME an engine's 401; it is never trusted as identity."""
+    import base64
+    try:
+        payload = token.split(".")[1]
+        exp = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["exp"]
+        return float(exp) if isinstance(exp, (int, float)) else None
+    except Exception:  # noqa: BLE001 -- an unreadable token has no exp bound
+        return None
+
+
+def _caller_identity_result(config, predicate, sub_query, answerer_persona,
+                            icause: str) -> Dict[str, Any]:
+    """The subtask result for a call that was not made because the caller's identity is
+    unavailable. One body for the redemption refusal and for an engine's 401 on an expired
+    token, so the two cannot drift."""
+    return {
+        "persona": answerer_persona,
+        "user_persona": config.user_persona,
+        "answerer_persona": answerer_persona,
+        "predicate_verb_iri": predicate.get("verb_iri"),
+        "sub_query": sub_query,
+        # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
+        # does. routed to a specialist; the caller identity failed, not the routing
+        "route_status": "matched",
+        "expert_response": {
+            # A DISTINCT status, never `engine_unreachable`: the engine is fine.
+            # This is an identity fault, and naming it as one is what keeps the
+            # next diagnosis from starting at the wrong pod.
+            "status": "caller_identity_unavailable",
+            # THE REASON NAMES WHICH STEP FAILED. "vault_redemption_failed" was
+            # wrong for the most common case: when the supervisor cannot
+            # authenticate itself, the vault is never contacted at all.
+            "reason": icause,
+            "message": _CALLER_IDENTITY_MESSAGES.get(
+                icause, _CALLER_IDENTITY_DEFAULT_MESSAGE
+            ),
+            "data": "",
+            "sources": [],
+            # NO RAW EXCEPTION ON THE CARD. The detail is in the log and in the
+            # op metadata, which is where an operator looks; a person who
+            # asked a planning question is not that audience.
+            "error": icause,
+        },
+    }
+
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 @step_spanned("supervisor.execute_subtask")
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
@@ -3729,36 +3783,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 })
             except Exception:  # pragma: no cover
                 pass
-            return {
-                "persona": answerer_persona,
-                "user_persona": config.user_persona,
-                "answerer_persona": answerer_persona,
-                "predicate_verb_iri": predicate.get("verb_iri"),
-                "sub_query": sub_query,
-                # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
-                # does. routed to a specialist; the caller identity failed, not the routing
-                "route_status": "matched",
-                "disposition": ROUTE,
-                "expert_response": {
-                    # A DISTINCT status, never `engine_unreachable`: the engine is fine.
-                    # This is an identity fault, and naming it as one is what keeps the
-                    # next diagnosis from starting at the wrong pod.
-                    "status": "caller_identity_unavailable",
-                    # THE REASON NAMES WHICH STEP FAILED. "vault_redemption_failed" was
-                    # wrong for the most common case: when the supervisor cannot
-                    # authenticate itself, the vault is never contacted at all.
-                    "reason": _icause,
-                    "message": _CALLER_IDENTITY_MESSAGES.get(
-                        _icause, _CALLER_IDENTITY_DEFAULT_MESSAGE
-                    ),
-                    "data": "",
-                    "sources": [],
-                    # NO RAW EXCEPTION ON THE CARD. `_idetail` is in the log and in the
-                    # op metadata above, which is where an operator looks; a person who
-                    # asked a planning question is not that audience.
-                    "error": _icause,
-                },
-            }
+            return {**_caller_identity_result(
+                config, predicate, sub_query, answerer_persona, _icause), "disposition": ROUTE}
 
     try:
         response = requests.post(
@@ -3776,6 +3802,29 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             response.raise_for_status()
             data = response.json()
     except (requests.exceptions.RequestException, ValueError) as exc:
+        # AN ENGINE'S 401 FOR AN EXPIRED TOKEN IS THE SESSION, NOT AN OUTAGE (ruling
+        # 2026-11-24). The engine answered; the caller's token had lapsed in flight. Only when
+        # the token this call carried is itself past its `exp` (within 5 s): a 401 with a live
+        # token, or with no caller token, is not this and takes the path below.
+        _r401 = getattr(exc, "response", None)
+        if (isinstance(exc, requests.exceptions.HTTPError)
+                and getattr(_r401, "status_code", None) == 401 and _caller_token):
+            _exp = _unverified_expiry(_caller_token)
+            if _exp is not None and _exp <= time.time() + 5:
+                context.log.warning(
+                    "execute_subtask: engine at %s answered 401 and the caller's token has "
+                    "expired; naming it as the session, not an outage.", endpoint)
+                try:
+                    context.add_output_metadata({
+                        "caller_identity_unavailable": True,
+                        "endpoint": str(endpoint),
+                        "cause": "session_expired",
+                    })
+                except Exception:  # pragma: no cover
+                    pass
+                return {**_caller_identity_result(
+                    config, predicate, sub_query, answerer_persona, "session_expired"),
+                        "disposition": ROUTE}
         # ValueError covers a 200 with an unparseable body — the engine answered with
         # something that is not JSON, which is a failure to answer, not a successful answer.
         # THE REFUSAL'S OWN BODY, because it names the fix and this route discarded it.
