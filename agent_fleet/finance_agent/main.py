@@ -1148,6 +1148,14 @@ def _asset_read_errors(urn: str):
         }) from exc
 
 
+def _walk(start_label: str, start: Decimal, end_label: str, end: Decimal) -> dict[str, Any]:
+    """The walk's two ends: the float is cent-quantized as `_emit_money` makes it, and
+    `value_exact` is the exact plain decimal (never exponent form, never quantized)."""
+    def end_of(label: str, total: Decimal) -> dict[str, Any]:
+        return {"label": label, "value": float(measures._money(total)), "value_exact": format(total, "f")}
+    return {"start": end_of(start_label, start), "end": end_of(end_label, end)}
+
+
 def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
     """The envelope of a DATASET-kind measure: a governed read of the ROW'S URN as the caller
     (never `FIN_DATASET_URN`, never the seed), the module run once, and the edge table as `rows`.
@@ -1161,9 +1169,10 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
                 row.per_path, program_id, row.contract,
                 **{n: params.get(n) for n in measure_verbs._VERSION_PARAMS if n in row.params},
                 version_column=row.contract.version_column, versions=row.contract.versions)
-            compare = None
+            compare = walk = None
             if isinstance(read, asset_inputs.CompareRead):
                 paths = read.paths
+                walk = _walk(params["version_b"], read.total_b, params["version_a"], read.total_a)
                 difference = read.total_a - read.total_b
                 compare = {"version_a": params["version_a"], "version_b": params["version_b"],
                            "total_a_exact": format(read.total_a, "f"), "total_b_exact": format(read.total_b, "f"),
@@ -1175,6 +1184,11 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
                                format(difference / abs(read.total_b), "f")
                                if read.total_b != 0 else None),
                            "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
+            elif isinstance(read, asset_inputs.MinusRead):
+                paths = read.paths
+                labels = row.render.get("walk_labels") or {}
+                walk = _walk(labels.get("start", row.value_columns[1]), read.total_b,
+                             labels.get("end", row.value_columns[0]), read.total_a)
             else:
                 paths = read
             try:
@@ -1204,6 +1218,7 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
         **({"version": params["version"]} if "version" in row.params else {}),
         **({"compare": compare} if compare is not None else {}),
+        **({"walk": walk} if walk is not None else {}),
         "rows": rows,
     }
     return envelope
