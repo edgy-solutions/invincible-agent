@@ -100,3 +100,34 @@ def test_CONTROL_a_configured_exchange_that_fails_keeps_the_near_expiry_reason(
     _login("svc:supervisor")
     assert _redeem(client, "c1").status_code == 409
     assert v.reauth_reason(RUN) == "token_near_expiry_and_not_refreshable"
+
+
+def _exchange_module():
+    """The ``identity_exchange`` the vault's lazy import reaches: the vault's own package, so
+    the patch lands on the one module object it imports (never a second copy)."""
+    import importlib
+    return importlib.import_module(IdentityVault.__module__.rsplit(".", 1)[0] + ".identity_exchange")
+
+
+@pytest.mark.parametrize("configured, expected", [
+    ("raises", RedemptionOutcome.OK),             # unknown: not refreshable, so released
+    ("true", RedemptionOutcome.NEEDS_REFRESH),    # CONTROL: the same patch, a refresh is possible
+])
+def test_an_exchange_that_cannot_be_read_is_not_refreshable_so_the_token_is_released(
+        monkeypatch, configured, expected):
+    """Gov V2 (#557): ``_exchange_is_configured``'s ``except`` branch is a choice. A broken
+    exchange module must release a still-valid token, never make it look refreshable and
+    stall the answer."""
+    def _configured():
+        if configured == "raises":
+            raise RuntimeError("exchange module broken")
+        return True
+
+    monkeypatch.setattr(_exchange_module(), "configured", _configured)
+    v = IdentityVault(clock=_FakeClock(), wall_clock=lambda: WALL, refresh_margin_seconds=60,
+                      clock_skew_seconds=5)  # the default refreshable
+    tok = _jwt(exp=WALL + 30)
+    v.stash("r", tok, subject=ALICE)
+    r = v.redeem("r", "c1")
+    assert r.outcome == expected
+    assert r.token == (tok if expected == RedemptionOutcome.OK else None)

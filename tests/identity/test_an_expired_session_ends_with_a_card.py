@@ -130,3 +130,33 @@ def test_the_expired_card_unit():
         "components"][0]["markdown_content"]
     assert "could not be completed" in gw._failure_card("s", "t")["components"][0][
         "markdown_content"]
+
+
+@pytest.mark.asyncio
+async def test_a_session_seen_expired_on_a_tick_and_evicted_before_failure_keeps_its_cause(
+        base, vault, monkeypatch):
+    """Gov G2 (#557): the per-tick capture is not redundant with the read at FAILURE.
+    ``VAULT.state()`` evicts first, so an entry past its own life reads None at failure; only
+    the tick that saw ``session_expired`` keeps the cause and the sign-in-expired card."""
+    seen = {}
+
+    def script(n, v, clk):
+        if n == 1:
+            v.mark_awaiting_reauth(RUN, "token_expired_and_not_refreshable")
+        if n == 2:
+            clk.advance(WAIT)  # tick 3's vault read sees session_expired
+        if n == 3:
+            seen["at_tick"] = v.state(RUN)
+            clk.advance(10 ** 9)  # past the entry's own life: evicted before the failure read
+            seen["at_failure"] = v.state(RUN)
+            return "FAILURE"
+        return "STARTED"
+
+    _dagster(monkeypatch, status="STARTED")
+    _script(monkeypatch, vault, script)
+    pairs = _parse(await _drive())
+    assert seen == {"at_tick": "session_expired", "at_failure": None}, seen
+    errs = _of(pairs, "pipeline_error")
+    assert len(errs) == 1 and errs[0]["cause"] == "session_expired"
+    md = _of(pairs, "final_payload")[0]["components"][0]["markdown_content"]
+    assert "Your sign-in expired" in md and "Ask the question again" in md
