@@ -135,9 +135,10 @@ def test_nodes_are_paths_so_one_name_under_two_parents_stays_two_nodes():
     assert signed(xs)[(ROOT, "C", "c1", "x")] == D("-20")
 
 
-def test_edges_carry_exactly_source_target_value_sign_level_node_kind():
+def test_edges_carry_exactly_source_target_value_sign_level_node_kind_and_a_sink_its_members():
     for e in edges_of():
-        assert set(e) == {"source", "target", "value", "sign", "level", "node_kind"}
+        base = {"source", "target", "value", "sign", "level", "node_kind"}
+        assert set(e) == (base | {"members"} if e["node_kind"] == "other" else base)
         assert isinstance(e["target"], list) and e["level"] == len(e["target"]) - 1
         if e["source"] is None:                       # the root edge
             assert e["target"] == [ROOT]
@@ -196,7 +197,7 @@ def test_amounts_are_exact_decimals_with_no_float_in_the_way():
 def test_the_module_is_versioned_and_names_no_case():
     import inspect
     src = inspect.getsource(vd)
-    assert vd.VERSION == "1.3.0"
+    assert vd.VERSION == "1.4.0"
     import re
     for word in ("EAC", "WBS", "control account", "work package", "program", "cost"):
         assert not re.search(rf"b{word}", src, re.I), word
