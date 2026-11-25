@@ -53,12 +53,24 @@ SIGN = {"positive": 1, "negative": -1, "zero": 0}
 BRANCHES = [("B-1", "B-1.1", 100), ("B-1", "B-1.2", 3), ("B-1", "B-1.3", 3),
             ("B-2", "B-2.1", 60), ("B-2", "B-2.2", 60)]
 PERIODS = [f"P{n}" for n in range(1, 13)]
+#: Step 4 (the remainder keeps its members): extra control accounts, each ONE work package carrying
+#: the SAME amount in every period, under two WBS-4 nodes. Under B-1.1.1.1 (beside CA-01) two small
+#: positive accounts form a sink at the control-account level; under B-2.1.1.1 (beside CA-05) a
+#: small positive and a small NEGATIVE account form a sink of MIXED signs. (wbs_1, wbs_2, wbs_3,
+#: wbs_4, control account, the amount in every period). Every one is far below 15% of its parent.
+EXTRA_ACCOUNTS = [
+    ("B-1", "B-1.1", "B-1.1.1", "B-1.1.1.1", "CA-21", 1.0),
+    ("B-1", "B-1.1", "B-1.1.1", "B-1.1.1.1", "CA-22", 0.25),
+    ("B-2", "B-2.1", "B-2.1.1", "B-2.1.1.1", "CA-23", 1.0),
+    ("B-2", "B-2.1", "B-2.1.1", "B-2.1.1.1", "CA-24", -0.5),
+]
 IPTS = [("IPT-A", "IPT-A1"), ("IPT-A", "IPT-A2"), ("IPT-B", "IPT-B1"), ("IPT-B", "IPT-B2")]
 
 
 def b_frame():
     """Five WBS-2 branches, two WBS-3 under each, two WBS-4 under each, one control account under
-    each WBS-4 and TWO work packages under each control account: 40 work packages, 12 periods. A
+    each WBS-4 and TWO work packages under each control account: 40 work packages, 12 periods; then
+    `EXTRA_ACCOUNTS`, four more control accounts of one work package each. A
     control account's two work packages carry the SAME amount in every period. Amounts are
     multiples of 0.25, so every sum is exact."""
     rows, ca, wp = [], 0, 0
@@ -76,6 +88,14 @@ def b_frame():
                             "wbs_4": f"{w2}.{i3}.{i4}", "control_account": f"CA-{ca:02d}",
                             "work_package": f"WP-{wp:04d}", "ipt_1": ipt_1, "ipt_2": ipt_2,
                             "period": period, "bcws": amount, "bcwp": amount, "acwp": amount})
+    for w1, w2, w3, w4, account, amount in EXTRA_ACCOUNTS:
+        ipt_1, ipt_2 = IPTS[wp % 4]
+        wp += 1
+        for period in PERIODS:
+            rows.append({
+                "program_id": PROG_B, "wbs_1": w1, "wbs_2": w2, "wbs_3": w3, "wbs_4": w4,
+                "control_account": account, "work_package": f"WP-{wp:04d}", "ipt_1": ipt_1,
+                "ipt_2": ipt_2, "period": period, "bcws": amount, "bcwp": amount, "acwp": amount})
     return pl.DataFrame(rows)
 
 

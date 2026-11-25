@@ -58,6 +58,8 @@
 
 - **A flow row may declare `inputs.dataset.depth`** (fin; step 3). An integer from 1 to the number of levels below the root cuts each path to its first k levels after `per_path` is applied, so totals are unchanged; the verdict states `over k of n levels`. Absent, the flow is drawn at full depth as before. A compare row may not declare `depth` (refused at load): its only-in-A and only-in-B counts are taken over the full paths, so a cut table would disagree with its own verdict. **No chart change.**
 
+- **The "All other" edge of a flow decomposition carries its `members`** (fin; step 4). The sink edge (`node_kind: "other"`) now carries `members`: one `{target, value, value_exact, sign}` per collapsed child, each child's path and absolute signed net, ordered by value descending then target. Their signed values sum to the sink's signed value exactly; an `item` edge has no `members` key, and the rows reach the card verbatim, so no gateway change. `variance_decomposition` goes to 1.4.0. **Upgrade:** a deployment's own flow row that names `variance_decomposition` must change `version: "1.3.0"` to `"1.4.0"`. Otherwise the engine refuses the row at load, naming both versions, and does not boot. Before rolling, run `scripts/check_measure_verbs.py <policy-repo>/measure_verbs` from the release's checkout: it names every row the release would refuse, this one included, and exits 1.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**

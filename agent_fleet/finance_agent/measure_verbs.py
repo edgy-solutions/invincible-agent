@@ -1034,7 +1034,11 @@ def run_dataset(paths, row: MeasureVerbRow, *, program_id: str) -> list[dict[str
     """
     cut = list(paths) if row.depth is None else [(tuple(p)[:row.depth], a) for p, a in paths]
     edges = row.resolve()(root=program_id, paths=cut, other_threshold=row.other_threshold)
-    return _measures._emit_money(edges, money_fields=("value",))
+    _measures._emit_money(edges, money_fields=("value",))
+    for edge in edges:
+        if "members" in edge:
+            _measures._emit_money(edge["members"], money_fields=("value",))
+    return edges
 
 
 def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]], *,

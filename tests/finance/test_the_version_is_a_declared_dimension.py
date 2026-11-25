@@ -146,7 +146,7 @@ def row_of(fn, contract, urn, levels, value, params, *, shape="FLOW_DECOMPOSITIO
                                "levels": levels, "value": value, "per_path": "sum"},
                    "other_threshold": "0"},
         "computation": {"module": "agent_fleet.finance_agent.measure_modules.variance_decomposition",
-                        "function": "flow_edges", "version": "1.3.0",
+                        "function": "flow_edges", "version": "1.4.0",
                         "derived_from": {"authority": "Test fixture, no external method",
                                          "clause": "A signed sum split down a hierarchy",
                                          "citation": "name-only", "transcription": "each edge is the signed sum beneath its child"}},
