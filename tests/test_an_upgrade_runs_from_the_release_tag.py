@@ -96,6 +96,11 @@ def _upgrade(root: Path, tmp_path: Path, *args: str, env_extra: dict | None = No
         'echo "global: {imageDigests: {}}" > "$d/$f"\n',
         encoding="utf-8", newline="\n",
     )
+    # Both stubs must be executable. On Linux, `type -P` and the PATH lookup skip a file without
+    # the bit, so the runner's own helm came first and the guard below exited 99. Git for
+    # Windows' bash counts any `#!` file as executable, so this was green on the box only.
+    for stub in ("helm", "gh"):
+        os.chmod(bin_dir / stub, 0o755)
     render = tmp_path / "render.yaml"
     render.write_text(
         "kind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n"

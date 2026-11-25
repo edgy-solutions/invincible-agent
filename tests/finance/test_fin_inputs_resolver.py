@@ -1072,13 +1072,28 @@ def test_an_asset_answer_cites_the_ticket_of_the_read_it_computed_over(client, s
 
 
 @_ONE_DECLARED_ONE_BUILT_IN
-def test_the_control_a_ticket_that_stamps_neither_answers_pending_and_no_as_of(client, seam, fn):
-    """The same read, the broker stamping no id and no as-of: the ruled pending text, byte for byte."""
+def test_the_control_a_ticket_that_stamps_neither_answers_pending_and_says_the_as_of_is_unavailable(
+        client, seam, fn):
+    """The same read, the broker stamping no id and no as-of: the ruled pending text, byte for byte
+    (2026-11-08), after the ruled statement that the as-of is unavailable (2026-11-20: "when an
+    as-of is unavailable, say so; never show a blank or a stale date as current")."""
     seam.frame = frame_of().lazy()
     seam.ticket = {"ticket_id": None, "as_of": None}
     r = measure(client, fn, params={"program_id": PROGRAM})
     assert r.status_code == 200, r.text
-    assert r.json()["data_provenance"] == f"{BANNER} (ticket: pending) Source: {URN}"
+    assert r.json()["data_provenance"] == f"{BANNER} (as-of unavailable) (ticket: pending) Source: {URN}"
+
+
+@_ONE_DECLARED_ONE_BUILT_IN
+def test_an_unavailable_as_of_reaches_the_wire_with_the_brokers_reason(client, seam, fn):
+    """Through the route and the client's own receipt allowlist: the broker's reason is said."""
+    seam.frame = frame_of().lazy()
+    seam.ticket = {"ticket_id": "tkt-route-7f3a", "as_of": None, "as_of_source": None,
+                   "as_of_unavailable": "reader_failed"}
+    r = measure(client, fn, params={"program_id": PROGRAM})
+    assert r.status_code == 200, r.text
+    assert r.json()["data_provenance"] == (
+        f"{BANNER} (as-of unavailable: reader_failed) (ticket: tkt-route-7f3a) Source: {URN}")
 
 
 @pytest.mark.parametrize("receipts", [
