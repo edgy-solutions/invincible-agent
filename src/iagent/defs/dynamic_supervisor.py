@@ -161,6 +161,10 @@ class SupervisorQueryConfig(Config):
     #: from the request body: the moment a named ask steers routing it becomes an
     #: authorization surface, and a client that could post a verb could route anywhere.
     pre_resolved: Dict[str, Any] = {}
+    #: THE QUERY IS A LABEL, NOT A QUESTION: a measure the person picked from the askable list.
+    #: The slot filler must not run on it (it would extract "slots" from a name the system
+    #: itself offered). False for every other turn; set only by the gateway for an askable pick.
+    message_is_label: bool = False
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
     # ADR-0008 fallback policy (ADR-0018 simplified: single threshold
@@ -3210,7 +3214,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             resolution = {**resolution, **bound_resolution}
 
     _fill_slots_outcome = ""
-    if not spoken and declared:
+    if getattr(config, "message_is_label", False):
+        # THE QUERY IS A LABEL (a measure picked from the askable list): never slot-filled.
+        # An unbound mandatory parameter becomes the ask at the disposition point below.
+        pass
+    elif not spoken and declared:
         filled = _fill_slots_from_query(
             context,
             query=sub_query,

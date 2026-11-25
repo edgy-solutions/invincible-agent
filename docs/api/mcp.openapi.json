@@ -1960,6 +1960,18 @@
             ],
             "title": "Artifact Id"
           },
+          "askable_pick": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Askable Pick"
+          },
           "bound_slots": {
             "anyOf": [
               {
