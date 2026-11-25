@@ -340,3 +340,18 @@ def test_a_directory_outage_is_logged_and_still_a_503(client, bearer, caplog, mo
     for msg in seen:
         for banned in (IDENT, ALICE, BOB, PROGRAM, *ids):
             assert banned not in msg, (banned, msg)
+
+
+def test_the_body_is_compared_to_the_bearer_ignoring_case_and_spaces(double, client, bearer, caplog):
+    # Gov's E8 seal. A mixed-case bearer holds the `bearer_id.casefold()` side, the padded
+    # mixed-case body holds the `.casefold()` and `.strip()` on the body side.
+    bearer(Who("Alice@Example.com", verified=True))
+    assert _resolve(client, "qzxv wkjh", user_email="  aLICE@example.COM  ")["candidates"] == []
+    f = _one(caplog)
+    assert f["reason"] == "no_match"
+    assert f["bearer"] == "user" and f["verified"] == "true"
+    assert f["body_caller"] == "matches_bearer"
+    caplog.clear()
+    # The control: another person's address reads differs_from_bearer.
+    assert _resolve(client, "qzxv wkjh", user_email=BOB)["candidates"] == []
+    assert _one(caplog)["body_caller"] == "differs_from_bearer"
