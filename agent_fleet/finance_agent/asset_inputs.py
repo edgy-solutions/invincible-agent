@@ -433,6 +433,13 @@ def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
     return df
 
 
+class MinusRead(NamedTuple):
+    """What `read_dataset_rows` returns for a `minus` row: the walk's two ends beside the paths."""
+    paths: list[tuple[tuple[str, ...], Decimal]]    # a less b, one per reduced path
+    total_a: Decimal                                # the program's sum of column a over those paths
+    total_b: Decimal
+
+
 class CompareRead(NamedTuple):
     """What `read_dataset_rows` returns for a comparison of two versions."""
     paths: list[tuple[tuple[str, ...], Decimal]]    # every path in either version: a less b
@@ -447,7 +454,7 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
                       program_id: str, contract: Any, *, version: Optional[str] = None,
                       version_a: Optional[str] = None, version_b: Optional[str] = None,
                       version_column: Optional[str] = None, versions: tuple[str, ...] = (),
-                      ) -> "list[tuple[tuple[str, ...], Any]] | CompareRead":
+                      ) -> "list[tuple[tuple[str, ...], Any]] | CompareRead | MinusRead":
     """`read_rows` for a dataset-kind row: the rows of ONE program, held to the row's `contract`.
 
     The schema is checked against the contract before a row is collected (`check_contract_schema`;
@@ -460,7 +467,8 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     frame carries (`check_contract_rows`); a message names the rule and the column, never a row's
     value.
 
-    RETURNS the `(path below the root, Decimal amount)` list `run_dataset` takes. A row's amount is
+    RETURNS the `(path below the root, Decimal amount)` list `run_dataset` takes (a `MinusRead` for
+    `value_op == "minus"`, carrying that list and the two column totals). A row's amount is
     `Decimal(str(x))`, or for `value_op == "minus"` `Decimal(str(a)) - Decimal(str(b))`. Under
     `per_path == "once"` the rows are grouped by the full level tuple, every row of a group must
     carry the same amount (else `varies_within_path`, naming the column(s), never a value), and the
@@ -532,7 +540,8 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
 
     def reduced(rows: list[tuple[tuple[str, ...], Any]]) -> list[tuple[tuple[str, ...], Any]]:
         """The rows as one amount per path: summed (every row stays), or under `once` taken once
-        (every row of a path carrying the same amount, else `varies_within_path`)."""
+        (every row of a path carrying the same amount, else `varies_within_path`; for a `minus` row the
+        amount is the (a, b) PAIR, so the two totals are unambiguous)."""
         if per_path != "once":
             return rows
         seen: dict[tuple[str, ...], Any] = {}
@@ -546,16 +555,22 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     paths: list[tuple[tuple[str, ...], Any]] = []
     by_version: dict[str, list[tuple[tuple[str, ...], Any]]] = {}
     for r in df.select([*levels[1:], *value_columns, *(named_version if compare else ())]).iter_rows():
-        amount = Decimal(str(r[n]))
+        amount: Any = Decimal(str(r[n]))
         if value_op == "minus":
-            amount -= Decimal(str(r[n + 1]))
+            amount = (amount, Decimal(str(r[n + 1])))
         path = tuple(str(v) for v in r[:n])
         if compare:
             by_version.setdefault(r[-1], []).append((path, amount))
         else:
             paths.append((path, amount))
     if not compare:
-        return reduced(paths)
+        rows = reduced(paths)
+        if value_op != "minus":
+            return rows
+        zero = Decimal(0)
+        return MinusRead(paths=[(p, ab[0] - ab[1]) for p, ab in rows],
+                         total_a=sum((ab[0] for _, ab in rows), zero),
+                         total_b=sum((ab[1] for _, ab in rows), zero))
     sides: list[dict[tuple[str, ...], Decimal]] = []
     for v in (version_a, version_b):
         side: dict[tuple[str, ...], Decimal] = {}
