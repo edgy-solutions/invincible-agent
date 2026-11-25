@@ -1,5 +1,9 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.93 — not yet cut
+
+**Opened at the 0.4.92 cut** (the architect's order of 2026-11-22: after every cut, open the next version as not yet cut, as a small PR). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.92 one. `Chart.yaml` stays at 0.4.92 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
+
 ## 0.4.92 — 2026-11-25
 
 **0.4.92 is 0.4.91 (`950b3eb9`) plus the 59 merges below, `950b3eb9..cad87001`, merged by sha in this order. The set closed on 2026-11-25 with Chris's "go".**
@@ -65,6 +69,8 @@
 | 57 | #548 | `149f62e8` | 74 | Every subtask result says how it was disposed of |
 | 58 | #554 | `7509ca7d` | 74 | The gateway, the supervisor and engine O name no domain a caller was not given |
 | 59 | #563 | `cad87001` | Lane 1 | The 0.4.92 notes carry the finance listing's identity as a known issue |
+
+**Cortex in 0.4.92** (added after the tag, 2026-11-25): the chart pins cortex-ui `1660b84`, which is cortex release `cortex-ui-0.4.0` (digest `cf64568d`). The pin is unchanged since 0.4.91.
 
 **Not in 0.4.92:**
 - **#506**, an instance name is the whole phrase (74). It is a draft and unreviewed. It goes into the next release, in gov's queue after the pair.
