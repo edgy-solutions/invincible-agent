@@ -386,6 +386,10 @@ def _check_dataset(inputs: dict) -> dict:
     if per_path not in ("sum", "once"):
         raise ValueError("inputs.dataset.per_path must be 'sum' or 'once'")
     depth = ds.get("depth")
+    if depth is not None and op == "compare":
+        raise ValueError("inputs.dataset.depth is refused on a compare row: its only-in-A and only-in-B "
+                         "counts are taken over the full paths, so a table cut to a depth would disagree "
+                         "with its own verdict")
     if depth is not None and (not isinstance(depth, int) or isinstance(depth, bool)
                               or not 1 <= depth <= len(levels) - 1):
         raise ValueError(f"inputs.dataset.depth must be an integer from 1 to {len(levels) - 1} "

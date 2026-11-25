@@ -132,6 +132,7 @@ differences under `inputs` and `render`:
   paths are cut to their first `depth` levels after `per_path` has been applied, so totals are
   unchanged, and the verdict says `over k of n levels`; absent, the flow is drawn at full depth.
   The depth is the row's, not the caller's: `program_id` stays the dataset kind's only parameter.
+  A compare row (`value: {compare: …}`) may not declare `depth`, refused at load: its only-in-A and only-in-B counts are taken over the full paths, so a cut table would disagree with its own verdict.
   A person choosing the level of detail when asking is a later step, part of parity with how
   finance teams work, and it needs its own slot, census and refusal (ruled 2026-11-24).
 - **A version is a declared dimension.** A contract may carry `version_dimension: {column: <string column>,

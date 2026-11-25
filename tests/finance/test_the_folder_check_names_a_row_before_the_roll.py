@@ -114,3 +114,18 @@ def test_the_check_and_the_boot_agree(env, tmp_path):
         measure_verbs.load_measure_verbs(overlay_dirs=[old_folder(tmp_path)])
     good = measure_verbs.load_measure_verbs(overlay_dirs=[good_folder(tmp_path)])
     assert {r.measure_id for r in good} >= {p.stem for p in (B_DIR / "measure_verbs").glob("*.yaml")}
+
+
+def test_a_duplicate_measure_id_across_two_files_is_refused_by_the_composition(env, tmp_path):
+    """Each file builds alone; only the composition sees that both declare one `measure_id`."""
+    f = tmp_path / "dup"
+    f.mkdir()
+    for name in ("first.yaml", "second.yaml"):
+        shutil.copyfile(B_DIR / "measure_verbs" / WBS, f / name)
+    code, out, err = run(env, f)
+    assert code == 1, out + err
+    lines = [ln for ln in out.splitlines() if ln.startswith("REFUSED (composition):")]
+    assert len(lines) == 1 and "both declare measure_id" in lines[0], out
+    assert "REFUSED " not in out.replace(lines[0], ""), "and nothing else is refused"
+    with pytest.raises(measure_verbs.MeasureVerbError, match="both declare measure_id"):
+        measure_verbs.load_measure_verbs(overlay_dirs=[f])
