@@ -75,7 +75,7 @@ def bearer(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _level(caplog):
-    caplog.set_level(logging.INFO, logger=engine.log.name)
+    caplog.set_level(logging.INFO, logger=engine._reason_log.name)
 
 
 def _post(client, route, body_email=None):
@@ -169,6 +169,7 @@ def test_5_an_unverified_bearer_is_a_401_and_the_body_is_not_used(
     refused = _lines(caplog, "fin.listing_refused")
     assert [x.getMessage() for x in refused] == [
         f"fin.listing_refused route={route} reason={code}"]
+    assert all(x.name.endswith(".reasons") for x in refused)
     assert all(DAVE not in x.getMessage() for x in caplog.records)
 
 

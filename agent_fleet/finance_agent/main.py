@@ -2194,7 +2194,7 @@ def _listing_session_expired(c: Any) -> bool:
 def _log_listing_refused(route: str, code: str) -> None:
     """One WARNING line per listing refusal. The route and the code only: no email, no authz
     id, no token or reason text."""
-    log.warning("fin.listing_refused route=%s reason=%s", route, code)
+    _reason_log.warning("fin.listing_refused route=%s reason=%s", route, code)
 
 
 _LISTING_NOT_VERIFIED = ("a finance listing reads the caller from a verified bearer; "
