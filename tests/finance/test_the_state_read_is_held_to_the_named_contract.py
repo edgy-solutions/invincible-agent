@@ -149,3 +149,29 @@ def test_the_reader_raises_none_of_the_retired_rule_ids():
     planted = ('raise ContractViolation(\n    "program_name_not_unique", "m")\n'
                "ContractViolation('duplicate_work_package_period', \"m\")")
     assert _retired_raised(planted) == ["program_name_not_unique", "duplicate_work_package_period"]
+
+
+def test_a_null_outranks_a_version_outside_the_list_on_the_path_reader():
+    """`read_dataset_rows` checks the contract's values before `version_outside_list`, the same
+    precedence `state_from_rows` keeps: a frame breaking both answers `null_value`, naming the column."""
+    b = ROOT / "tests" / "fixtures" / "fin_program_b" / "contracts"
+    contract = dataset_contracts.load_contract("program_b_versions", b)
+    assert "amount" in contract.non_nullable and contract.versions
+    levels = ("program_id", "wbs_2")
+    wbs = {c: ["x", "y"] for c in ("wbs_3", "wbs_4", "wbs_5", "control_account", "period")}
+    foreign = pl.DataFrame({**wbs, "program_id": ["PRG-B", "PRG-B"], "wbs_2": ["B-1", "B-2"],
+                            "version": [contract.versions[0], "NOT-A-VERSION"], "amount": [1, 2]})
+
+    def read(frame):
+        return asset_inputs.read_dataset_rows(
+            lambda urn: frame.lazy(), URN, levels, ("amount",), "column", "sum", "PRG-B", contract,
+            version=contract.versions[0], version_column=contract.version_column, versions=contract.versions)
+
+    # the control: the foreign version alone is version_outside_list
+    with pytest.raises(asset_inputs.ContractViolation) as ei:
+        read(foreign)
+    assert ei.value.rule == "version_outside_list"
+    both = foreign.with_columns(pl.Series("amount", [1, None], dtype=pl.Int64))
+    with pytest.raises(asset_inputs.ContractViolation) as ei:
+        read(both)
+    assert ei.value.rule == "null_value" and "amount" in ei.value.message
