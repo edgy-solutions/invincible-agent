@@ -858,3 +858,25 @@ period outside a declared calendar is refused with the same rule id.
 
 **The template names this kind.** `contracts/ev_fixture.yaml` gives `period.calendar`: the
 `calendar_id` of the declared `fin_calendar` the dataset's periods are drawn from.
+
+## The two built-in lookups, and the contract keys they read
+
+`fin_calendar_periods` lists the periods of the declared fiscal calendar in the calendar's own order
+(never sorted by label) and marks the period the data reports through. `fin_hierarchy_children` takes
+`element` and an optional `depth` (an integer of at least 1, default 1) and lists the element's
+children down that many levels, no further than the work package. Both answer an
+`INSTANCES_BY_PROPERTY` table with no amount, unit or verdict, are asset-only (with no dataset
+configured they refuse, and never answer from the seed), and read the asset as the caller.
+
+They read two optional keys of the dataset contract (ADR-0066):
+
+- `status_period`: one declared string column, `nullable: false`, determined by the contract's scope.
+  Its value in the program's rows names the status period. A value outside the declared calendar is
+  refused (`period_outside_calendar`). With no key, nothing is marked.
+- `hierarchy`: two or more distinct declared string columns, `nullable: false`, outermost first; the
+  last must determine the rest. The last two are the shipped levels (control account, work package);
+  any column above them is a WBS level, declared by the contract and never by the engine. With no key
+  the lookup refuses `hierarchy_not_declared`.
+
+An element named at more than one level is refused (`element_ambiguous`), naming the levels; a depth
+that is not an integer of at least 1 is refused (`bad_depth`) before anything is read.

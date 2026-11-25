@@ -638,6 +638,21 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "expected_fields": ["title", "columns", "rows", "row_identity", "target"],
         "description": "Renders mesh:WhereUsedSet as an INSTANCES_BY_PROPERTY table - one row per end item and program a part is used in, with its rolled-up quantity per end item and the configuration the row was answered from",
     },
+    # engine-fin's two lookups (ruled 2026-11-25): no amounts, one table each.
+    {
+        "subject_uri": "fin:FiscalCalendarPeriods",
+        "object_uri": "mesh:InstancesByProperty",
+        "archetype": "INSTANCES_BY_PROPERTY",
+        "expected_fields": ["title", "columns", "rows", "row_identity", "target"],
+        "description": "Renders fin:FiscalCalendarPeriods as an INSTANCES_BY_PROPERTY table - one row per period of the declared fiscal calendar in calendar order, the status period marked",
+    },
+    {
+        "subject_uri": "fin:HierarchyChildren",
+        "object_uri": "mesh:InstancesByProperty",
+        "archetype": "INSTANCES_BY_PROPERTY",
+        "expected_fields": ["title", "columns", "rows", "row_identity", "target"],
+        "description": "Renders fin:HierarchyChildren as an INSTANCES_BY_PROPERTY table - one row per descendant of a named element, with its level, role, parent and depth",
+    },
 ]
 
 

@@ -176,9 +176,11 @@ _ALLOWLIST = frozenset({
     "mesh:failureTrendForThisPlatformByMonth",
     "mesh:filterByTag",
     "mesh:finBurnRate",
+    "mesh:finCalendarPeriods",  # 2026-11-25 built-in lookup; allowlisted like every fin verb, architect to confirm
     "mesh:finEacCalculation",
     "mesh:finEacComparison",
     "mesh:finFundingStatus",
+    "mesh:finHierarchyChildren",  # 2026-11-25 built-in lookup; see finCalendarPeriods
     "mesh:finPerformanceIndices",
     "mesh:finVarianceAnalysis",
     "mesh:finVarianceDrivers",

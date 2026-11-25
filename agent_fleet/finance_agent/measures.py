@@ -57,6 +57,8 @@ OUTPUT_URI: dict[str, str] = {
     "fin_burn_rate":           FIN + "BurnRateSeries",
     "fin_variance_drivers":    FIN + "VarianceDriverRanking",
     "fin_funding_status":      FIN + "FundingStatusGrid",
+    "fin_calendar_periods":    FIN + "FiscalCalendarPeriods",
+    "fin_hierarchy_children":  FIN + "HierarchyChildren",
 }
 
 
@@ -1344,3 +1346,27 @@ def fin_funding_status(
         ),
         money_fields=_FUNDING_MONEY_FIELDS,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. fin_calendar_periods / fin_hierarchy_children  ->  INSTANCES_BY_PROPERTY lookups
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# TWO LOOKUPS, NO AMOUNTS (ruled 2026-11-25): the periods of the declared fiscal calendar, and the
+# children of a named element of the declared hierarchy. Neither has a unit or a verdict, so
+# neither is in VALUE_UNIT, VERDICT or SUMMARY. They answer ONLY from the deployment's declared
+# dataset, as the caller (`main._lookup_envelope`, `lookups`, `asset_inputs.read_*`); the seed
+# carries neither a calendar nor a hierarchy declaration. These functions exist so the slots derive
+# from a signature as every verb's do (ADR-0030: `slots_for` reads `getattr(measures, fn)`), and
+# they refuse on the seed, which is what a call without a configured dataset reaches.
+
+def fin_calendar_periods(state: FinanceState, *, program_id: str) -> list[dict[str, Any]]:
+    """The periods of the declared fiscal calendar, with the data's status period marked."""
+    raise NotInModel("this lookup reads the deployment's declared dataset; none is configured")
+
+
+def fin_hierarchy_children(state: FinanceState, *, program_id: str, element: str,
+                           depth: int = 1) -> list[dict[str, Any]]:
+    """The children of `element`, down `depth` levels (default 1) and no further than the work
+    package. No amount."""
+    raise NotInModel("this lookup reads the deployment's declared dataset; none is configured")

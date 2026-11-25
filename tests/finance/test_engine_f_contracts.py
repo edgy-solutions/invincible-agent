@@ -32,7 +32,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from agent_fleet.finance_agent import main as engine  # noqa: E402
-from agent_fleet.finance_agent import measures, slots  # noqa: E402
+from agent_fleet.finance_agent import lookups, measures, slots  # noqa: E402
 from agent_fleet.finance_agent.entities import MethodRequired  # noqa: E402
 from agent_fleet.finance_agent.seed import build_seed, check_consistency  # noqa: E402
 
@@ -449,6 +449,8 @@ def test_every_response_discloses_that_the_data_is_notional(member):
     from fastapi.testclient import TestClient
     with TestClient(engine.app) as client:
         for fn in measures.OUTPUT_URI:
+            if fn in lookups.LOOKUP_FNS:
+                continue  # asset-only lookups (ruled 2026-11-25): the asset's own banner, never the seed's
             params = {"program_id": "NP-MERIDIAN"}
             if fn == "fin_eac_calculation":
                 params["method"] = "CPI"
