@@ -46,6 +46,11 @@ CALLER = "alice@example.com"
 
 @pytest.fixture
 def member(monkeypatch):
+    """A caller every program admits, presented as the listings now require (ruled 2026-11-25):
+    a VERIFIED bearer whose subject is the body's `user_email`."""
+    class _Who:
+        authz_id, verified, reason, raw = CALLER, True, "verified", {}
+    monkeypatch.setattr(engine, "_current_caller", lambda: _Who())
     monkeypatch.setattr(engine, "can_view_program", lambda program, caller_id, **kw: True)
 
 

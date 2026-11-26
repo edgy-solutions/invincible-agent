@@ -1076,8 +1076,11 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # `data_provenance` IS carried. It was not in the accepted three-field tuple, but the 11-08
     # ruling (it "arrives whole: dataset URN, as-of, ticket id") answered cortex's 11-06 question
     # for every served table, as MULTI_SERIES above already carries it; cortex's row reads it.
+    # `walk` IS carried (ruled 2026-11-24, R3): a minus or compare row's start and end totals,
+    # `{start, end}` each `{label, value, value_exact}`. A column row sends none, and the loop below
+    # carries a passthrough key only when the producer supplied it, so a column card is unchanged.
     # The seal is tests/finance/test_the_flow_table_reaches_the_card.py.
-    "FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict", "data_provenance")),
+    "FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict", "data_provenance", "walk")),
 }
 
 
