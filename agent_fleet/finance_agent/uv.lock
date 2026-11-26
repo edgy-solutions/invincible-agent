@@ -504,8 +504,8 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.17.0"
-source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.17.0#a85c5f99233962a8c34e6eb0f399c23030865ee4" }
+version = "0.19.0"
+source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.19.0#02e3db2e3eabfe32efc4af8b7d647bdde995472f" }
 dependencies = [
     { name = "clickhouse-connect" },
     { name = "connectorx" },
@@ -575,7 +575,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.17.0" },
+    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.19.0" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },

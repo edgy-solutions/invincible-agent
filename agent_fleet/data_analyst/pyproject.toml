@@ -17,7 +17,7 @@ dependencies = [
     "polars",
     "httpx",
     "python-dotenv",
-    "edgy-dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@v0.17.0",
+    "edgy-dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@v0.19.0",
     "pyjwt[crypto]",
     "acryl-datahub",
     "langfuse>=3.0.0,<5",   # ADR-0038 v4 telemetry (also pulled transitively by the leaf)

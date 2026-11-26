@@ -929,7 +929,7 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.17.0"
+version = "0.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "clickhouse-connect" },
@@ -946,9 +946,9 @@ dependencies = [
     { name = "requests" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/28/6bc760b7325cd9d099f1b950b9ad3df876d2d641f965e55d2dec9f6641fb/edgy_dag_tools-0.17.0.tar.gz", hash = "sha256:28ee4ed9e10bdfe7a773798dc1eca6b9450f675c99ab46e57d38d1ed31a5a298", size = 2223486, upload-time = "2026-11-19T03:31:36.758Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/5c/d2eb96badd1f96626aa90de71de08ae472c821b680c09aa6ba9b7c359c89/edgy_dag_tools-0.19.0.tar.gz", hash = "sha256:337d989787fbf3619b00a0ad87e565a28ec18188206a88e0dc12f298f93bb768", size = 2649776, upload-time = "2026-11-25T16:22:05.185Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/66/5172a303f4372dc1d12e2e3216c3ebfbd5544164fa2933bc198c5df78c58/edgy_dag_tools-0.17.0-py3-none-any.whl", hash = "sha256:5d58f30b18e701ebb283a4f147000a5e896887d5d61e050db06e25200fa958fe", size = 843137, upload-time = "2026-11-19T03:31:34.866Z" },
+    { url = "https://files.pythonhosted.org/packages/65/62/1315591ea6f2f32b434e4a43197194c8cc9d7c50f1fe766f5b163e6fbc14/edgy_dag_tools-0.19.0-py3-none-any.whl", hash = "sha256:3652043a3f30a477818c69730b1827d4a69a3a71b0962c76ddf4a6e139d373b3", size = 865241, upload-time = "2026-11-25T16:22:03.64Z" },
 ]
 
 [[package]]
@@ -1435,7 +1435,7 @@ requires-dist = [
     { name = "dagster", specifier = ">=1.12.20" },
     { name = "dagster-postgres" },
     { name = "duckdb", marker = "extra == 'agent-fleet'", specifier = "==1.5.2" },
-    { name = "edgy-dag-tools", specifier = "==0.17.0" },
+    { name = "edgy-dag-tools", specifier = "==0.19.0" },
     { name = "fastapi" },
     { name = "fastapi", marker = "extra == 'agent-fleet'" },
     { name = "h2", marker = "extra == 'agent-fleet'" },
