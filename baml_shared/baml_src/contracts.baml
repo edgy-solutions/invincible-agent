@@ -90,10 +90,10 @@ class AgentResponse {
 /// Classifies a user query against dynamically-provided ontology classes.
 /// The active_ontology_classes string is injected at runtime from the RDF
 /// graph — it contains a newline-delimited list of valid ontology URIs.
-function ClassifyDomainIntent(query: string, domain: string) -> SemanticResolution {
+function ClassifyDomainIntent(query: string, domain: string?) -> SemanticResolution {
   client MainAgent
   prompt #"
-    You are a semantic classifier for the {{ domain }} domain.
+    You are a semantic classifier{% if domain %} for the {{ domain }} domain{% endif %}.
 
     You do two jobs in one pass:
 
@@ -1010,7 +1010,7 @@ function ClassifyPredicate(
   query: string,
   subject_uri: string,
   subject_reasoning: string,
-  domain: string,
+  domain: string?,
 ) -> PredicateClassification {
   // Same client rationale as /resolve's ClassifyDomainIntent: MainAgent has
   // Ollama as its terminal fallback, so this works on sandbox (no
@@ -1036,10 +1036,10 @@ function ClassifyPredicate(
     Class IRI:    {{ subject_uri }}
     Why:          {{ subject_reasoning }}
 
-    DOMAIN:
+    {% if domain %}DOMAIN:
     {{ domain }}
 
-    GUIDANCE:
+    {% endif %}GUIDANCE:
     - The subject is a STRONG signal. A verb whose description says it
       operates on catalog assets does NOT belong on a WorkInstruction,
       even if the verb name and the query share the word "describe".

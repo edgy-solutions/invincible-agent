@@ -25,16 +25,17 @@ the first symptom three layers away. Prose names and component names are differe
 """
 from __future__ import annotations
 
+import collections
 import copy
 import hashlib
 import importlib
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager, contextmanager
-import re
 import threading
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import httpx
@@ -46,13 +47,14 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import asset_inputs
     import cdrl
     import export
+    import export_dates
     import export_profiles
     import instance_overlays
     import measure_verbs
     import measures
     import state_codec
     from entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
@@ -60,13 +62,14 @@ except ImportError:
     from agent_fleet.finance_agent import asset_inputs
     from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import export_dates
     from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import instance_overlays
     from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
     from agent_fleet.finance_agent.entities import (
-        FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
+        MethodRequired, NotInModel, SourceUnavailable, Unentitled, fiscal_periods, periods_in,
     )
     from agent_fleet.finance_agent.seed import build_seed, check_consistency, notional_banner
     from agent_fleet.finance_agent.slots import (
@@ -76,19 +79,69 @@ except ImportError:
 try:  # same three-shape idiom; `utils` is a sibling top-level module in the flattened image
     from utils.subject_coverage import dead_end_classes as _dead_end
     from utils.subject_coverage import unroutable_classes as _unroutable
-    from utils.program_membership import can_view_program
+    from utils.program_membership import can_view_program, directory_configured
     from utils.entitled_domains import entitled_domains
     from utils.recipient_readers import can_read_recipient
     from utils.export_capability import can_export
 except ImportError:
     from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
     from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
-    from agent_fleet.utils.program_membership import can_view_program
+    from agent_fleet.utils.program_membership import can_view_program, directory_configured
     from agent_fleet.utils.entitled_domains import entitled_domains
     from agent_fleet.utils.recipient_readers import can_read_recipient
     from agent_fleet.utils.export_capability import can_export
 
 log = logging.getLogger(__name__)
+
+# The reason lines (`fin.resolve_empty`, `fin.enumerate_empty`) go through their own logger, so the
+# engine can make THEM visible at INFO without touching root or `log`.
+_reason_log = logging.getLogger(f"{__name__}.reasons")
+_REASON_MARK = "_fin_reason_handler"
+
+
+def _emits_info(lg: logging.Logger) -> bool:
+    """Would an INFO record on `lg` reach a handler? Both the effective level and a handler on
+    the propagation chain must allow it (otherwise it falls to `logging.lastResort`, WARNING)."""
+    if lg.getEffectiveLevel() > logging.INFO:
+        return False
+    cur: Optional[logging.Logger] = lg
+    while cur:
+        if cur.handlers:
+            return True
+        cur = cur.parent if cur.propagate else None
+    return False
+
+
+def _ensure_reasons_visible() -> bool:
+    """Make the reason lines visible at INFO IF AND ONLY IF they would otherwise vanish.
+
+    Additive and deferential, as `iagent_mesh.transport_auth.ensure_gauge_visible` is: if the
+    records already emit, do nothing; if only the level filters them, lower the level on
+    `_reason_log` alone; only with no handler anywhere on the chain attach one stdout handler
+    to `_reason_log`, never to root. Idempotent. `FIN_REASON_LOG_AUTOCONFIG=0` disables it.
+    Returns True if this call changed anything.
+    """
+    if os.getenv("FIN_REASON_LOG_AUTOCONFIG", "1").lower() in ("0", "false", "no"):
+        return False
+    if _emits_info(_reason_log):
+        return False
+    changed = False
+    if _reason_log.getEffectiveLevel() > logging.INFO:
+        _reason_log.setLevel(logging.INFO)
+        changed = True
+    if _emits_info(_reason_log):
+        return changed
+    if not any(getattr(h, _REASON_MARK, False) for h in _reason_log.handlers):
+        h = logging.StreamHandler(sys.stdout)
+        h.setLevel(logging.INFO)
+        h.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+        setattr(h, _REASON_MARK, True)
+        _reason_log.addHandler(h)
+        changed = True
+    return changed
+
+
+_ensure_reasons_visible()
 
 # This engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml): who may
 # download a package for one of ITS recipient scopes (`export.RECIPIENT_SCOPES`). Identity, not a
@@ -504,8 +557,18 @@ def _declared_input_uri() -> str:
 def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]:
     """`program_id` / `window` slots EQUAL to `fin_performance_indices`'s, filtered to the row's
     params. Derived, never hand-written: a slot typed here is a second declaration of a fact
-    the signature already makes."""
-    return [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+    the signature already makes.
+
+    A dataset row that lists a version param (`version`, `version_a`, `version_b`) gets one more
+    slot each, with the shape of `fin_eac_calculation`'s `method`, an existing required enum: its
+    `values` are the row's contract's declared versions, in declared order. The list is the
+    contract's, never read from the data."""
+    slots = [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+    if row.contract is not None and row.contract.versions:
+        (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
+        slots += [{**enum, "name": n, "values": list(row.contract.versions)}
+                  for n in measure_verbs._VERSION_PARAMS if n in row.params]
+    return slots
 
 
 def _registration_calls() -> list[dict[str, Any]]:
@@ -514,7 +577,7 @@ def _registration_calls() -> list[dict[str, Any]]:
     seal that pins what is registered -- the loop that registered and the test that checked it
     were two copies of one fact. Each carries the measure's `fn` rather than a URL: the lifespan
     builds `endpoint_url` from it, so the verb is in the path where the registration is made."""
-    periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
+    periods = [p for p in fiscal_periods() if any(f.period == p for f in STATE.facts)]
     plan = [
         (v, v["input_uri"], "engine_fin_finance") for v in VERBS
     ] + [
@@ -864,6 +927,35 @@ def list_verbs() -> dict[str, Any]:
     ]}
 
 
+def _answer_sources(urn: Optional[str], receipt: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The `sources` of an answer: the one dataset it was computed over, with its as-of (ruled
+    2026-11-23). Empty when the answer read no asset (the seed). Built from the receipt the answer's
+    `data_provenance` cites, never from a second read. The label is the name part of a
+    `urn:li:dataset:(<platform>,<name>,<env>)` URN, else the whole URN."""
+    if not urn or receipt is None:
+        return []
+    label = urn
+    if urn.startswith("urn:li:dataset:(") and urn.endswith(")"):
+        parts = urn[len("urn:li:dataset:("):-1].split(",")
+        if len(parts) == 3 and parts[1]:
+            label = parts[1]
+    as_of = export_dates.data_as_of(receipt)
+    return [{
+        "type": "catalog_asset",
+        "label": label,
+        "uri": urn,
+        "snippet": f"Data as of: {as_of}. {asset_inputs.ticket_clause(receipt)}",
+        "data_as_of": as_of,
+    }]
+
+
+def _source_sources(source: Optional[dict[str, str]], receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`_answer_sources` for the state builders, whose `source` is None, a seed or an asset."""
+    if source and source["kind"] == "asset":
+        return _answer_sources(source["urn"], _the_receipt(receipts, source["urn"]))
+    return []
+
+
 def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[str, Any]:
     """Execute one verb and build the envelope `/measure/{fn}` serves.
 
@@ -959,6 +1051,7 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
         # into a deck, and a docstring is not visible from a screenshot.
         "data_provenance": _source_provenance(source, receipts),
         **({} if source is None else {"data_source": source}),
+        **({"sources": _src} if (_src := _source_sources(source, receipts)) else {}),
         # COMPUTED FROM THE ROWS, so it is emitted here rather than declared in a table — and
         # ABSENT WHEN THERE IS NOTHING TO SAY. A verdict key holding None would make the card
         # render an empty caption slot; omission is the honest-absence rule this envelope
@@ -997,7 +1090,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
     if missing:
         raise HTTPException(status_code=422, detail={
             "needs_slots": missing, "question": refusal_for(
-                "fin_performance_indices", [s for s in slots_for("fin_performance_indices")
+                "fin_performance_indices", [s for s in _declared_slots(row)
                                             if s["name"] in missing]),
         })
     if row.kind == measure_verbs.KIND_DATASET:
@@ -1023,6 +1116,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
         **({"reference": dict(row.reference)} if row.reference else {}),
         "data_provenance": _source_provenance(source, receipts),
         **({} if source is None else {"data_source": source}),
+        **({"sources": _src} if (_src := _source_sources(source, receipts)) else {}),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.declared_verdict(row, rows)) is not None else {}),
@@ -1063,8 +1157,9 @@ def _asset_state(urn: str, params: dict[str, Any], receipts: list[dict[str, Any]
     window = params.get("window")
     periods = periods_in(window) if window is not None else None  # an unknown period: no read
     with _asset_read_errors(urn):
-        df = asset_inputs.read_rows(_ticketed_reader(receipts), urn, program_id, periods)
-        return asset_inputs.state_from_rows(df, program_id)
+        contract = asset_inputs.dataset_contract()
+        df = asset_inputs.read_rows(_ticketed_reader(receipts), urn, program_id, periods, contract)
+        return asset_inputs.state_from_rows(df, program_id, contract)
 
 
 @contextmanager
@@ -1105,6 +1200,14 @@ def _asset_read_errors(urn: str):
         }) from exc
 
 
+def _walk(start_label: str, start: Decimal, end_label: str, end: Decimal) -> dict[str, Any]:
+    """The walk's two ends: the float is cent-quantized as `_emit_money` makes it, and
+    `value_exact` is the exact plain decimal (never exponent form, never quantized)."""
+    def end_of(label: str, total: Decimal) -> dict[str, Any]:
+        return {"label": label, "value": float(measures._money(total)), "value_exact": format(total, "f")}
+    return {"start": end_of(start_label, start), "end": end_of(end_label, end)}
+
+
 def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
     """The envelope of a DATASET-kind measure: a governed read of the ROW'S URN as the caller
     (never `FIN_DATASET_URN`, never the seed), the module run once, and the edge table as `rows`.
@@ -1113,9 +1216,33 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     receipts: list[dict[str, Any]] = []
     try:
         with _asset_read_errors(urn):
-            paths = asset_inputs.read_dataset_rows(
+            read = asset_inputs.read_dataset_rows(
                 _ticketed_reader(receipts), urn, row.levels, row.value_columns, row.value_op,
-                row.per_path, program_id, row.contract)
+                row.per_path, program_id, row.contract,
+                **{n: params.get(n) for n in measure_verbs._VERSION_PARAMS if n in row.params},
+                version_column=row.contract.version_column, versions=row.contract.versions)
+            compare = walk = None
+            if isinstance(read, asset_inputs.CompareRead):
+                paths = read.paths
+                walk = _walk(params["version_b"], read.total_b, params["version_a"], read.total_a)
+                difference = read.total_a - read.total_b
+                compare = {"version_a": params["version_a"], "version_b": params["version_b"],
+                           "total_a_exact": format(read.total_a, "f"), "total_b_exact": format(read.total_b, "f"),
+                           "difference_exact": format(difference, "f"),
+                           # A FRACTION (0.25 is 25%), over abs(b) so its sign is the difference's;
+                           # None where b's total is zero, never 0 or 1 (measures._ratio's rule).
+                           # format "f", never str(): a cent on a billion is "1E-11" under str().
+                           "difference_percent_of_b": (
+                               format(difference / abs(read.total_b), "f")
+                               if read.total_b != 0 else None),
+                           "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
+            elif isinstance(read, asset_inputs.MinusRead):
+                paths = read.paths
+                labels = row.render.get("walk_labels") or {}
+                walk = _walk(labels.get("start", row.value_columns[1]), read.total_b,
+                             labels.get("end", row.value_columns[0]), read.total_a)
+            else:
+                paths = read
             try:
                 rows = measure_verbs.run_dataset(paths, row, program_id=program_id)
             except ValueError as exc:
@@ -1137,12 +1264,23 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
                    "other_label": importlib.import_module(row.resolved_module).OTHER_LABEL},
         "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
         "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
-        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows)) is not None else {}),
+        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
+        **({"version": params["version"]} if "version" in row.params else {}),
+        **({"compare": compare} if compare is not None else {}),
+        **({"walk": walk} if walk is not None else {}),
         "rows": rows,
     }
     return envelope
+
+
+def _row_calendar_labels(row: "measure_verbs.MeasureVerbRow") -> Optional[tuple[str, ...]]:
+    """The labels of the calendar the row's contract resolved to at load, in the CURRENT
+    composition; None when that id is no longer declared (the env changed after load)."""
+    cal = measure_verbs._fiscal_calendar.declared_calendars().get(row.calendar_id)
+    return cal.labels if cal is not None else None
 
 
 def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
@@ -1158,7 +1296,7 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
                 _ticketed_reader(receipts), urn, scope=row.scope_column, period=row.period_column,
                 status=row.status_column, per_period=tuple(row.per_period.values()),
                 per_program=tuple(row.per_program.values()), program_id=program_id,
-                contract=row.contract)
+                contract=row.contract, calendar=_row_calendar_labels(row))
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
     rows = measure_verbs.run_dataset_series(read, row)
@@ -1174,6 +1312,7 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
         **({"status_period": read.status} if row.status_column else {}),
         "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
         "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.dataset_series_verdict(row, rows, read.status))
@@ -1250,7 +1389,7 @@ def _package_provenance(program_source: Optional[dict[str, Any]],
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
-    return name == "program_id"
+    return name == "program_id" or name in measure_verbs._VERSION_PARAMS
 
 
 @app.post("/measure/{fn}")
@@ -1302,14 +1441,8 @@ def _request_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _valid_as_of(v: Optional[str]) -> Optional[str]:
-    """`as_of` is a calendar date or absent. Shared by every export request."""
-    if v is None:
-        return v
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-        raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
-    date.fromisoformat(v)  # a ValueError here is a 422 too
-    return v
+_AS_OF_REFUSED = ("as_of is not accepted: an export's generated date is stamped by the server "
+                  "clock (ruling 2026-11-21); omit the field")
 
 
 class PackageExportRequest(BaseModel):
@@ -1322,8 +1455,11 @@ class PackageExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 @app.post("/package_export")
@@ -1352,7 +1488,9 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
     """
-    as_of = body.as_of or _request_date()  # RESOLVED ONCE; the manifest and page share it
+    # `generated_on` is the server's clock (a caller's date is refused at the model); the data's
+    # as-of comes from the source's receipt.
+    generated_on = _request_date()  # RESOLVED ONCE; the manifest and page share it
     try:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
@@ -1387,6 +1525,8 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     program_receipts: list[dict[str, Any]] = []
     package_state, program_source = _export_program_state(
         reads, program_id, [fn for _p, fn in resolved], program_receipts)
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     panels: list[dict[str, Any]] = []
     for p, fn in resolved:
@@ -1433,7 +1573,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
             template_id=body.canvas.template_id, template_hash=body.canvas.template_hash,
             panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
             html_path=dist / html_name, duckdb_path=dist / duckdb_name,
-            as_of=as_of, program_source=program_source,
+            data_as_of=data_as_of, generated_on=generated_on, program_source=program_source,
             data_provenance=_package_provenance(program_source, program_receipts),
         )
     except SourceUnavailable as exc:
@@ -1511,8 +1651,11 @@ class CdrlExportRequest(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        return _valid_as_of(v)
+    def _as_of_is_refused(cls, v: Optional[str]) -> Optional[str]:
+        # Kept as a field so a caller's `as_of` is refused (422), not silently ignored.
+        if v is not None:
+            raise ValueError(_AS_OF_REFUSED)
+        return v
 
 
 def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1599,14 +1742,20 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     reads = _asset_reads(profile.sources)
     _require_asset_grants(reads.values())
     # The program facts' read; each source cites its own read's ticket in its own envelope.
-    program_state, program_source = _export_program_state(reads, body.program_id, profile.sources, [])
-    as_of = body.as_of or _request_date()
+    program_receipts: list[dict[str, Any]] = []
+    program_state, program_source = _export_program_state(
+        reads, body.program_id, profile.sources, program_receipts)
+    # `generated_on` is the server's clock; a caller's `as_of` is refused at the model.
+    generated_on = _request_date()
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     out_dir = _cdrl_out_dir()
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         path, envelope = cdrl.build_cdrl(
-            program_state, profile, program_id=body.program_id, as_of=as_of,
+            program_state, profile, program_id=body.program_id,
+            data_as_of=data_as_of, generated_on=generated_on,
             out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
             program_source=program_source,
         )
@@ -1628,7 +1777,8 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         "artifact_uri": _artifact_uri(path.name),
         "profile": profile.name,
         "program_id": body.program_id,
-        "as_of": as_of,
+        "data_as_of": data_as_of,
+        "generated_on": generated_on,
         "envelope": envelope,
     }
 
@@ -2115,22 +2265,43 @@ def _require_cell(fn: str, caller: str) -> None:
     )
 
 
-def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _why_refused(caller: str) -> str:
+    """Why `_can_view` said no, named AFTER it said so. Never decides anything."""
+    who = (caller or "").strip()
+    if not who:
+        return "no_identity"
+    if who.startswith("svc:"):
+        return "service_caller"
+    if not directory_configured():
+        return "directory_unconfigured"
+    return "not_a_member"
+
+
+def _visible_to(caller: str, members: list[dict[str, Any]],
+                why: Optional[collections.Counter] = None) -> list[dict[str, Any]]:
     """The members whose program the caller may view. Withheld is unknown: no marker is added.
 
     One check per distinct program, through `_can_view` (which holds the svc/empty rules).
-    `httpx.HTTPError` propagates.
+    `httpx.HTTPError` propagates. `why`, when given, counts one reason per WITHHELD member; it
+    is filled only after the predicate has answered, and changes no decision.
     """
     verdict: dict[str, bool] = {}
+    refusal: dict[str, str] = {}
     out: list[dict[str, Any]] = []
     for m in members:
         prog = _program_of(m["class_uri"], m["instance_id"])
         if prog is None:
+            if why is not None:
+                why["program_undecidable"] += 1
             continue
         if prog not in verdict:
             verdict[prog] = _can_view(prog, caller)
+            if not verdict[prog] and why is not None:
+                refusal[prog] = _why_refused(caller)
         if verdict[prog]:
             out.append(m)
+        elif why is not None:
+            why[refusal[prog]] += 1
     return out
 
 
@@ -2233,15 +2404,107 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
 _RESOLVE_FLOOR = 0.5
 
 
+def _local_name(uri: Optional[str]) -> str:
+    """The class's local name, for the log. The URI is the CALLER'S text, so anything outside a
+    name's characters becomes `?`: a newline or a space in it must not forge a line or a field."""
+    name = (uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or "-") if uri else "-"
+    return "".join(ch if ch.isascii() and (ch.isalnum() or ch in "_.-") else "?" for ch in name[:64])
+
+
+def _empty_reason(*, identifier: Optional[str], class_uri: Optional[str], seen: int,
+                  withheld: "collections.Counter") -> str:
+    """The first cause, in pipeline order, that explains an empty answer."""
+    if identifier is not None:
+        needle = identifier.strip()
+        if not needle:
+            return "empty_identifier"
+        if class_uri is None and needle.isdigit():
+            return "bare_number_unscoped"
+    if class_uri is not None:
+        if class_uri not in _RESOLVABLE:
+            return "class_not_held"
+        if not _members_of(class_uri):
+            return "class_has_no_members"
+    if seen == 0:
+        return "no_match"
+    if len(withheld) == 1:
+        return next(iter(withheld))
+    return "withheld_mixed" if withheld else "no_match"
+
+
+# The architect's ruling, 2026-11-25: a name that is not finance's, or a member not visible to
+# this person, is the NORMAL case (INFO); WARNING is for faults: no identity on a call that needs
+# one, and the directory unset or unreachable. `service_caller` is "no person identity on a call
+# that needs one": the body names a service and no person.
+_EMPTY_FAULTS = frozenset({"no_identity", "service_caller", "directory_unconfigured",
+                           "directory_unreachable"})
+
+
+def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str], seen: int,
+               withheld: "collections.Counter", user_email: str,
+               reason: Optional[str] = None) -> None:
+    """One line saying why an answer came back empty (an empty answer says why, in the
+    log; the architect, 2026-11-24).
+
+    The engine's empty answer looks the same for every cause, and a verified person whose body
+    `user_email` arrives empty is told the same thing as a person with no grant. The line names
+    the cause and the bearer next to the body. It carries no identifier, query text, email,
+    authz id, program id, instance id or dataset URN.
+
+    The level follows the reason: WARNING when the reason is in `_EMPTY_FAULTS` (for
+    `withheld_mixed`, when any withheld code is), INFO otherwise. `reason`, when given (a
+    directory outage), is used instead of the derived one.
+    """
+    if reason is None:
+        reason = _empty_reason(identifier=identifier, class_uri=class_uri, seen=seen,
+                               withheld=withheld)
+    fault = reason in _EMPTY_FAULTS or (
+        reason == "withheld_mixed" and any(k in _EMPTY_FAULTS for k in withheld))
+    level = logging.WARNING if fault else logging.INFO
+    caller = _current_caller()
+    bearer_id = ((getattr(caller, "authz_id", None) or "") if caller is not None else "").strip()
+    if not bearer_id:
+        bearer, verified = "none", "-"
+    else:
+        bearer = "svc" if bearer_id.startswith("svc:") else "user"
+        verified = "true" if getattr(caller, "verified", False) else "false"
+    body = (user_email or "").strip().casefold()
+    if not body:
+        body_caller = "empty"
+    elif not bearer_id:
+        body_caller = "no_bearer"
+    else:
+        body_caller = "matches_bearer" if body == bearer_id.casefold() else "differs_from_bearer"
+    classes = [class_uri] if class_uri in _RESOLVABLE else ([] if class_uri else list(_RESOLVABLE))
+    declared = sum(1 for r in INSTANCES if r.class_uri in classes)
+    tally = ",".join(f"{k}:{withheld[k]}" for k in sorted(withheld)) or "-"
+    count_name = "matched" if event == "fin.resolve_empty" else "members"
+    _reason_log.log(
+        level,
+        "%s reason=%s class=%s %s=%d withheld=%s bearer=%s verified=%s body_caller=%s "
+        "dataset_urn_set=%s declared_instances=%d",
+        event, reason, _local_name(class_uri), count_name, seen, tally, bearer, verified,
+        body_caller, "true" if asset_inputs.dataset_urn() else "false", declared,
+    )
+
+
 @app.post("/resolve_instance")
 def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
     """Resolve a spoken finance name to an identifier in this model."""
     cands = [c for c in _candidates(req.identifier, req.class_uri)
              if c["score"] >= _RESOLVE_FLOOR]
+    seen = len(cands)
+    withheld: collections.Counter = collections.Counter()
     try:
-        cands = _visible_to(req.user_email, cands)
+        cands = _visible_to(req.user_email, cands, withheld)
     except httpx.HTTPError as e:
+        _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
+                   seen=seen, withheld=withheld, user_email=req.user_email,
+                   reason="directory_unreachable")
         raise HTTPException(503, f"program membership check failed: {e}") from e
+    if not cands:
+        _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
+                   seen=seen, withheld=withheld, user_email=req.user_email)
     return {
         "output_uri": MESH + "InstanceResolution",
         "query": req.identifier,
@@ -2278,6 +2541,8 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
                         the distinction exists to refuse.
     """
     if req.class_uri not in _RESOLVABLE:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri, seen=0,
+                   withheld=collections.Counter(), user_email=req.user_email)
         return {
             "output_uri": MESH + "InstanceEnumeration",
             "class_uri": req.class_uri,
@@ -2291,10 +2556,19 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
             "members": [],
             "provider": "engine_fin_finance",
         }
+    held: list[dict[str, Any]] = []
+    withheld: collections.Counter = collections.Counter()
     try:
-        members = _visible_to(req.user_email, _members_of(req.class_uri))
+        held = _members_of(req.class_uri)
+        members = _visible_to(req.user_email, held, withheld)
     except httpx.HTTPError as e:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
+                   seen=len(held), withheld=withheld, user_email=req.user_email,
+                   reason="directory_unreachable")
         raise HTTPException(503, f"program membership check failed: {e}") from e
+    if not members:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
+                   seen=len(held), withheld=withheld, user_email=req.user_email)
     if len(members) > req.limit:
         return {
             "output_uri": MESH + "InstanceEnumeration",

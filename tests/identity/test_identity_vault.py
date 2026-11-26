@@ -174,7 +174,8 @@ def test_close_ends_the_reference():
 # ══════════════════════════════════════════════════════════════════════════════════
 
 def test_a_token_near_its_exp_is_never_returned_it_needs_a_refresh():
-    v = IdentityVault(clock=_FakeClock(), wall_clock=lambda: 1000.0, refresh_margin_seconds=60)
+    v = IdentityVault(clock=_FakeClock(), wall_clock=lambda: 1000.0, refresh_margin_seconds=60,
+                      refreshable=lambda: True)
     near = _jwt(exp=1030.0)
     v.stash("run-1", near, subject=ALICE)
     r = v.redeem("run-1", "c1")
@@ -183,7 +184,8 @@ def test_a_token_near_its_exp_is_never_returned_it_needs_a_refresh():
 
 
 def test_replace_swaps_the_token_only_for_the_same_subject():
-    v = IdentityVault(clock=_FakeClock(), wall_clock=lambda: 1000.0, refresh_margin_seconds=60)
+    v = IdentityVault(clock=_FakeClock(), wall_clock=lambda: 1000.0, refresh_margin_seconds=60,
+                      refreshable=lambda: True)
     v.stash("run-1", _jwt(exp=1030.0), subject=ALICE)
     fresh = _jwt(exp=9000.0)
     assert v.replace("run-1", fresh, "mallory@example.com") is False

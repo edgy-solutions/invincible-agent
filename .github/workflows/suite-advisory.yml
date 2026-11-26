@@ -2,8 +2,9 @@
 #
 # It differs from suite-order-independence.yml. That file is the order-independence gate
 # and stays workflow_dispatch until it is green twice. This one is a regression signal on
-# a red master: it runs the whole suite on every PR and splits the reds into KNOWN
-# (tests/known_reds.txt, each with a cause and an owner) and NEW (everything else).
+# a red master: it runs the whole suite on every PR and on every push to master, and splits
+# the reds into KNOWN (tests/known_reds.txt, each with a cause and an owner) and NEW
+# (everything else).
 #
 # To retire an entry from tests/known_reds.txt: delete its line in the PR that fixes the
 # test.
@@ -12,13 +13,20 @@ name: suite advisory
 on:
   pull_request:
     branches: [master, main]
+  # Master's own advisory (the architect, 2026-11-25). Two PRs that pass alone can fail
+  # together, and that red first exists on the merge commit. Without this trigger it showed
+  # only on whichever PR ran next (#426 and #549, 2026-11-25).
+  push:
+    branches: [master, main]
 
 permissions:
   contents: read
 
+# A PR's runs share one group, and a new push to the PR cancels the run in flight. Each push
+# to master gets a group of its own and is never cancelled, so every master commit is measured.
 concurrency:
-  group: suite-advisory-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: suite-advisory-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   advisory:
@@ -46,6 +54,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       # --extra agent-fleet: see suite-order-independence.yml for why.
       - run: uv sync --locked --extra agent-fleet
+      # The pinned Pyodide runtime, fetched the same way build-containers.yml fetches it for the
+      # image. Without `.pyodide-cache/pyodide.js` the export-package seals (tests/cost/*,
+      # tests/finance/* that build a page) SKIP, so the advisory counted them as skipped and
+      # never ran them. continue-on-error: a CDN outage must not cost the rest of the
+      # advisory; the seals then skip as before, and this step shows as failed.
+      - name: the pinned Pyodide runtime, so the package seals run instead of skipping
+        continue-on-error: true
+        run: uv run python scripts/build_cost_package.py --fetch-runtime --runtime-dir .pyodide-cache
       - name: suite
         id: suite
         run: |

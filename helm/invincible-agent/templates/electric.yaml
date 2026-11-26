@@ -34,17 +34,17 @@ metadata:
   name: {{ .Release.Name }}-electric
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
-    {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 4 }}
 spec:
   replicas: {{ .Values.electric.replicas }}
   selector:
     matchLabels:
-      {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 6 }}
+      {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 6 }}
   template:
     metadata:
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
-        {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 8 }}
     spec:
       {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
@@ -61,6 +61,7 @@ spec:
       # `ALTER ROLE ... WITH REPLICATION` is idempotent (already-set is a
       # no-op), so this init runs safely on every pod restart across
       # both image styles.
+      {{- if not .Values.electric.db.enabled }}
       initContainers:
         - name: grant-replication
           image: {{ include "invincible-agent.image" (dict "name" "postgres-client" "registry" .Values.utilImages.postgresClient.registry "repository" .Values.utilImages.postgresClient.repository "tag" .Values.utilImages.postgresClient.tag "root" .) }}
@@ -93,6 +94,7 @@ spec:
               echo "Granting REPLICATION to $TARGET_ROLE (idempotent)..."
               psql -v ON_ERROR_STOP=1 -c "ALTER ROLE \"$TARGET_ROLE\" WITH REPLICATION;"
               echo "OK."
+      {{- end }}
       containers:
         - name: electric
           image: {{ include "invincible-agent.image" (dict "name" "electric" "registry" .Values.electric.image.registry "repository" .Values.electric.image.repository "tag" .Values.electric.image.tag "digest" .Values.electric.image.digest "root" .) }}
@@ -113,16 +115,44 @@ spec:
             # For Bitnami, POSTGRESQL_USERNAME is NOT a superuser — the
             # `grant-replication` initContainer above grants REPLICATION
             # on every pod boot as an idempotent ALTER ROLE.
+            {{- if .Values.electric.db.enabled }}
+            # Electric's OWN role (templates/electric-role-job.yaml): SELECT on only the allow-listed tables. NOT "read-only on
+            # those tables": the role holds REPLICATION, and PostgreSQL has no privileges on publications, so it can stream ANY
+            # publication in the database (SELECT is checked only on the initial copy), and a physical stream of the cluster
+            # wherever pg_hba has a matching `replication` line. The Job refuses to run if another publication exists; the
+            # pg_hba lines are a roll blocker (step-0 item 3 b). The pod
+            # carries no envFrom, so it holds none of the main user's credentials. Host, port and database come
+            # from the chart helpers because envFrom (which supplied BPMN_POSTGRES_*) is gone.
+            - name: ELECTRIC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "invincible-agent.electricDbSecretName" . }}
+                  key: {{ include "invincible-agent.electricDbSecretKey" . }}
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.electric.db.role }}:$(ELECTRIC_DB_PASSWORD)@{{ include "invincible-agent.pgHost" . }}:{{ include "invincible-agent.pgPort" . }}/{{ include "invincible-agent.pgDatabase" . }}?sslmode=disable"
+            {{- else }}
             - name: DATABASE_URL
               value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)?sslmode=disable"
-            # Disable insecure mode in prod; sandbox/dev can flip on.
+            {{- end }}
+            # `insecure` defaults false: Electric answers only a request carrying `secret=`, which only
+            # the BFF holds. The secret is read by reference (never a literal, never in values).
             - name: ELECTRIC_INSECURE
               value: {{ .Values.electric.insecure | quote }}
+            # info logs the query string, which carries the secret: see electric.logLevel in values.yaml.
+            - name: ELECTRIC_LOG_LEVEL
+              value: {{ .Values.electric.logLevel | quote }}
+            - name: ELECTRIC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "invincible-agent.electricApiSecretName" . }}
+                  key: {{ include "invincible-agent.electricApiSecretKey" . }}
+          {{- if not .Values.electric.db.enabled }}
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-config
             - secretRef:
                 name: {{ .Release.Name }}-secrets
+          {{- end }}
           resources:
             {{- toYaml .Values.electric.resources | nindent 12 }}
           readinessProbe:
@@ -170,7 +200,7 @@ metadata:
     {{- include "invincible-agent.labels" . | nindent 4 }}
 spec:
   selector:
-    {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.electric.port }}

@@ -1375,6 +1375,16 @@ userDeployments:
         AWS_DEFAULT_REGION: "us-east-1"
         DAG_TOOLS_DEMO_S3_BUCKET: "dag-lake"
         MESH_DEMO_PREFIX: "mesh_demo"
+      # THE AS-OF SETTING (the architect, 11-23: Lane 1's proposal with fin, accepted). The source
+      # types this broker reads a data as-of for, at authorize time. Default none: every read says
+      # "as-of unavailable", as today. A type is allowed only if the pinned broker image registers
+      # an as-of reader for it. The chart refuses any other type at render (user-deployments.yaml).
+      # At this pin the broker registers none, so ANY non-empty list is refused at render. That is
+      # the design, not a fault: dag-tools ships the readers, then the image pin and the chart's
+      # registered set move together, and only then can a deployment set a type here.
+      # No measure row chooses its own as-of source: the type comes from the asset.
+      asOf:
+        readers: []
 
 # ==========================================================================
 # mesh-registrar — Contract D registration gateway.
@@ -1901,6 +1911,40 @@ cortexUi:
             pathType: ImplementationSpecific
     tls: []
 
+# The durable answer service (invincible-agent ADR-0072 §3): `src/iagent/supervisor_service.py`,
+# the `SupervisorAnswer` Restate workflow, served by uvicorn on the cortex-bff image. It runs
+# with dagster user-code's env (the same ConfigMap, Secret, Postgres env and instance file),
+# and the restate-init hook registers `<release>-supervisor:<port>/restate` with the Restate
+# admin. The BFF reaches it only through Restate ingress, and only when
+# `IAGENT_ANSWER_PATH=durable`. Off by default; enabling it changes no answer path by itself.
+#
+# ONE REPLICA, and not as a sizing default. The admission limit (§5) is a semaphore held in
+# the process, so it counts once per replica: two replicas admit twice the limit. The
+# template hard-codes `replicas: 1`; there is no value to raise.
+supervisorService:
+  enabled: false
+  # No image key: the template renders `cortexBff.image`, so the service always runs the
+  # image the BFF runs. That image is built from the repo root, so it carries src/iagent and
+  # the root dependencies (dagster, restate-sdk).
+  port: 8091
+  # IAGENT_ANSWER_LIMIT: K, the answers the service runs at once (§5's FIFO semaphore).
+  # §5 rules that K starts at 2, the `iagent` row of Dagster's run limits. An overlay sets
+  # its own K from a measurement of its model server.
+  answerLimit: 2
+  # IAGENT_ANSWER_QUEUE_MAX: a COUNT, the answers that may wait for a slot. A request that
+  # arrives at a full queue is refused "busy" at once; there is no wait ceiling (§5 as
+  # amended). No default is ruled, so the render FAILS when the service is enabled
+  # without one. Each overlay sets it from its model-server measurement.
+  queueMax: null
+  # The same as dagster user-code's: the service runs the answer's ops in its own process.
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 2Gi
+
 cortexBff:
   enabled: true
   # SINGLE REPLICA IS LOAD-BEARING, not a sizing default.
@@ -1925,6 +1969,10 @@ cortexBff:
     name: cortex-bff
     tag: ""
   port: 8090
+  # The answer path (ADR-0072 §4): unset (the default) answers on Dagster. "dagster" or "durable" only;
+  # the chart refuses any other value, and refuses "durable" unless supervisorService.enabled.
+  # Set only by a measurement window's overlay, never in a shipped values file.
+  answerPath: null
   resources:
     requests:
       cpu: 100m
@@ -2065,7 +2113,66 @@ electric:
     repository: "electricsql/electric"
     tag: "1.0.13"
   port: 3000
-  insecure: true
+  # Ingress to Electric admits only the cortex-bff (templates/networkpolicy-electric.yaml). Its OWN switch,
+  # not the fleet gate `networkPolicy.enabled`. A policy the CNI ignores cannot fire: verify at the roll.
+  networkPolicy:
+    enabled: false
+  # false: Electric requires `secret=` on every request (ELECTRIC_SECRET). Never default true.
+  # `true` CRASHLOOPS Electric by design (upstream config.ex:407: insecure plus a secret refuses to boot) and
+  # the chart always renders the secret. Do NOT make ELECTRIC_SECRET conditional on insecure to "fix" it:
+  # that re-opens Electric.
+  insecure: false
+  # Electric 1.0.13 takes the secret ONLY as the `secret=` query parameter, and at `info` it logs the whole
+  # query string (serve_shape_plug.ex:27), i.e. the secret, on every shape request. Keep this at warning or
+  # above; the chart sets ELECTRIC_LOG_LEVEL from it (sealed: not info, not debug). Related, not rendered
+  # today: upstream copies every query param, `secret` included, into span attributes (utils.ex:87,93) and
+  # the process label (label_process_plug.ex:47-48); spans leave the pod only if ELECTRIC_OTLP_ENDPOINT is
+  # set, and the chart sets none. Do not set it without scrubbing `secret`.
+  logLevel: warning
+  # Electric API secret lives in a Secret, never in values. Empty name = the chart generates
+  # `<release>-electric-api` on first install and keeps it on upgrade; name a pre-made Secret to use it.
+  # KEPT-ON-UPGRADE NEEDS THE CLUSTER: it works through `lookup`, which needs `get` on Secrets in the release
+  # namespace for the identity running `helm install`/`upgrade` (without it `lookup` is empty and the value
+  # regenerates). A deploy that renders WITHOUT cluster access (GitOps, ArgoCD, `helm template | kubectl apply`)
+  # has no `lookup` at all: it MUST set `name` to a pre-made Secret, or the secret rotates on every sync and
+  # Electric and the BFF can roll onto different values.
+  # The generated Secret carries `helm.sh/resource-policy: keep` so a later move to a create-if-absent hook
+  # cannot delete it (a silent rotation). Trade-off: `helm uninstall` leaves it behind; delete it by hand.
+  apiSecret:
+    name: ""
+    key: secret
+  # Electric's OWN database role (step 3 of the sync-service exposure plan). OFF by default: turning it on is a
+  # database write (a hook Job as `postgres`), moves Electric's slot and publication (shape handles reset, clients
+  # refetch once), and waits on the step-0 reads (does 1.0.13 have manual publishing; what else holds REPLICATION).
+  # When on: the Electric pod carries no envFrom (none of the main user's credentials), connects as `role`, and the
+  # Job grants that role SELECT on exactly the tables policy/electric_shapes.yaml names, and REVOKES every table
+  # privilege it holds on any other table (all in one transaction), so the grant set follows the list DOWN as well as up.
+  # THE REACH IS WIDER THAN THE SELECT GRANTS: the role holds REPLICATION, PostgreSQL has no privileges on publications,
+  # so it can stream ANY publication in the database, and a physical stream of the cluster wherever pg_hba has a
+  # matching `replication` line. The Job therefore FAILS if any publication other than `publication` exists (step-0 item
+  # 3 a); the pg_hba lines (item 3 b) are a roll blocker. The Job needs psql 15+ (utilImages.postgresClient.tag; the
+  # render fails below that) so the password is read from the environment, never argv, and its session sets
+  # log_statement=none and log_min_error_statement=panic. Its pod carries component `electric-role`: with
+  # networkPolicy.enabled the roll needs a networkPolicy.directCallers row `electric-role: [{store: postgresql, via: ...}]`
+  # (no default row; db-init has the same gap, untouched here). The table list is read from
+  # the chart's copy of that file (files/policy/electric_shapes.yaml, kept byte-equal by a seal), never typed here.
+  db:
+    enabled: false
+    role: electric_reader
+    # The role's password lives in a Secret, generated on first install and kept on upgrade (same `lookup` caveats
+    # and same `electric.apiSecret.name`-style escape as the API secret above: name a pre-made Secret for GitOps).
+    # The generated Secret carries `helm.sh/resource-policy: keep`. The password is alphanumeric when generated; a
+    # pre-made one must be URL-safe because it is placed in Electric's DATABASE_URL.
+    secret:
+      name: ""
+      key: password
+    # `CREATE PUBLICATION` over the allowed tables and `REPLICA IDENTITY FULL`, done by the Job. Electric 1.0.13 may
+    # still create/alter its own publication: whether it has a manual-publishing mode is step-0 item 2, UNANSWERED,
+    # so nothing here sets Electric's manual-publishing switch.
+    publication: electric_publication_default
+    schema: public
+    # Revoke REPLICATION from the main user. OFF: step-0 item 3 (what else relies on it) is unanswered.
+    revokeReplicationFromMainUser: false
   resources:
     requests:
       cpu: 100m
@@ -2693,10 +2800,13 @@ policyOverlay:
       - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS}
       - {dir: fin_export_profiles, env: FIN_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
       - {dir: fin_instances, env: FIN_INSTANCE_OVERLAY_DIRS, optional: true}
+      - {dir: fin_calendar, env: FIN_CALENDAR_OVERLAY_DIRS, optional: true}
     cortex-bff:
       - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
       - {dir: exports, env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
       - {dir: menu_blocks, env: MENU_BLOCK_OVERLAY_DIRS, optional: true}
+      # the same measure rows engine-fin reads: their in-row `menu:` blocks are served by /menu_blocks
+      - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS, optional: true}
 
 # STARTUP sync for task_grant_sync ONLY (task_audience `actor` relations —
 # policy/sync/task_grant_sync.py), as a post-install/post-upgrade helm hook Job. Narrower than

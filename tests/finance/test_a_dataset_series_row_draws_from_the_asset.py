@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
-from agent_fleet.finance_agent.entities import FISCAL_PERIODS  # noqa: E402
+from agent_fleet.finance_agent.entities import fiscal_periods  # noqa: E402
 from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
     AS_OF, _clean_env, frame_of, token,
 )
@@ -56,7 +56,7 @@ EAC_REPORTED = {
 
 
 def frame_012():
-    eac = pl.DataFrame([{"work_package": wp, "period": FISCAL_PERIODS[i], "eac_reported": v}
+    eac = pl.DataFrame([{"work_package": wp, "period": fiscal_periods()[i], "eac_reported": v}
                         for wp, vs in EAC_REPORTED.items() for i, v in enumerate(vs)])
     return (frame_of().join(eac, on=["work_package", "period"], how="left", validate="1:1")
             .with_columns(pl.lit(STATUS).alias("status_period")))
@@ -114,7 +114,7 @@ def per_period(frame, columns):
     f = (frame.filter(pl.col("program_id") == PROGRAM).group_by("period")
          .agg([pl.col(c).sum() for c in columns]))
     out = {r["period"]: {c: Decimal(str(r[c])) for c in columns} for r in f.iter_rows(named=True)}
-    return dict(sorted(out.items(), key=lambda kv: FISCAL_PERIODS.index(kv[0])))
+    return dict(sorted(out.items(), key=lambda kv: fiscal_periods().index(kv[0])))
 
 
 def exact(rows, key):
@@ -127,7 +127,7 @@ def test_the_cumulative_series_equal_an_independent_running_sum(post):
     status, env = post()
     assert status == 200, env
     sums = per_period(frame_012(), ["bcws", "bcwp", "acwp"])
-    assert [r["period"] for r in env["rows"]] == list(sums) == list(FISCAL_PERIODS[:6])
+    assert [r["period"] for r in env["rows"]] == list(sums) == list(fiscal_periods()[:6])
     for key, col in (("pv", "bcws"), ("ev", "bcwp"), ("ac", "acwp")):
         running, want = Decimal(0), []
         for s in sums.values():
@@ -167,7 +167,7 @@ def test_the_envelope_names_the_series_the_reference_the_status_and_the_source(p
     assert env["measure"] == CUM and env["output_uri"].endswith("DeclaredMeasureSeries")
     assert env["artifact_id"].startswith(f"fin:{CUM}:")
     assert env["method"]["version"] == "1.0.0" and env["method"]["module_sha256"] == row.module_sha256
-    assert env["verdict"].endswith(f"at {FISCAL_PERIODS[5]}; reported through {STATUS}")
+    assert env["verdict"].endswith(f"at {fiscal_periods()[5]}; reported through {STATUS}")
     assert "Planned value" in env["verdict"] and "Budget at completion" in env["verdict"]
     assert set(env["rows"][0]["inputs"]) == {"bcws", "bcwp", "acwp", "bac"}
     assert gate.asked == [(ALLOWED, ROW_URN)]                     # read as the caller
@@ -414,7 +414,7 @@ def test_a_module_without_reads_and_series_is_refused(tmp_path):
 def test_a_flow_function_wired_to_a_series_row_is_refused(tmp_path):
     raw = mutated(EAC, lambda r: r["computation"].update(
         module="agent_fleet.finance_agent.measure_modules.variance_decomposition", function="flow_edges",
-        version="1.3.0"))
+        version="1.4.0"))
     with pytest.raises(measure_verbs.MeasureVerbError, match="exactly"):
         load(raw, tmp_path)
 
