@@ -110,7 +110,7 @@ corpus normalises **to** the policy file, never the reverse; a ratified config o
 The frontmatter validator matches case-insensitively and **lints to canonical case**, so a
 lowercase value is accepted and corrected rather than refused. *This sentence said
 "lowercased" until 2026-09-11 and three pages carried `architect` because of it — the index
-taught the defect, which is why the sweep was three files and not one.* — `PORTFOLIO_LEAD, DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST`. That
+taught the defect, which is why the sweep was three files and not one.* — read the values there, not from a copy here. That
 file is the canonical enum and the vocabulary the Topaz sync tool refuses a grant against.
 ADR-0037 §1's original `data-engineer | reviewer | leader` **is superseded** — two of the three are
 not personas in this system, and a hint carrying `reviewer` would be display-routing on a persona

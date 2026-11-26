@@ -73,7 +73,7 @@ def _drive(monkeypatch, *, user_email, slots=(0,), redeem_status=200, verb=_UNLI
         lambda *a, **k: SERVICE_TOKEN, raising=False,
     )
     predicate = {
-        "verb_iri": verb, "endpoint": "http://engine-x/do", "owner_persona": "ANALYST",
+        "verb_iri": verb, "endpoint": "http://engine-x/do", "owner_persona": "DATA_ENGINEER",
         "domains": ["D"], "score": 0.99,
     }
     monkeypatch.setattr(
@@ -91,7 +91,7 @@ def _drive(monkeypatch, *, user_email, slots=(0,), redeem_status=200, verb=_UNLI
 
     monkeypatch.setattr(ds.requests, "post", _post)
     config = ds.SupervisorQueryConfig(
-        user_query="q", user_email=user_email, user_persona="ANALYST",
+        user_query="q", user_email=user_email, user_persona="DATA_ENGINEER",
         entitled_domains=["D"], thread_id="t", trace_id="tr", session_id="s",
     )
     for slot in slots:
