@@ -114,6 +114,13 @@ logger = logging.getLogger("cortex")
 # fix, it carries the original measurement, and a second copy would drift.
 _ensure_the_audit_line_actually_ARRIVES(logger)
 
+# httpx logs "HTTP Request: GET <full url>" at INFO, and the shape proxy's upstream URL carries the
+# Electric API secret as `secret=`. Today nothing leaks only because the boot-time basicConfig() leaves the
+# root at WARNING, which is an accident and not a guard: pin both loggers here (sealed in
+# tests/test_the_shape_proxy_serves_only_its_allow_list.py).
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 # ── Env ───────────────────────────────────────────────────
 load_dotenv()
 
@@ -600,6 +607,9 @@ def _start_ingest_watchdog() -> "Optional[asyncio.Task]":
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup/shutdown lifecycle — verify DB connection on boot."""
+    # IAGENT_ANSWER_PATH: a value other than the two names refuses the start (ADR-0072 §4, amended
+    # 2026-11-24), so a mistyped flag can never quietly measure the Dagster path.
+    _answer_path()
     await init_db()
     # A content kind's `on_promotion` row must name a workflow that declares a start this BFF can
     # build; a misdeclared row refuses the start (rows without it are skipped).
@@ -2040,9 +2050,11 @@ class MenuBlocksResponse(_BaseModel):
 
 @app.get("/menu_blocks", response_model=MenuBlocksResponse)
 async def get_menu_blocks(current_user: User = Depends(get_current_user)):
-    """The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by
-    (subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves
-    it, cortex reads it.
+    """The menu placements the overlay rows declare, sorted by (subject, archetype, verb). Two
+    sources: `<overlay>/menu_blocks/*.yaml`, and the in-row `menu:` blocks of declared measure rows
+    (`MEASURE_VERB_OVERLAY_DIRS`). A placement is keyed by its declaring verb: distinct verbs may
+    share a (subject, archetype) and are all served; a verb declared twice is left out and named.
+    The 2026-11-07 ruling: the row declares its placement, the BFF serves it, cortex reads it.
 
     NOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,
     and `persona_fit` / `domain_fit` only RANK, they never gate.
@@ -2050,8 +2062,8 @@ async def get_menu_blocks(current_user: User = Depends(get_current_user)):
     NOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay
     dir configured, or one is unreadable); it never means "no blocks". `composed: true` with
     `blocks: []` means this deployment declares none. A client replaces a hand-written row only
-    with a served block for the SAME subject. A row that does not validate, or that shares its
-    (subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at
+    with a served block for the SAME subject. A row that does not validate, or that
+    declares a verb another row declares, is left out of `blocks`, named in `invalid`, and logged at
     ERROR.
     """
     from starlette.concurrency import run_in_threadpool
@@ -2061,6 +2073,72 @@ async def get_menu_blocks(current_user: User = Depends(get_current_user)):
     for bad in result.invalid:
         logger.error("menu block %s is invalid: %s", bad["source"], bad["reason"])
     return {"composed": result.composed, "blocks": result.blocks, "invalid": result.invalid}
+
+
+class AskableMeasure(_BaseModel):
+    verb: str
+    name: str
+    description: str
+    phrasings: list[str]
+    cells: list[str]
+    shape: str | None = None
+    unit: str | None = None
+    example_ask: str | None = None
+    group_label: str | None = None
+
+
+class AskableMeasuresResponse(_BaseModel):
+    composed: bool
+    measures: list[AskableMeasure]
+    invalid: list[MenuBlockInvalid]
+    # The persona and domains the list was filtered for: the cell an ask would run under.
+    persona: str | None
+    domains: list[str]
+    # How that cell was chosen: picker, default, first-cell or none.
+    cell_source: str
+
+
+@app.get("/askable_measures", response_model=AskableMeasuresResponse)
+async def get_askable_measures(
+    current_user: User = Depends(get_current_user),
+    active_persona: str | None = _Query(None),
+    active_domains: list[str] | None = _Query(None),
+):
+    """The declared measures this caller can ask, for discovery. One entry per declared measure
+    row (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),
+    whether or not the row carries a `menu:` block. An entry is listed only when the caller holds
+    a domain in the row's declared cells, the same comparison the engine that declares the
+    measure refuses on, so the list never names a measure the caller would be refused. The
+    engine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's
+    `declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the
+    row declares none). `example_ask` and `group_label` are served as declared, null otherwise.
+
+    Built-in measures are listed from their listing rows, through the measure's engine's own
+    loader. They declare no shape (`shape` is null).
+
+    The list is filtered to the cell an ask would run under, resolved by the ask's own rule
+    (`_resolve_ask_cell`): with neither param, the caller's default cell (then the first cell,
+    then none); with params, both are required and every domain must be held under the
+    persona, else the request is refused (400 / 403), never narrowed silently. The response
+    names that cell (`persona`, `domains`, `cell_source`).
+
+    Built-ins are listed whatever the overlay env; declared rows are read only when
+    `MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed
+    load is named in `invalid` and logged at ERROR); it never means "none".
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import menu_blocks
+
+    persona, domains, cell_source = _resolve_ask_cell(
+        active_persona, active_domains, current_user, session_id=None,
+    )
+    result = await run_in_threadpool(menu_blocks.askable)
+    for bad in result.invalid:
+        logger.error("askable measures are unreadable (%s): %s", bad["source"], bad["reason"])
+    return {"composed": result.composed,
+            "measures": menu_blocks.visible_to(result.measures, domains),
+            "invalid": result.invalid,
+            "persona": persona, "domains": domains, "cell_source": cell_source}
 
 
 @app.get("/task_kinds")
@@ -3544,8 +3622,9 @@ class ExportPackageRequest(_BaseModel):
     # `canvas_seed`), because `validate_bindings` and `panel_dispatch` are the identical
     # functions that call reads. Ignored on the cost path.
     bindings: Optional[dict[str, Any]] = None
-    # THE DATE THE PACKAGE CLAIMS, `YYYY-MM-DD`. Absent, `export_package` takes the request date
-    # once and forwards it to every engine call, so identical input gives an identical page.
+    # NEVER ACCEPTED. The field exists so a caller's value is REFUSED (422 `as_of_not_accepted`,
+    # ruled 2026-11-23) on every export path, not silently dropped: engine-fin and engine-cost
+    # each stamp their own dates, and the BFF forwards none.
     as_of: Optional[str] = None
 
     @field_validator("as_of")
@@ -3557,11 +3636,6 @@ class ExportPackageRequest(_BaseModel):
             raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
         _date.fromisoformat(v)  # a ValueError here is a 422 too
         return v
-
-
-def _export_request_date() -> str:
-    """TODAY (UTC), AS THE DATE A REQUEST CLAIMS. One place, so a test can pin it."""
-    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
@@ -4009,7 +4083,7 @@ async def export_package_offer(
 
 
 async def _export_package_from_template(
-    body: "ExportPackageRequest", request: Request, current_user: "User", as_of: str,
+    body: "ExportPackageRequest", request: Request, current_user: "User",
 ) -> dict:
     """ITEM 3's path: `body.template_id` names a ratified, packageable canvas template and
     `body.bindings` supplies its shared slots — the SAME shape `/canvas/seed` takes, because
@@ -4111,7 +4185,7 @@ async def _export_package_from_template(
         async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
             rr = await client.post(
                 f"{_ENGINE_FIN_URL}/package_export",
-                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of,
+                json={"recipient_scope": recipient_scope, "canvas": canvas,
                       "user_email": current_user.authz_id},
                 headers={"Authorization": f"Bearer {bearer}"},
             )
@@ -4266,11 +4340,16 @@ async def export_package(
             ),
         )
 
-    # RESOLVED ONCE, then forwarded on every engine call below.
-    as_of = body.as_of or _export_request_date()
+    # RULED 2026-11-22/23 (architect): an export's dates are stamped by the engine's own clock
+    # (engine-fin, engine-cost); the BFF sends none and refuses a caller's, on every path.
+    if body.as_of is not None:
+        raise HTTPException(status_code=422, detail={
+            "error": "as_of_not_accepted", "field": "as_of",
+            "reason": ("an export's dates are stamped by the server (engine-fin or engine-cost "
+                       "clock); the caller cannot supply one.")})
 
     if body.template_id:
-        return await _export_package_from_template(body, request, current_user, as_of)
+        return await _export_package_from_template(body, request, current_user)
 
     # RULED 2026-10-17: a request naming no answers (and no template) is refused. An empty
     # list used to export the recipient's whole program -- a disclosure path nothing in the
@@ -4352,7 +4431,7 @@ async def export_package(
     if not has_fin:
         # ONLY engine-cost's answers: today's path and today's response, unchanged
         # -- unless the engine REFUSED some of them (RULED 2026-10-16), below.
-        params: dict = {"recipient_scope": recipient_scope, "as_of": as_of}
+        params: dict = {"recipient_scope": recipient_scope}
         params["canvas"] = {"answers": parts[0][1]}
         cost_first = await _call_engine_cost_package(
             params, bearer, recipient_scope=recipient_scope, template_id=body.template_id,
@@ -4371,8 +4450,7 @@ async def export_package(
         else:
             try:
                 section = await _call_engine_cost_package(
-                    {"recipient_scope": recipient_scope, "canvas": {"answers": answers},
-                     "as_of": as_of},
+                    {"recipient_scope": recipient_scope, "canvas": {"answers": answers}},
                     bearer, recipient_scope=recipient_scope, template_id=None,
                 )
             except HTTPException as exc:
@@ -5009,10 +5087,10 @@ class SeedPortfolioCanvasRequest(_BaseModel):
 #   or dropped by arity, which is NOT a policy refusal; an unscoped re-check that failed is
 #   could-not-check, never a deny), seed_panel_unroutable (template declares no subject),
 #   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
-#   dagster_run_failed, ui_payload_fetch_error, ui_payload_timeout, acceptance_not_opened,
-#   engine_did_not_answer, render_ui_failed, stream_producer_error, stream_raised -- all
-#   faults of the seed/pipeline, not of the caller's grants. An absent cause is "unrecorded"
-#   and is never entitlement.
+#   dagster_run_failed, answer_run_failed, session_expired, ui_payload_fetch_error,
+#   ui_payload_timeout, acceptance_not_opened, engine_did_not_answer, render_ui_failed,
+#   stream_producer_error, stream_raised -- all faults of the seed/pipeline, not of the
+#   caller's grants. An absent cause is "unrecorded" and is never entitlement.
 _SEED_ENTITLEMENT_CAUSES = frozenset({"seed_panel_verb_not_visible"})
 
 
@@ -5469,6 +5547,64 @@ def _canvas_seed_domains(request, ent) -> list[str] | None:
     return None
 
 
+def _resolve_active_cell(active_persona, active_domains, current_user, *, log_tag: str):
+    """The cell a caller's chosen persona (and domains) name, resolved from the caller's OWN
+    entitlements. ONE derivation, shared by the seed and `/askable_measures`. Returns
+    `(persona, domains)` to use; neither set stays `(persona, None)` unchanged.
+
+    THE CELL A PERSONA NAMES. A persona without domains is completed from the caller's own
+    entitlements (`domains_for`); none held refuses `persona_not_held`. Domains without a
+    persona is a 400 `incomplete_override`. THE SERVER OWNS THE DOMAIN LIST (Lane 1,
+    2026-11-16): a client-sent `active_domains` is a REQUEST for a cell, never a grant of one.
+    Same rule as `/orchestrate`: every named domain must be entitled under the named persona,
+    and one miss refuses the whole request (`cell_not_entitled`); nothing is silently dropped.
+    """
+    if not (active_persona or active_domains):
+        return active_persona, active_domains
+    ent = current_user.entitlements
+    if active_persona and not active_domains:
+        _derived = ent.domains_for(active_persona)
+        if not _derived:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            raise _policy_refusal(
+                "persona_not_held", policy_id="groups",
+                missing_binding=f"a_group_granting({active_persona})",
+                message=f"you hold no cell under persona {active_persona}",
+            )
+        active_domains = _derived
+    elif active_domains and not active_persona:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "incomplete_override", "field": "active_persona",
+                "message": "a seed names its domains without a persona; send active_persona "
+                           "(or user_persona) too",
+            },
+        )
+    if active_persona and active_domains:
+        _missing = [d for d in active_domains if not ent.contains(active_persona, d)]
+        if _missing:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            # The body mirrors `/orchestrate`'s `cell_not_entitled` so an access request can be
+            # built from it; the WARN aggregates denials for ops as `/orchestrate`'s does.
+            _extra = {
+                "requested": {"persona": active_persona, "domains": list(active_domains)},
+                "requested_missing": _missing,
+                "entitled_cells": [{"persona": c.persona, "domain": c.domain}
+                                   for c in ent.cells],
+            }
+            _refusal_exc = _policy_refusal(
+                "cell_not_entitled", policy_id="groups",
+                missing_binding=f"a_group_granting({active_persona}, {_missing[0]})",
+                message=f"you hold no cell under persona {active_persona} "
+                        f"for domains {_missing}",
+                extra=_extra,
+            )
+            logger.warning("%s: %s", log_tag, _refusal_exc.detail)
+            raise _refusal_exc
+    return active_persona, active_domains
+
+
 async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User,
                            bearer: str = ""):
     """The ask for a 409'd seed, or None when no unbound slot is askable.
@@ -5586,59 +5722,12 @@ async def canvas_seed(
         request.active_persona = request.user_persona
     if request.active_domains is None and request.domain:
         request.active_domains = [request.domain]
-    # THE CELL A PERSONA NAMES. The stream refuses a persona without domains, so a persona-only
-    # seed (the chat re-send after the "which program?" pick) is completed HERE from the
-    # caller's own entitlements, the same derivation the ask uses. A seed never picks a cell
-    # the caller did not name: neither field set stays unset.
-    if request.active_persona and not request.active_domains:
-        _derived = _canvas_seed_domains(request, current_user.entitlements)
-        if not _derived:
-            from .authz.refusal import policy_refusal as _policy_refusal
-            raise _policy_refusal(
-                "persona_not_held", policy_id="groups",
-                missing_binding=f"a_group_granting({request.active_persona})",
-                message=f"you hold no cell under persona {request.active_persona}",
-            )
-        request.active_domains = _derived
-    elif request.active_domains and not request.active_persona:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "incomplete_override", "field": "active_persona",
-                "message": "a seed names its domains without a persona; send active_persona "
-                           "(or user_persona) too",
-            },
-        )
-    # THE SERVER OWNS THE DOMAIN LIST (Lane 1, 2026-11-16). A client-sent `active_domains` is a
-    # REQUEST for a cell, never a grant of one. Before this gate the 409 path's ask
-    # (`_canvas_seed_ask`) forwarded the client's list to engine-o's `/enumerate_instances` as
-    # `entitled_domains`, and engine-o decides origin visibility from that list
-    # (`origin_entitlement.can_consume`), so a domain the caller does not hold widened what the
-    # ask enumerated. Same rule as `/orchestrate`: every named domain must be entitled under the
-    # named persona, and one miss refuses the whole request; nothing is silently dropped.
-    if request.active_persona and request.active_domains:
-        _missing = [d for d in request.active_domains
-                    if not current_user.entitlements.contains(request.active_persona, d)]
-        if _missing:
-            from .authz.refusal import policy_refusal as _policy_refusal
-            # The body mirrors `/orchestrate`'s `cell_not_entitled` so an access request can be
-            # built from it; the WARN aggregates denials for ops as `/orchestrate`'s does.
-            _extra = {
-                "requested": {"persona": request.active_persona,
-                              "domains": list(request.active_domains)},
-                "requested_missing": _missing,
-                "entitled_cells": [{"persona": c.persona, "domain": c.domain}
-                                   for c in current_user.entitlements.cells],
-            }
-            _refusal_exc = _policy_refusal(
-                "cell_not_entitled", policy_id="groups",
-                missing_binding=f"a_group_granting({request.active_persona}, {_missing[0]})",
-                message=f"you hold no cell under persona {request.active_persona} "
-                        f"for domains {_missing}",
-                extra=_extra,
-            )
-            logger.warning("canvas_seed_cell_not_entitled: %s", _refusal_exc.detail)
-            raise _refusal_exc
+    # THE CELL A PERSONA NAMES, resolved by the one derivation the askable list shares. See
+    # `_resolve_active_cell` for the rule and its three refusals.
+    request.active_persona, request.active_domains = _resolve_active_cell(
+        request.active_persona, request.active_domains, current_user,
+        log_tag="canvas_seed_cell_not_entitled",
+    )
 
     _requested = (request.template_id or "").strip()
     if not _requested:
@@ -5990,8 +6079,10 @@ async def _refresh_the_runs_token(run_id: str, leg: Optional[str] = None) -> Non
         who = identity_exchange.entitlement_of(fresh) if fresh else None
         if fresh and who and VAULT.replace(run_id, fresh, who):
             return
-    VAULT.mark_awaiting_reauth(run_id, "token_near_expiry_and_not_refreshable",
-                               _paused_call_text(leg), _REAUTH_INSTRUCTION)
+    # Unconfigured: no refresh was ever possible, so the token itself has lapsed.
+    _reason = ("token_near_expiry_and_not_refreshable" if identity_exchange.configured()
+               else "token_expired_and_not_refreshable")
+    VAULT.mark_awaiting_reauth(run_id, _reason, _paused_call_text(leg), _REAUTH_INSTRUCTION)
 
 
 @app.post("/internal/identity/redeem")
@@ -6075,9 +6166,11 @@ async def redeem_caller_identity(
     # A replay is not a 404. Distinguishing them is the point of the tombstone, and
     # collapsing them here would throw away the discrimination the vault just made. A run
     # paused for its person is a 409 too: the state is real, the run is not failed.
-    _status = 409 if result.outcome in (
-        RedemptionOutcome.ALREADY_REDEEMED, RedemptionOutcome.AWAITING_REAUTH,
-    ) else 404
+    # A session that expired while the run waited is a 410: terminal, nothing more is tried.
+    _status = 410 if result.outcome == RedemptionOutcome.SESSION_EXPIRED else (
+        409 if result.outcome in (
+            RedemptionOutcome.ALREADY_REDEEMED, RedemptionOutcome.AWAITING_REAUTH,
+        ) else 404)
     raise HTTPException(
         status_code=_status,
         detail={
@@ -6092,6 +6185,10 @@ async def redeem_caller_identity(
                 RedemptionOutcome.AWAITING_REAUTH: (
                     "The run is paused, not failed: the person's token needs them to sign "
                     "in again (POST /orchestrate/{run_id}/reauth). Ask again after they do."
+                ),
+                RedemptionOutcome.SESSION_EXPIRED: (
+                    "The run waited for its person to sign in again past its bound, so its "
+                    "session has expired. Nothing more is attempted; the person asks again."
                 ),
                 RedemptionOutcome.LAUNCHER_MISMATCH: (
                     "The run's recorded launcher does not match the stashed token's "
@@ -7589,6 +7686,15 @@ class InterviewRequest(BaseModel):
     # `find_compatible_verbs` call still runs against the live mesh, so a declared `subject` the
     # mesh no longer agrees with is `FALL_BACK` — a visible failure, never a silent route.
     seed_panel: dict | None = None
+    # A MEASURE PICKED FROM `/askable_measures`: `{"verb": str, "bindings": dict}`. The message
+    # is a LABEL for logs and the card, never classified and never slot-filled. THE SUBJECT
+    # COMES FROM THE SERVER'S OWN LIST (`menu_blocks.askable()`), re-read on this request and
+    # never taken from the request: a client that could name the subject could aim a verb at
+    # any class. `orchestrate()` refuses a verb not on the caller's list BEFORE the stream
+    # opens (one message for "no such measure" and "not in your cells"); the stream then
+    # dispatches it the way a board ask is dispatched (`dispatch_pre_resolved`), skipping the
+    # routing calls. The mesh still confirms the verb on every dispatch.
+    askable_pick: dict | None = None
 
 
 class BPMNTask(BaseModel):
@@ -8542,6 +8648,8 @@ def _perror(
     retryable: bool | None = None,
     cause: str | None = None,
     missing_domains: "list[str] | tuple[str, ...] | None" = None,
+    failed_step: str | None = None,
+    trace_id: str | None = None,
 ) -> str:
     """Emit a typed `pipeline_error` event.
 
@@ -8555,6 +8663,7 @@ def _perror(
                 downstream telemetry.
     missing_domains : the domains a verb declares that the caller's cell lacks; sent only on
                 the `seed_panel_verb_not_visible` cause, read back by `_seed_failure_from_data`.
+    failed_step, trace_id : on a failed run, the step that failed and the run's trace id (ADR-0072 8.1).
     """
     payload: dict = {"message": message}
     if kind:
@@ -8565,6 +8674,10 @@ def _perror(
         payload["cause"] = cause
     if missing_domains:
         payload["missing_domains"] = list(missing_domains)
+    if failed_step:
+        payload["failed_step"] = failed_step
+    if trace_id:
+        payload["trace_id"] = trace_id
     return _sse("pipeline_error", json.dumps(payload))
 
 
@@ -8893,6 +9006,37 @@ def _pre_resolved_from_seed_panel(seed_panel: dict) -> tuple[dict, dict]:
         "verb_iri": verb,
         "owner_persona": "",
     }, params
+
+
+def _askable_pick_parts(pick: dict) -> tuple[str, dict] | None:
+    """`(verb, bindings)` of a request's `askable_pick`, or None when it is not the shape
+    `{"verb": str, "bindings": dict}`. `None`/`""` bindings are dropped, as seed_panel's are;
+    a binding's NAME is left to the engine's declarations at dispatch (the BFF holds none)."""
+    if not isinstance(pick, dict):
+        return None
+    verb = pick.get("verb")
+    bindings = pick.get("bindings") or {}
+    if not isinstance(verb, str) or not verb or not isinstance(bindings, dict):
+        return None
+    return verb, {k: v for k, v in bindings.items() if v not in (None, "")}
+
+
+def _askable_pick_entry(verb: str, domains=None) -> tuple[bool, dict | None]:
+    """`(composed, entry)` for `verb` on the SERVER'S OWN askable list (`menu_blocks.askable()`,
+    the list `/askable_measures` serves). With `domains`, the entry must also be visible to them
+    (`menu_blocks.visible_to`); with None the cell gate is not applied (the stream re-reads the
+    subject only; the visibility was judged before the stream opened and the mesh re-checks the
+    cell on dispatch). `entry["subject"]` is the engine's registration."""
+    from . import menu_blocks
+
+    result = menu_blocks.askable()
+    measures = result.measures if domains is None else menu_blocks.visible_to(
+        result.measures, domains
+    )
+    for m in measures:
+        if m.get("verb") == verb and m.get("subject"):
+            return result.composed, m
+    return result.composed, None
 
 
 def _artifact_is_the_callers(artifact_id: str, user_id: str) -> bool:
@@ -9386,7 +9530,7 @@ def _supervisor_op_config(
     query: str,
     thread_id: str,
     persona: str = "PROCESS_ENGINEER",
-    domain: str = "MAINTENANCE",
+    domain: str | None = None,
     task_plan_json: str = "",
     user_id: str = "default_testing_user",
     # ADR-0017 amendment: which frontend will render the answer. Threaded to Engine F so
@@ -9422,6 +9566,9 @@ def _supervisor_op_config(
     # The route an earlier ask already established, read back under the caller's ownership
     # edge. `{}` for an ordinary question, which is every request that answers nothing.
     pre_resolved: dict | None = None,
+    # True only for a measure picked from the askable list: the query is a label, so the
+    # supervisor must not slot-fill it.
+    message_is_label: bool = False,
     trace_id: str = "",
     session_id: str = "",
 ) -> dict:
@@ -9439,7 +9586,6 @@ def _supervisor_op_config(
         "user_query": query,
         "thread_id": thread_id,
         "persona": persona,
-        "domain": domain,
         "task_plan_json": task_plan_json,
         "user_id": user_id,
         "user_email": user_email,
@@ -9460,6 +9606,7 @@ def _supervisor_op_config(
         "spoken_slot": spoken_slot or "",
         "spoken_answer": spoken_answer or "",
         "pre_resolved": dict(pre_resolved or {}),
+        "message_is_label": bool(message_is_label),
         # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
         # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
         "trace_id": trace_id,
@@ -9467,6 +9614,9 @@ def _supervisor_op_config(
         # The bff.orchestrate span's id, ambient in the producer task.
         "parent_span_id": current_span_id(),
     }
+    if domain:
+        # No domain is no key: the run config never names one the caller was not given.
+        op_config["domain"] = domain
     return op_config
 
 
@@ -9474,7 +9624,7 @@ async def _launch_supervisor_job(
     query: str,
     thread_id: str,
     persona: str = "PROCESS_ENGINEER",
-    domain: str = "MAINTENANCE",
+    domain: str | None = None,
     task_plan_json: str = "",
     user_id: str = "default_testing_user",
     # ADR-0017 amendment: which frontend will render the answer. Threaded to Engine F so
@@ -9510,6 +9660,7 @@ async def _launch_supervisor_job(
     # The route an earlier ask already established, read back under the caller's ownership
     # edge. `{}` for an ordinary question, which is every request that answers nothing.
     pre_resolved: dict | None = None,
+    message_is_label: bool = False,
     trace_id: str = "",
     session_id: str = "",
 ) -> str | None:
@@ -9540,6 +9691,7 @@ async def _launch_supervisor_job(
         spoken_slot=spoken_slot,
         spoken_answer=spoken_answer,
         pre_resolved=pre_resolved,
+        message_is_label=message_is_label,
         trace_id=trace_id,
         session_id=session_id,
     )
@@ -9778,6 +9930,19 @@ async def _get_step_stats(run_id: str) -> list[dict]:
     except Exception as exc:
         logger.error("Failed to get step stats: %s", exc)
         return []
+
+
+async def _dagster_run_failure(run_id: str) -> dict:
+    """The step a failed Dagster run failed at, from its step stats (ADR-0072 8.1).
+
+    The earliest-ending FAILURE step; a step with no end time sorts last. None when no step is recorded
+    as failed. Dagster holds no trace id of its own here: the stream supplies the one it put in the
+    run config."""
+    failed = [s for s in await _get_step_stats(run_id) if s.get("status") == "FAILURE" and s.get("stepKey")]
+    if not failed:
+        return {"failed_step": None, "trace_id": None}
+    failed.sort(key=lambda s: (s.get("endTime") is None, s.get("endTime") or 0, s["stepKey"]))
+    return {"failed_step": failed[0]["stepKey"], "trace_id": None}
 
 async def _get_ui_payload_output(run_id: str) -> dict:
     """Fetch the output value of the generate_ui_payload step via Metadata.
@@ -10035,18 +10200,25 @@ def _trace_headers(trace_id: str, session_id: str = "") -> dict:
 _DURABLE_ANSWERS = None
 
 
-def _answer_path() -> str:
-    # IAGENT_ANSWER_PATH: "dagster" (default) or "durable"; read per request.
-    raw = os.getenv("IAGENT_ANSWER_PATH", "dagster")
-    val = (raw or "").strip().lower() or "dagster"
-    if val not in ("dagster", "durable"):
-        logger.warning("IAGENT_ANSWER_PATH=%r is not 'dagster' or 'durable'; using 'dagster'", raw)
+_ANSWER_PATHS = ("dagster", "durable")
+
+
+def _answer_path(environ=None) -> str:
+    """IAGENT_ANSWER_PATH (ADR-0072 §4, amended 2026-11-24). Unset is "dagster"; exactly "dagster"
+    or "durable" is accepted; anything else (empty, other case, whitespace, another word) raises.
+    The lifespan calls it first, so a mistyped value refuses the BFF's start instead of quietly
+    answering on Dagster. Still read per request."""
+    env = os.environ if environ is None else environ
+    if "IAGENT_ANSWER_PATH" not in env:
         return "dagster"
-    return val
+    v = env["IAGENT_ANSWER_PATH"]
+    if v in _ANSWER_PATHS:
+        return v
+    raise ValueError('IAGENT_ANSWER_PATH must be unset, "dagster" or "durable"')
 
 
 def _answer_backend():
-    """The launch and the four run reads for ONE stream, chosen at call time.
+    """The launch and the run reads for ONE stream, chosen at call time.
 
     Every dagster-side helper is looked up when it is CALLED (the lambdas), never bound here:
     the seam's tests monkeypatch the module-level names."""
@@ -10061,6 +10233,8 @@ def _answer_backend():
             status=client.get_run_status,
             events=client.get_run_events,
             steps=client.get_step_stats,
+            failure=client.get_failure,
+            failed_cause="answer_run_failed",
             payload=client.get_ui_payload_output,
             poll_s=client.poll_interval_s,
             max_ticks=int(round(900 / client.poll_interval_s)),
@@ -10070,6 +10244,8 @@ def _answer_backend():
         status=lambda rid: _get_run_status(rid),
         events=lambda rid: _get_run_events(rid),
         steps=lambda rid: _get_step_stats(rid),
+        failure=lambda rid: _dagster_run_failure(rid),
+        failed_cause="dagster_run_failed",
         payload=lambda rid: _get_ui_payload_output(rid),
         poll_s=1.0,
         max_ticks=900,
@@ -10258,10 +10434,33 @@ async def _generate_dagster_stream_inner(
     # both meaningful on the same turn, and this branches on both rather than trusting that.
     _is_seed_panel_turn = bool(request.seed_panel) and not _answering_artifact_id
     _seed_panel_bound_slots: dict = {}
+    _is_askable_pick_turn = (
+        bool(request.askable_pick) and not _answering_artifact_id and not _is_seed_panel_turn
+    )
+    _askable_pick_bound_slots: dict = {}
     if _is_seed_panel_turn:
         _pre_resolved, _seed_panel_bound_slots = _pre_resolved_from_seed_panel(
             request.seed_panel  # type: ignore[arg-type]
         )
+    elif _is_askable_pick_turn:
+        # A PICK FROM THE ASKABLE LIST IS ASKED THE WAY A BOARD ASK IS. The subject is read
+        # from the server's own list on THIS turn, never from the request and never carried
+        # from `orchestrate()`; `orchestrate()` already judged that the caller may see the verb.
+        _ap_parts = _askable_pick_parts(request.askable_pick)  # type: ignore[arg-type]
+        _ap_entry = None
+        if _ap_parts is not None:
+            _, _ap_entry = await asyncio.to_thread(_askable_pick_entry, _ap_parts[0])
+        if _ap_entry is not None and _ap_parts is not None:
+            _pre_resolved = {
+                "subject_uri": _ap_entry["subject"],
+                "subject_instance_id": "",
+                "subject_instance_label": "",
+                "verb_iri": _ap_entry["verb"],
+                "owner_persona": "",
+            }
+            _askable_pick_bound_slots = _ap_parts[1]
+        else:
+            _pre_resolved = {}
     else:
         _pre_resolved = (
             _pre_resolved_from_ask(_answering_artifact_id or "", user_id)
@@ -10283,6 +10482,16 @@ async def _generate_dagster_stream_inner(
             kind="understanding",
             retryable=False,
             cause="seed_panel_unroutable",
+        )
+        yield _sse("stream_end", "{}")
+        return
+    if _is_askable_pick_turn and not _pre_resolved:
+        # Like seed_panel: the message is only a label, so there is nothing to route instead.
+        yield _perror(
+            "this askable measure is no longer on the list, so it cannot be dispatched directly",
+            kind="understanding",
+            retryable=False,
+            cause="askable_pick_unroutable",
         )
         yield _sse("stream_end", "{}")
         return
@@ -10358,7 +10567,9 @@ async def _generate_dagster_stream_inner(
         # nearest hop win: a person who answers a slot twice meant the second answer.
         _this_turn = {
             k: {"value": v, "source": SLOT_SOURCE_PICKED}
-            for k, v in dict(request.bound_slots or {}).items()
+            for k, v in dict(
+                _askable_pick_bound_slots if _is_askable_pick_turn else (request.bound_slots or {})
+            ).items()
         }
         _pre_resolved["accumulated_slots"] = {**(_chain_slots or {}), **_this_turn}
 
@@ -10420,7 +10631,7 @@ async def _generate_dagster_stream_inner(
     # them. We pass sane defaults so the runConfig schema still validates.
     decision = intent_extraction  # kept for any downstream inspection
     intent = "PROCESS_CREATION" if mode == "CONVERSATIONAL" else "ONE_SHOT"
-    domain = "MAINTENANCE"  # legacy default; supervisor will route by predicate
+    # No domain is passed: the supervisor routes by predicate, within the caller's entitled_domains.
 
     if intent == "PROCESS_CREATION":
         # 🔵 THE INTERVIEW PATH (RESTATE)
@@ -10640,6 +10851,7 @@ async def _generate_dagster_stream_inner(
                     # parameter names (`bind_as`).
                     bound_slots=(
                         _seed_panel_bound_slots if _is_seed_panel_turn
+                        else _askable_pick_bound_slots if _is_askable_pick_turn
                         else (request.bound_slots or {})
                     ),
                     # Read from the graph under the caller's ownership edge, never from the
@@ -10810,6 +11022,45 @@ async def _generate_dagster_stream_inner(
                 yield _sse("stream_end", "{}")
                 await _dispatch_answer_artifact(_artifact_bundle)
                 return
+            if _is_askable_pick_turn and _direct.kind != direct_dispatch.ASK:
+                # A PICK'S MESSAGE IS ONLY A LABEL, like a seed's: "route the full path" on a
+                # fall-back would hand the label to `/route_intent`. Fails visibly instead.
+                # AN `ask` IS NOT A FAILURE: it falls through to the run below with
+                # `pre_resolved` and `message_is_label`, so the supervisor builds the ask card
+                # and its menu without slot-filling the label.
+                _ap_cause = (
+                    "askable_pick_verb_not_visible"
+                    if _direct.missing_domains
+                    and direct_dispatch.VERB_NOT_IN_CELL in _detail["reason"]
+                    else "askable_pick_fell_back"
+                )
+                _artifact_bundle["status"] = "failed"
+                _ri = dict(_artifact_bundle.get("resolved_intent") or {})
+                for _k in ("verb_iri", "subject_uri", "subject_instance_id"):
+                    _v = _pre_resolved.get(_k)
+                    if _v not in (None, ""):
+                        _ri.setdefault(_k, _v)
+                _ri.setdefault("disposition", _direct.kind)
+                _ri.setdefault("failure_cause", {
+                    "exception": _ap_cause,
+                    "message": _detail["reason"],
+                    "where": "askable_pick_fall_back",
+                    "outcome": _direct.kind,
+                })
+                _artifact_bundle["resolved_intent"] = _ri
+                yield _perror(
+                    f"the picked measure's route is no longer valid: {_detail['reason']}",
+                    kind="verifying_route",
+                    retryable=True,
+                    cause=_ap_cause,
+                    missing_domains=(
+                        _direct.missing_domains
+                        if _ap_cause == "askable_pick_verb_not_visible" else None
+                    ),
+                )
+                yield _sse("stream_end", "{}")
+                await _dispatch_answer_artifact(_artifact_bundle)
+                return
             _direct = None
 
     if _direct is not None:
@@ -10846,14 +11097,12 @@ async def _generate_dagster_stream_inner(
                 "target_persona": _pre_resolved.get("owner_persona") or "",
                 "sub_query": user_query,
             }],
-            "domain": domain,
             "extracted_concepts": [],
         })
     _ab = _answer_backend()
     run_id = await _ab.launch(
         user_query,
         session_id,
-        domain=domain,
         task_plan_json=task_plan_json,
         user_id=user_id,
         user_email=user_email,
@@ -10866,10 +11115,14 @@ async def _generate_dagster_stream_inner(
         entity_refs=entity_refs,
         # Forwarded rather than dropped - the carry. `{}` until the slot-filler is called.
         slots=dict(intent_extraction.get("slots") or {}),
-        bound_slots=dict(request.bound_slots or {}),
+        bound_slots=dict(
+            _askable_pick_bound_slots if _is_askable_pick_turn else (request.bound_slots or {})
+        ),
         spoken_slot=request.spoken_slot,
         spoken_answer=request.spoken_answer,
         pre_resolved=_pre_resolved,
+        # A picked measure's message is a label: the supervisor must not slot-fill it.
+        **({"message_is_label": True} if _is_askable_pick_turn else {}),
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )
@@ -10918,6 +11171,7 @@ async def _generate_dagster_stream_inner(
     # Polling Loop
     emitted_steps = set()
     is_success = False
+    _run_failure: dict | None = None
 
     # Option A: the every-10s "Agents are reasoning (Elapsed: Ns)"
     # heartbeat is REMOVED. The cortex-ui ThinkingCard ticks the
@@ -10930,12 +11184,14 @@ async def _generate_dagster_stream_inner(
     # THE ONE DEADLINE IN THIS GENERATOR: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
     # dagster, the same 15 minutes on the durable path), the ceiling for slow
     # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
-    # ended by it, so a paused tick does not count toward it; the pause is bounded by the
-    # vault entry's own life, after which the state is None and the ticks count again. The
+    # ended by it, so a paused tick does not count toward it; the pause is bounded by
+    # `IDENTITY_REAUTH_WAIT_SECONDS`, after which the vault says `session_expired` (or, at the
+    # entry's own life, None) and the ticks count again. The
     # keepalive wrapper is an interval, not a deadline, and `_get_run_status` is a per-call
     # fetch.
     _ticks = 0
     _reauth_paused = False
+    _session_expired = False
     while _ticks < _ab.max_ticks:
         await asyncio.sleep(_ab.poll_s)
 
@@ -10951,6 +11207,8 @@ async def _generate_dagster_stream_inner(
                 }))
         else:
             _ticks += 1
+            if _vstate == "session_expired":
+                _session_expired = True
             if _reauth_paused:
                 _reauth_paused = False
                 if _vstate == "live":
@@ -10961,12 +11219,26 @@ async def _generate_dagster_stream_inner(
             VAULT.close(run_id)
             break
         if status_data.get("status") == "FAILURE":
+            # Read BEFORE the close: a run whose vault went `session_expired` between ticks
+            # is still recognised.
+            if VAULT.state(run_id) == "session_expired":
+                _session_expired = True
             VAULT.close(run_id)
+            # ADR-0072 8.1 (ruled 2026-11-15): name the step that failed and the run's trace id. The
+            # backend says which step; the trace id is the backend's if it holds one, else the one this
+            # stream put in the run config. The cause names the path, never `dagster` on the durable one.
+            _f = await _ab.failure(run_id) or {}
+            _run_failure = {
+                "failed_step": _f.get("failed_step") or None,
+                "trace_id": _f.get("trace_id") or trace_id or None,
+            }
             yield _perror(
                 "Pipeline failed.",
                 kind="retrieving",
                 retryable=False,
-                cause="dagster_run_failed",
+                cause="session_expired" if _session_expired else _ab.failed_cause,
+                failed_step=_run_failure["failed_step"],
+                trace_id=_run_failure["trace_id"],
             )
             # Architect-ruled failure-mode-1 fix per
             # [[optimistic-defaults-are-dishonest]]: the gateway sees
@@ -11355,6 +11627,22 @@ async def _generate_dagster_stream_inner(
             yield _sse("final_payload", json.dumps(result["payload"]))
             # Hop 1: capture rendered_output into the bundle.
             _mark_answer_complete(_artifact_bundle, result.get("payload"))
+    elif _run_failure is not None:
+        # A FAILED RUN ENDS WITH A CARD (ADR-0072 8.1). The run's own card when it made one (the final
+        # check fails AFTER generate_ui_payload: see assert_every_engine_answered), else the failure
+        # card. The bundle stays `failed` with no rendered output: a failure is not an answer.
+        result = await _ab.payload(run_id)
+        if "error" not in result and result.get("payload") is not None:
+            if result.get("referenced_uris"):
+                yield _sse("context_update", json.dumps({
+                    "type": "bindings",
+                    "data": result["referenced_uris"],
+                }))
+            _card = result["payload"]
+        else:
+            _card = _failure_card(_run_failure["failed_step"], _run_failure["trace_id"],
+                                  session_expired=_session_expired)
+        yield _sse("final_payload", json.dumps(_card))
     else:
         yield _perror(
             "Timeout or failed to fetch UI payload.",
@@ -11375,6 +11663,31 @@ async def _generate_dagster_stream_inner(
     # ONE WRITER, TWO CALLERS — the direct path calls the same function. See
     # `_dispatch_answer_artifact`.
     await _dispatch_answer_artifact(_artifact_bundle)
+
+
+def _failure_card(failed_step: str | None, trace_id: str | None,
+                  session_expired: bool = False) -> dict:
+    """The card a failed run ends with when it produced none of its own (ADR-0072 8.1, ruled
+    2026-11-15: "On a failed run the BFF delivers a failure card naming the step and the trace id;
+    it never stays silent."). An absent value is said to be absent, never invented."""
+    step = (failed_step or "").replace("`", "")
+    trace = (trace_id or "").replace("`", "")
+    if session_expired:
+        # The run waited for its person to sign in again and the wait ran out (ruling 2026-11-24).
+        lines = ["# Your sign-in expired", "",
+                 "This answer was waiting for you to sign in again, and the wait ran out, so it "
+                 "was not finished. Ask the question again."]
+    else:
+        lines = ["# The answer could not be completed", ""]
+        lines.append(f"The run failed at step `{step}`." if step else
+                     "The run failed. The step that failed was not recorded.")
+    lines.append("")
+    lines.append(f"Trace id: `{trace}`" if trace else "This run has no trace id.")
+    return {"components": [{
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "subject_concept": "system://mesh/alert",
+        "markdown_content": "\n".join(lines),
+    }]}
 
 
 def _mark_answer_complete(bundle: dict, payload: Any) -> None:
@@ -12421,54 +12734,20 @@ async def register_frontend_capabilities(
     )
 
 
-@app.post("/orchestrate", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
-@app.post("/interview/stream")
-@_audit_orchestrate_refusals
-async def orchestrate(request: InterviewRequest, http_request: Request,
-                      current_user: User = Depends(get_current_user)):
-    """
-    Entry point for the Agentic Mesh.
-    Delegates to Dagster GraphQL and streams step stats as SSE events
-    to power Holographic Thinking Cards. Emits final payload when done.
-
-    Per ADR-0009 Step F'.2: user_persona + entitled_domains come from the
-    auth-resolved User and flow downstream to the supervisor + engines.
-
-    ADR-0026 step 4: when the request carries `active_persona` /
-    `active_domains` (the cortex-ui picker's per-prompt selection), we
-    validate the cell is in the caller's Topaz-resolved entitlement
-    matrix. Non-entitled → 403 `cell_not_entitled` with the caller's
-    entitled cells in the body — the client knows what would work
-    (honest denial per ADR-0026, not a silent downgrade). Cell entitled
-    → the picker values override the JWT-claim defaults, and downstream
-    routing sees the picked persona/domains.
-
-    Precedence when a field is absent:
-      1. Explicit picker override (`active_persona` / `active_domains`)
-      2. User's default cell (`entitlements.default`)
-      3. First cell from `entitlements.cells`
-      4. Legacy JWT-claim path (`current_user.persona` /
-         `current_user.entitled_domains`) — kept as a safety net for
-         clients that don't set the picker AND users without seeded
-         entitlements.
-    """
+def _resolve_ask_cell(active_persona, active_domains, current_user, *, session_id):
+    """The cell an ask runs under: `(persona, domains, source)`, source one of `picker`,
+    `default`, `first-cell`, `none`. ONE derivation, used by `/orchestrate` and by
+    `/askable_measures`, so the list and the ask cannot disagree about the persona. Refuses an
+    incomplete override (400) and a cell the caller does not hold (403) instead of narrowing."""
     ent = current_user.entitlements
-    # Telemetry (ADR-0038): cortex-ui mints X-Trace-Id per request; thread it so the whole
-    # conversation (BFF -> supervisor -> Engine A) lands ONE Langfuse trace. Session grouping
-    # uses request.session_id (the conversation thread) downstream.
-    # The BFF mints one when the caller sends none, so no client can silence tracing
-    # (architect ruling 4, 2026-11-10).
-    # A valid W3C `traceparent` wins: its trace-id is the trace and its parent-id parents the root span.
-    _trace_ctx = request_trace_context(http_request.headers)
-    _trace_id = _trace_ctx.trace_id
     entitled_cells = [
         {"persona": c.persona, "domain": c.domain} for c in ent.cells
     ]
 
     # Validate per-prompt override if the caller sent one.
-    if request.active_persona is not None or request.active_domains is not None:
-        p = request.active_persona
-        ds = request.active_domains or []
+    if active_persona is not None or active_domains is not None:
+        p = active_persona
+        ds = active_domains or []
         if p is None or not ds:
             # Structured 400 body — client + logs get the same shape.
             # `denied_at` is the capture-or-lose-forever timestamp
@@ -12480,7 +12759,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 "denied_at": datetime.now(timezone.utc).isoformat(),
                 "subject": current_user.id,
                 "subject_email": current_user.email,
-                "session_id": request.session_id,
+                "session_id": session_id,
                 "requested": {"persona": p, "domains": ds},
                 "message": (
                     "active_persona and active_domains must be "
@@ -12518,7 +12797,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 "denied_at": datetime.now(timezone.utc).isoformat(),
                 "subject": current_user.id,
                 "subject_email": current_user.email,
-                "session_id": request.session_id,
+                "session_id": session_id,
                 "requested": {"persona": p, "domains": ds},
                 "requested_missing": missing,
                 "entitled_cells": entitled_cells,
@@ -12536,9 +12815,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=body_403,
             )
-        effective_persona = p
-        effective_domains = ds
-        effective_source = "picker"
+        return p, ds, "picker"
     else:
         # No override — pick the default cell, then the first cell, then
         # HONEST-EMPTY (ADR-0026 step 6): a caller with zero entitlements
@@ -12548,19 +12825,58 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
         # generalist handles the query without a persona; any privileged
         # path hits the real gate and denies with an actionable message.
         if ent.default is not None:
-            effective_persona = ent.default.persona
-            effective_domains = [ent.default.domain]
-            effective_source = "default"
+            return ent.default.persona, [ent.default.domain], "default"
         elif ent.cells:
-            effective_persona = ent.cells[0].persona
-            effective_domains = ent.domains_for(ent.cells[0].persona)
-            effective_source = "first-cell"
+            return ent.cells[0].persona, ent.domains_for(ent.cells[0].persona), "first-cell"
         else:
             # honest-empty — persona is None (current_user.persona is
             # None post step-6), domains empty. Least privilege.
-            effective_persona = current_user.persona  # None
-            effective_domains = current_user.entitled_domains  # []
-            effective_source = "none"
+            return current_user.persona, current_user.entitled_domains, "none"  # None, []
+
+
+@app.post("/orchestrate", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
+@app.post("/interview/stream")
+@_audit_orchestrate_refusals
+async def orchestrate(request: InterviewRequest, http_request: Request,
+                      current_user: User = Depends(get_current_user)):
+    """
+    Entry point for the Agentic Mesh.
+    Delegates to Dagster GraphQL and streams step stats as SSE events
+    to power Holographic Thinking Cards. Emits final payload when done.
+
+    Per ADR-0009 Step F'.2: user_persona + entitled_domains come from the
+    auth-resolved User and flow downstream to the supervisor + engines.
+
+    ADR-0026 step 4: when the request carries `active_persona` /
+    `active_domains` (the cortex-ui picker's per-prompt selection), we
+    validate the cell is in the caller's Topaz-resolved entitlement
+    matrix. Non-entitled → 403 `cell_not_entitled` with the caller's
+    entitled cells in the body — the client knows what would work
+    (honest denial per ADR-0026, not a silent downgrade). Cell entitled
+    → the picker values override the JWT-claim defaults, and downstream
+    routing sees the picked persona/domains.
+
+    Precedence when a field is absent:
+      1. Explicit picker override (`active_persona` / `active_domains`)
+      2. User's default cell (`entitlements.default`)
+      3. First cell from `entitlements.cells`
+      4. Legacy JWT-claim path (`current_user.persona` /
+         `current_user.entitled_domains`) — kept as a safety net for
+         clients that don't set the picker AND users without seeded
+         entitlements.
+    """
+    # Telemetry (ADR-0038): cortex-ui mints X-Trace-Id per request; thread it so the whole
+    # conversation (BFF -> supervisor -> Engine A) lands ONE Langfuse trace. Session grouping
+    # uses request.session_id (the conversation thread) downstream.
+    # The BFF mints one when the caller sends none, so no client can silence tracing
+    # (architect ruling 4, 2026-11-10).
+    # A valid W3C `traceparent` wins: its trace-id is the trace and its parent-id parents the root span.
+    _trace_ctx = request_trace_context(http_request.headers)
+    _trace_id = _trace_ctx.trace_id
+    effective_persona, effective_domains, effective_source = _resolve_ask_cell(
+        request.active_persona, request.active_domains, current_user,
+        session_id=request.session_id,
+    )
 
     logger.info(
         "orchestrate: user=%s persona=%s domains=%s source=%s "
@@ -12584,6 +12900,21 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
     # has nothing to hand `dispatch_pre_resolved` as `subject_uri`. All of this runs BEFORE
     # the stream opens so the caller gets one clean HTTP status rather than a pipeline_error
     # buried inside an SSE body it already started reading.
+    # A PICK IS NOT A SEED AND NOT AN ANSWER — refused first, by name, before either other
+    # field's own gates can answer a different 422 (or a 409) for the same request.
+    if request.askable_pick is not None and request.seed_panel is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="askable_pick and seed_panel cannot be sent together: send one or the other.",
+        )
+    if request.askable_pick is not None and request.answering_artifact_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "askable_pick and answering_artifact_id cannot be sent together: a picked "
+                "measure answers no ask. Send one or the other."
+            ),
+        )
     if request.seed_panel is not None:
         from .canvas_template import load_template, ratified_template_ids
 
@@ -12670,6 +13001,35 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                     f"`bindings`."
                 ),
                 **slot_refusal(_sp_template, _sp_unbound),
+            )
+
+    # ── A MEASURE PICKED FROM THE ASKABLE LIST — VALIDATED BEFORE THE STREAM OPENS ──────────
+    # The verb must be on the list as `/askable_measures` serves it for the cell THIS ask runs
+    # under (`effective_domains`). The list resolves its cell with the same helper
+    # (`_resolve_ask_cell`), so a pick shown under one persona cannot run under another.
+    # ONE message for "no such measure" and "not in your cells", so the response cannot tell
+    # an unknown verb from a withheld one.
+    if request.askable_pick is not None:
+        _ap_parts = _askable_pick_parts(request.askable_pick)
+        if _ap_parts is None:
+            raise HTTPException(
+                status_code=422,
+                detail='askable_pick must be {"verb": <string>, "bindings": <object>}.',
+            )
+        from starlette.concurrency import run_in_threadpool as _ap_threadpool
+
+        _ap_composed, _ap_entry = await _ap_threadpool(
+            _askable_pick_entry, _ap_parts[0], effective_domains
+        )
+        if not _ap_composed:
+            raise HTTPException(
+                status_code=503,
+                detail="askable_pick cannot be checked: the askable measures list could not be read.",
+            )
+        if _ap_entry is None:
+            raise HTTPException(
+                status_code=422,
+                detail="askable_pick names a measure that is not on your askable list.",
             )
 
     # The span opens and closes in the one task that iterates the response body, and wraps
@@ -18769,6 +19129,18 @@ _ELECTRIC_FORWARD_HEADERS = {
 }
 
 
+# The query parameters the proxy forwards to Electric: the ones @electric-sql/client's ShapeStream
+# sends (its protocol params, plus `table`, and `columns` in the UI's summaries mode). Everything
+# else is dropped. `table` is forwarded only after the policy/electric_shapes.yaml check below.
+# `where` is NOT here: the server injects it. `secret` is NOT here: only the server's own is sent.
+_ELECTRIC_FORWARD_PARAMS = frozenset({
+    "table", "columns", "offset", "handle", "live", "cursor", "expired_handle", "log",
+    "live_sse", "experimental_live_sse", "cache-buster",
+})
+# The env var holding the BFF's own Electric API secret (a secretKeyRef in the chart).
+_ELECTRIC_SHAPE_SECRET_ENV = "ELECTRIC_SHAPE_SECRET"
+
+
 @app.get("/electric/shape")
 async def electric_shape_proxy(
     request: Request,
@@ -18795,8 +19167,11 @@ async def electric_shape_proxy(
     #    table first — the WHERE column is per-table.
     upstream_params: dict[str, str] = {}
     for key, value in request.query_params.multi_items():
-        if key.lower() == "where":
-            # Client cannot influence the WHERE clause. Silently drop.
+        if key not in _ELECTRIC_FORWARD_PARAMS:
+            # An ALLOW-LIST, not a deny-list: `where` (always overridden below), `replica`,
+            # `secret`, `api_secret` and any key not named in _ELECTRIC_FORWARD_PARAMS are dropped
+            # silently (never a 400: a client library adding a protocol param must not break the
+            # stream, and nothing dropped reaches Electric).
             continue
         upstream_params[key] = value
     table = upstream_params.get("table") or "answer_artifact_projection"
@@ -18851,6 +19226,10 @@ async def electric_shape_proxy(
             missing_binding=f"electric_shape_filter({table})",
             message="this table has no per-caller filter on the shape proxy")
     upstream_params["where"] = server_where
+    # The BFF's own secret, from its env; a client never supplies it (not in the allow-list).
+    _shape_secret = os.getenv(_ELECTRIC_SHAPE_SECRET_ENV)
+    if _shape_secret:
+        upstream_params["secret"] = _shape_secret
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
 
@@ -18862,7 +19241,8 @@ async def electric_shape_proxy(
         try:
             upstream_resp = await client.get(upstream_url, params=upstream_params)
         except httpx.HTTPError as exc:
-            logger.error("electric proxy upstream error: %s", exc)
+            # the exception class only: an httpx error's text may carry the upstream URL, which holds `secret=`
+            logger.error("electric proxy upstream error: %s", type(exc).__name__)
             raise HTTPException(
                 status_code=502, detail="electric upstream unavailable"
             ) from exc

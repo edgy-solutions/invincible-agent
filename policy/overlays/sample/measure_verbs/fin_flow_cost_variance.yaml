@@ -1,0 +1,58 @@
+# SAMPLE -- the measure-by-declaration proof (architect, 2026-11-22): a NEW measure added as one
+# overlay row, touching no engine code. Cost variance, earned value less actual cost (bcwp - acwp),
+# summed over every period and split down the program's hierarchy. A deployment replaces it with
+# its own. It reuses the reviewed `flow_edges` module unchanged; the row supplies only the columns.
+# Negative is unfavourable: the work cost more than its earned value. A dataset row always reads its
+# asset as the caller, so it answers only a caller who holds the reader grant on the URN below
+# (policy/asset_grants.yaml); everyone else gets 403 access_denied.
+measure_id: fin_flow_cost_variance
+verb: finFlowCostVariance
+name: Cost variance flow
+description: >-
+  Cost variance to date (earned value less actual cost, summed over every period), split down the
+  program's hierarchy into a flow map, so a reader sees which accounts and work packages carry it.
+  NOT the explanation of a variance or its ranked drivers (finVarianceAnalysis,
+  finVarianceDrivers), and NOT actual cost alone (finFlowActualCost).
+synonyms:
+  - cost variance flow
+  - cost variance flow map
+  - where is the cost variance in the hierarchy
+anti_synonyms:
+  - explain the cost variance
+  - what is driving the overrun
+  - actual cost flow
+  - estimate at completion
+inputs:
+  params: {program_id: {required: true}}
+  dataset:
+    urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+    banner: "SYNTHETIC earned-value fixture, not a real program."
+    contract: ev_fixture
+    levels: [program_id, control_account, work_package]
+    value: {minus: [bcwp, acwp]}
+  # Shares of the program's |cost variance| by control account are 1.1 .088, 3.1 .803 and 5.1 .109;
+  # 2.1 and 4.1 net to zero. At 0.05 nothing collapses: both signs and the zero children are drawn.
+  other_threshold: "0.05"
+computation:
+  module: agent_fleet.finance_agent.measure_modules.variance_decomposition
+  function: flow_edges
+  version: "1.4.0"
+  derived_from:
+    authority: Test fixture, no external method
+    clause: A signed sum split down a hierarchy
+    citation: name-only
+    transcription: each edge is the signed sum beneath its child
+render:
+  shape: FLOW_DECOMPOSITION
+  value_label: Cost variance (EV - AC)
+  unit: USD
+menu:
+  subject: "fin:DeclaredMeasureSeries"
+  archetype: "mesh:FlowDecomposition"
+  persona_fit: [PROGRAM_FINANCE_ANALYST]
+  domain_fit: [PROGRAM_FINANCE]
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: seed
+  reason: a sample row proving a measure added by declaration alone, on the synthetic EV fixture

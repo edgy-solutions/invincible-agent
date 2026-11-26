@@ -49,11 +49,11 @@ from typing import Dict, List
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     import measures
-    from entities import FISCAL_PERIODS
+    from entities import fiscal_periods
     from utils.slot_declarations import NOT_A_SLOT, SLOT_KINDS, derive_slots
 except ImportError:
     from agent_fleet.finance_agent import measures
-    from agent_fleet.finance_agent.entities import FISCAL_PERIODS
+    from agent_fleet.finance_agent.entities import fiscal_periods
     from agent_fleet.utils.slot_declarations import NOT_A_SLOT, SLOT_KINDS, derive_slots
 
 # `SLOT_KINDS` is now IMPORTED rather than reproduced. This module's note said it was
@@ -142,7 +142,7 @@ def with_live_vocabularies(
     period, the raw words — which reaches the measure and raises `unknown fiscal period(s)`.
     With the vocabulary attached, the router refuses it using the enum check it already has.
     """
-    values = list(periods) if periods else list(FISCAL_PERIODS)
+    values = list(periods) if periods else list(fiscal_periods())
     out = []
     for r in records:
         if r["name"] in _PERIOD_SLOTS and not r.get("values"):

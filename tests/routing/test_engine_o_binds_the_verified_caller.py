@@ -372,12 +372,16 @@ def test_the_input_declared_pool_searches_and_serves_the_bound_grant(monkeypatch
 
     monkeypatch.setattr(eo, "predicate_hybrid_search", _search)
     monkeypatch.setattr(eo, "_served_class_uris", _served)
-    request = eo.ResolveRequest(query="q", user_email="bound@example.com", domains=["BOUND"])
-    assert request.domain == "MAINTENANCE", "the legacy default is a grant nobody granted"
+    # The legacy single `domain` no longer defaults to a literal; a body that still sends one is
+    # a grant nobody granted, and it must reach neither the search nor the served-class read.
+    request = eo.ResolveRequest(query="q", user_email="bound@example.com", domains=["BOUND"],
+                                domain="LEGACY_DOM")
+    assert eo.ResolveRequest(query="q").domain is None
     asyncio.run(eo._input_declared_pool(request, ["BOUND"]))
     assert got["kwargs"]["entitled_domains"] == ["BOUND"]
     assert got["kwargs"]["user_email"] == "bound@example.com"
     assert "MAINTENANCE" not in json.dumps(got, default=str)
+    assert "LEGACY_DOM" not in json.dumps(got, default=str)
     assert got["served"] == ["BOUND"]
 
 
@@ -522,8 +526,13 @@ def test_the_ttl_comes_from_the_environment(monkeypatch):
 # =============================================================================================
 
 def test_the_bound_log_line_carries_no_email_and_no_domain(client, resolve_instance_spy, caplog):
-    with caplog.at_level(logging.INFO, logger="engine-o.caller_binding"):
-        _resolve_instance(client, _bearer(BOB), user_email=ALICE, entitled_domains=list(DIRECTORY[ALICE]))
+    lg = logging.getLogger("engine-o.caller_binding")
+    lg.addHandler(caplog.handler)                  # the logger does not propagate: attach, then detach
+    try:
+        with caplog.at_level(logging.INFO, logger="engine-o.caller_binding"):
+            _resolve_instance(client, _bearer(BOB), user_email=ALICE, entitled_domains=list(DIRECTORY[ALICE]))
+    finally:
+        lg.removeHandler(caplog.handler)
     lines = [r.getMessage() for r in caplog.records if r.name == "engine-o.caller_binding"]
     assert len(lines) == 1 and lines[0].startswith("caller bound route=resolve_instance kind=person")
     assert "grants=1" in lines[0] and "body_identity=ignored" in lines[0]

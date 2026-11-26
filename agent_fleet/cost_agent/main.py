@@ -570,6 +570,16 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
     if fn is None:
         raise HTTPException(status_code=404, detail=f"{fn_name!r} is not a verb this engine serves")
 
+    # RULED 2026-11-23 (architect): a cost export's dates are stamped by THIS engine's clock. A
+    # caller's `as_of` is a request-shape fault -- a 422, not an ADR-0049 `outcome`, and never
+    # the silent drop below. Checked before the mandatory slots; scoped to this verb. The BFF
+    # sends none and refuses one too.
+    if fn_name == "package_export" and "as_of" in req.params:
+        raise HTTPException(status_code=422, detail={
+            "error": "as_of_not_accepted", "field": "as_of",
+            "reason": ("a cost export's dates are stamped by engine-cost's clock; "
+                       "the caller cannot supply one.")})
+
     missing = [s for s in slot_decls.mandatory_slots(fn_name) if s not in req.params]
     if missing:
         # A MISSING MANDATORY SLOT IS AN ASK, NOT A PYTHON ERROR. Calling through with a

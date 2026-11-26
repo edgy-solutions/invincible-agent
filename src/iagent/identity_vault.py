@@ -30,12 +30,17 @@ single-use is the CALL, not the reference: a ``call_id`` redeemed twice is the r
 
 THE REFERENCE LIVES AS LONG AS THE RUN'S BUDGET (``IDENTITY_VAULT_TTL_SECONDS``, default
 3600; the chart renders it from ``dagster.runMonitoring.maxRuntimeSeconds``). The old
-600 s dispatch window is gone, and so is the shrink to the token's own ``exp``. When the
-token nears its ``exp`` the vault does not return it: ``redeem`` answers ``NEEDS_REFRESH``
-and the BFF's route asks Keycloak, through ``identity_exchange`` (a separate module), for a
-fresh one, which ``replace`` swaps in. When that cannot be done the entry is marked
-``awaiting_reauth`` and the person re-authenticates at ``POST /orchestrate/{run_id}/reauth``.
-A run never loses its card to a clock.
+600 s dispatch window is gone, and so is the shrink to the token's own ``exp``. Where a
+refresh is possible (the exchange is configured), the vault does not return a token within
+its refresh margin of ``exp``: ``redeem`` answers ``NEEDS_REFRESH`` and the BFF's route asks
+Keycloak, through ``identity_exchange`` (a separate module), for a fresh one, which
+``replace`` swaps in. Where no refresh is possible the 60 s margin buys nothing, so the
+token is released until ``exp`` minus a few seconds of clock skew: refusing a valid token
+stalls the answer for no gain, and the callee checks expiry itself (ruling 2026-11-24).
+When a refresh is needed and cannot be done the entry is marked ``awaiting_reauth`` and the
+person re-authenticates at ``POST /orchestrate/{run_id}/reauth``. That wait is bounded
+(``IDENTITY_REAUTH_WAIT_SECONDS``): past it the entry is ``session_expired``, terminal, and
+every redemption of the run fails at once. A run never loses its card to a clock.
 
 WHY THIS AND NOT LEGACY EXCHANGE OR IMPERSONATION. Those are ruled out permanently: a
 request carrying ``requested_subject``, or one with no ``subject_token``, is the refused
@@ -69,7 +74,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +112,8 @@ __all__ = [
     "VAULT",
     "vault_ttl_seconds",
     "vault_refresh_margin_seconds",
+    "vault_clock_skew_seconds",
+    "vault_reauth_wait_seconds",
 ]
 
 
@@ -115,9 +122,20 @@ __all__ = [
 # bounds a run; 3600 is only the default for a deployment that does not.
 _DEFAULT_TTL_SECONDS = 3600
 
-# The token is not handed out when its own `exp` is this close: a call that starts with a
-# token about to lapse fails mid-flight as a 401 that looks like an entitlement problem.
+# Where a refresh is possible (the exchange is configured), the token is not handed out when
+# its own `exp` is this close: a call that starts with a token about to lapse fails
+# mid-flight as a 401 that looks like an entitlement problem. Where no refresh is possible
+# the margin gains nothing, so the token is released until `exp` minus the clock skew below
+# (ruling 2026-11-24).
 _DEFAULT_REFRESH_MARGIN_SECONDS = 60
+
+# The few seconds kept back from `exp` for clock skew when the token cannot be refreshed.
+_DEFAULT_CLOCK_SKEW_SECONDS = 5
+
+# How long a run paused for re-authentication waits for its person before the session is
+# expired (ruling 2026-11-24). Held here, the BFF's one record for the run, so that every
+# later redemption and the stream read the same state.
+_DEFAULT_REAUTH_WAIT_SECONDS = 180
 
 # A run's call tombstones go with its entry. This is only the life of the "consumed by a
 # launcher mismatch" marker, which has no entry to ride on.
@@ -137,6 +155,32 @@ def vault_refresh_margin_seconds() -> int:
                           or _DEFAULT_REFRESH_MARGIN_SECONDS))
     except ValueError:
         return _DEFAULT_REFRESH_MARGIN_SECONDS
+
+
+def vault_clock_skew_seconds() -> int:
+    try:
+        return max(0, int(os.getenv("IDENTITY_VAULT_CLOCK_SKEW_SECONDS", "")
+                          or _DEFAULT_CLOCK_SKEW_SECONDS))
+    except ValueError:
+        return _DEFAULT_CLOCK_SKEW_SECONDS
+
+
+def vault_reauth_wait_seconds() -> int:
+    try:
+        return max(1, int(os.getenv("IDENTITY_REAUTH_WAIT_SECONDS", "")
+                          or _DEFAULT_REAUTH_WAIT_SECONDS))
+    except ValueError:
+        return _DEFAULT_REAUTH_WAIT_SECONDS
+
+
+def _exchange_is_configured() -> bool:
+    """Whether a refresh is possible. Reads the environment only (no network call), through
+    a lazy import so the vault stays a module that mints nothing."""
+    try:
+        from . import identity_exchange
+        return bool(identity_exchange.configured())
+    except Exception:  # noqa: BLE001 -- unknown means not refreshable: release, do not stall
+        return False
 
 
 def _expiry_of(token: str) -> Optional[float]:
@@ -166,11 +210,14 @@ class RedemptionOutcome:
     ALREADY_REDEEMED = "already_redeemed"  # THE COMPROMISE TELL: one call_id, twice
     NEEDS_REFRESH = "needs_refresh"      # the token is near its exp; none is returned
     AWAITING_REAUTH = "awaiting_reauth"  # the run is paused for the person; none is returned
+    # The run waited for its person past the bound; terminal; none is returned.
+    SESSION_EXPIRED = "session_expired"
     LAUNCHER_MISMATCH = "launcher_mismatch"
 
 
 STATE_LIVE = "live"
 STATE_AWAITING_REAUTH = "awaiting_reauth"
+STATE_SESSION_EXPIRED = "session_expired"
 
 
 @dataclass(frozen=True)
@@ -196,6 +243,8 @@ class _Entry:
     # ``mark_awaiting_reauth``; never a token. Cleared with the pause.
     paused_call: str = ""
     instruction: str = ""
+    # The vault's monotonic clock when the pause began; bounds the wait.
+    paused_at: float = 0.0
 
 
 class IdentityVault:
@@ -227,6 +276,9 @@ class IdentityVault:
         clock=time.monotonic,
         wall_clock=time.time,
         refresh_margin_seconds: Optional[int] = None,
+        clock_skew_seconds: Optional[int] = None,
+        refreshable: Optional[Callable[[], bool]] = None,
+        reauth_wait_seconds: Optional[int] = None,
     ) -> None:
         self._ttl = ttl_seconds if ttl_seconds is not None else vault_ttl_seconds()
         self._tombstone_ttl = tombstone_ttl_seconds
@@ -236,6 +288,11 @@ class IdentityVault:
         self._wall = wall_clock
         self._margin = (refresh_margin_seconds if refresh_margin_seconds is not None
                         else vault_refresh_margin_seconds())
+        self._skew = (clock_skew_seconds if clock_skew_seconds is not None
+                      else vault_clock_skew_seconds())
+        self._refreshable = refreshable if refreshable is not None else _exchange_is_configured
+        self._reauth_wait = (reauth_wait_seconds if reauth_wait_seconds is not None
+                             else vault_reauth_wait_seconds())
         # INVARIANT 2 — the lock is what makes redeem-and-tombstone ONE operation. A plain
         # dict read followed by a separate write is NOT this invariant; it is a race that
         # satisfies it most of the time. A threading.Lock (not an asyncio one) because
@@ -272,6 +329,7 @@ class IdentityVault:
                 expires_at=now + float(self._ttl),
                 state=STATE_AWAITING_REAUTH if expired else STATE_LIVE,
                 reason="token_expired_at_stash" if expired else "",
+                paused_at=now if expired else 0.0,
             )
             self._calls.pop(run_id, None)
             self._consumed.pop(run_id, None)
@@ -294,6 +352,9 @@ class IdentityVault:
             self._evict_locked(self._clock())
             entry = self._entries.get(run_id)
             if entry is None or subject != entry.subject:
+                ok = False
+            elif entry.state == STATE_SESSION_EXPIRED:
+                # The session is over: the person asks again.
                 ok = False
             else:
                 entry.token = token
@@ -322,6 +383,9 @@ class IdentityVault:
             entry = self._entries.get(run_id)
             if entry is None:
                 return False
+            if entry.state != STATE_AWAITING_REAUTH:
+                # A repeated mark does not restart the wait.
+                entry.paused_at = self._clock()
             entry.state = STATE_AWAITING_REAUTH
             entry.reason = str(reason or "")[:120]
             entry.paused_call = str(paused_call or "")[:200]
@@ -340,7 +404,7 @@ class IdentityVault:
 
     # ── reading ────────────────────────────────────────────────────────────────────────
     def state(self, run_id: str) -> Optional[str]:
-        """``"live"`` | ``"awaiting_reauth"`` | None (no such run)."""
+        """``"live"`` | ``"awaiting_reauth"`` | ``"session_expired"`` | None (no such run)."""
         with self._lock:
             self._evict_locked(self._clock())
             entry = self._entries.get(run_id)
@@ -435,15 +499,23 @@ class IdentityVault:
                     "it is NOT re-issued.", run_id, call_id, now - calls[call_id])
                 return RedemptionResult(RedemptionOutcome.ALREADY_REDEEMED)
 
+            if entry.state == STATE_SESSION_EXPIRED:
+                logger.warning("identity_vault: run_id=%s call_id=%s session is expired; "
+                               "no token returned", run_id, call_id)
+                return RedemptionResult(RedemptionOutcome.SESSION_EXPIRED)
+
             if entry.state == STATE_AWAITING_REAUTH:
                 logger.warning("identity_vault: run_id=%s call_id=%s is awaiting_reauth; "
                                "no token returned", run_id, call_id)
                 return RedemptionResult(RedemptionOutcome.AWAITING_REAUTH)
 
             exp = _expiry_of(entry.token)
-            if exp is not None and exp - self._wall() <= self._margin:
-                logger.info("identity_vault: run_id=%s call_id=%s token is near its exp; "
-                            "needs refresh, no token returned", run_id, call_id)
+            refreshable = bool(self._refreshable())
+            margin = self._margin if refreshable else self._skew
+            if exp is not None and exp - self._wall() <= margin:
+                logger.info("identity_vault: run_id=%s call_id=%s token is near its exp "
+                            "(margin=%ss refreshable=%s); needs refresh, no token returned",
+                            run_id, call_id, margin, refreshable)
                 return RedemptionResult(RedemptionOutcome.NEEDS_REFRESH)
 
             # THE ATOMIC STEP: the call is tombstoned in the same critical section that
@@ -458,6 +530,7 @@ class IdentityVault:
         """End-of-life eviction. Called under the lock on every operation, which is what
         keeps the map bounded without a background task — one fewer moving part to fail
         silently. A run's call tombstones go with its entry."""
+        self._expire_paused_locked(now)
         if self._entries:
             for k in [k for k, e in self._entries.items() if now >= e.expires_at]:
                 del self._entries[k]
@@ -467,6 +540,18 @@ class IdentityVault:
         if self._consumed:
             for k in [k for k, until in self._consumed.items() if now >= until]:
                 del self._consumed[k]
+
+    def _expire_paused_locked(self, now: float) -> None:
+        """A run that waited for its person past the bound has an expired session. Applied
+        from ``_evict_locked`` so every operation sees it."""
+        for k, e in self._entries.items():
+            if e.state == STATE_AWAITING_REAUTH and now - e.paused_at >= self._reauth_wait:
+                e.state = STATE_SESSION_EXPIRED
+                e.reason = "reauth_wait_exceeded"
+                e.paused_call = ""
+                e.instruction = ""
+                logger.warning("identity_vault: run_id=%s session_expired after %ss "
+                               "awaiting re-authentication", k, self._reauth_wait)
 
     def stats(self) -> Tuple[int, int]:
         """(live references, call tombstones) — for /health. Counts only; never contents."""

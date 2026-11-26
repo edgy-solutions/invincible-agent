@@ -363,7 +363,7 @@ def test_the_router_forwards_the_context_it_was_given():
     them would satisfy every caller-side test while no provider ever saw a slot."""
     src = (_REPO / "agent_fleet" / "ontology_service" / "main.py").read_text(encoding="utf-8")
     i = src.index("async def enumerate_instances(")
-    body = src[i:i + 9000]
+    body = src[i:i + 12000]
     assert '"bound_slots": dict(request.bound_slots or {})' in body, (
         "the fan-out does not forward bound_slots to providers — the field is accepted and "
         "dropped, which is the ignored-field defect the SDK model's extra=forbid exists to stop"

@@ -118,9 +118,12 @@ agentFleet:
     # unset, the children land in "default". From 0.2.1 the boundary reads this key too, so it must
     # be set no later than that pin. Keep it equal to DEPLOY_ENV.
     LANGFUSE_TRACING_ENVIRONMENT: "sandbox"
+    # The sandbox declares it (the architect, 11-24): engine O's generations carry the prompt and reply text here; off by default everywhere else.
+    IAGENT_TRACE_MODEL_TEXT: "on"
     # A MEASURE IS AN OVERLAY ROW (proposal docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md).
     # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
-    # invented to prove the contract. engine-fin reads the first, cortex-bff the second; the
+    # invented to prove the contract. engine-fin reads the first, cortex-bff the second
+    # (and also MEASURE_VERB_OVERLAY_DIRS, for the measures' menu placements); the
     # shared agentFleet configmap carries both and each service reads only its own.
     # The second directory holds the refusal probes: rows over dag-tools' planted-refusal assets,
     # which exist only so the live leg can see each reader rule refuse. Nothing else names it.
@@ -129,6 +132,9 @@ agentFleet:
     # A PROGRAM IS AN INSTANCE ROW (docs/contracts/finance-overlays.md section 7). SANDBOX ONLY: the
     # three planted refusal programs, declared so a question can name them. engine-fin reads it.
     FIN_INSTANCE_OVERLAY_DIRS: "/app/policy/overlays/sandbox/fin_instances"
+    # A FISCAL CALENDAR IS DECLARED BY THE DEPLOYMENT (docs/contracts/finance-overlays.md section 8). This
+    # is the sample FY26 calendar, so the sandbox's periods are unchanged. engine-fin reads it.
+    FIN_CALENDAR_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_calendar"
     CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.
@@ -340,6 +346,14 @@ engineO:
   enabled: true
   image:
     tag: ""
+  # Reasoning effort on engine O's three routing calls, at low (the architect,
+  # 2026-11-24: "The speed setting passed and stays on ... Put the three
+  # routing-effort keys at low in the sandbox values for 0.4.92"). Perf's run 2
+  # measured it on the sandbox. The chart default stays off (values.yaml).
+  env:
+    IAGENT_ROUTING_EFFORT_SUBJECT: "low"
+    IAGENT_ROUTING_EFFORT_VERB: "low"
+    IAGENT_ROUTING_EFFORT_SLOTS: "low"
   resources:
     requests:
       cpu: 100m
@@ -384,6 +398,7 @@ engineFinance:
   env:
     FIN_DATASET_URN: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
     FIN_DATASET_BANNER: "SYNTHETIC earned-value fixture, not a real program."
+    FIN_DATASET_CONTRACT: "ev_fixture"
 
 engineCost:
   enabled: true
@@ -793,6 +808,17 @@ cortexUi:
     # now gates grouped review only. The sandbox keeps the promotion editor on, with the server's
     # IAGENT_PROMOTION_ROW_EDITS.
     VITE_PROMOTION_ROW_EDITS: "true"
+
+# invincible-agent ADR-0072 §3/§5: the SupervisorAnswer service, with sandbox's admission values
+# from perf's 11-16 sizing. K=2: one answer keeps the model server busy about 78% of its run, and
+# two admitted together were measured at 79.3 s and 93.4 s against 79 s alone (0.4.87). M=4: a
+# 4th waiter finishes about 3.8 min after asking, the worst wait sandbox already showed (217 s on
+# 0.4.87, 4 min 05 s in the rehearsal). These are starting values, re-measured on `durable` in
+# perf's window. The BFF's IAGENT_ANSWER_PATH is not changed here, so no answer takes this path yet.
+supervisorService:
+  enabled: true
+  answerLimit: 2
+  queueMax: 4
 
 cortexBff:
   enabled: true

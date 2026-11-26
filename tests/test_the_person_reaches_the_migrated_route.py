@@ -118,8 +118,12 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
     # dropping the keyword is quiet here and red in tests/routing/
     # test_enumerate_instances_hears_the_caller.py (``EVERY_SUPERVISOR_ENUMERATOR_IS_MADE_...``);
     # both sites dropping it is red here.
+    # The disposition site's factory call lives in `decide_subtask_disposition` (extracted from
+    # execute_subtask so a routing-only harness can call it); the pick site stays in execute_subtask.
     ("16 · into the enumerator",
      SUPERVISOR, "execute_subtask", "_make_enumerator", ("config." + FIELD,)),
+    ("16b · into the enumerator, at the disposition site",
+     SUPERVISOR, "decide_subtask_disposition", "_make_enumerator", ("config." + FIELD,)),
     ("17 · onto the wire to /enumerate_instances",
      SUPERVISOR, "_make_enumerator", "<dict>", (FIELD,)),
     # 18-19: the BFF's OWN enumerator for the canvas seed's ask -- the same destination as 16-17,

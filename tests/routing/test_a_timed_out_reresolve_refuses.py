@@ -60,7 +60,7 @@ def _load(post):
             calls.append(json)
             return post()
 
-    ns = {"requests": _Requests, "restate": _Restate,
+    ns = {"requests": _Requests, "restate": _Restate, "_PERSON_TOKEN_REFUSALS": ("session_expired", "caller_refused"),
           "ONTOLOGY_RESOLVE_URL": "http://engine-o/resolve", "ONTOLOGY_TIMEOUT": 30,
           "outbound_auth_headers": lambda **k: {}}
     exec(compile(ast.Module(body=[fn], type_ignores=[]), "<resolve>", "exec"), ns)

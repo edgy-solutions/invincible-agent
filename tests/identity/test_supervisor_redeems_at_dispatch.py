@@ -253,7 +253,11 @@ def _refusal_precedes_dispatch(source: str) -> bool:
         if not isinstance(node, ast.Return) or node.value is None:
             continue
         for sub in ast.walk(node.value):
-            if isinstance(sub, ast.Constant) and sub.value == "caller_identity_unavailable":
+            # The refusal dict is built by `_caller_identity_result` (one body for the
+            # redemption refusal and an engine's 401 on an expired token).
+            if (isinstance(sub, ast.Constant) and sub.value == "caller_identity_unavailable") or (
+                    isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                    and sub.func.id == "_caller_identity_result"):
                 refusal_line = min(refusal_line or node.lineno, node.lineno)
 
     dispatch_line = None
@@ -378,8 +382,11 @@ def test_every_cause_has_a_user_sentence_that_leaks_no_mechanism():
         assert sentence and sentence[0].isupper() and sentence.rstrip().endswith("."), cause
         for bad in forbidden:
             assert bad not in sentence, f"{cause}'s sentence leaks {bad!r}"
-        assert "nothing was attempted" in sentence.lower(), (
-            f"{cause} must say nothing was attempted — the honest half of this refusal"
+        # A session that expired mid-answer has had part of its answer attempted, so it says
+        # what is true of it: the rest was not attempted.
+        _honest = "not attempted" if cause == "session_expired" else "nothing was attempted"
+        assert _honest in sentence.lower(), (
+            f"{cause} must say {_honest} — the honest half of this refusal"
         )
 
 

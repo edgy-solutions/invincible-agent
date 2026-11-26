@@ -562,6 +562,143 @@
         "title": "ArtifactResponse",
         "type": "object"
       },
+      "AskableMeasure": {
+        "properties": {
+          "cells": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "example_ask": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Example Ask"
+          },
+          "group_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Label"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phrasings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Phrasings",
+            "type": "array"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shape"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "verb": {
+            "title": "Verb",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verb",
+          "name",
+          "description",
+          "phrasings",
+          "cells"
+        ],
+        "title": "AskableMeasure",
+        "type": "object"
+      },
+      "AskableMeasuresResponse": {
+        "properties": {
+          "cell_source": {
+            "title": "Cell Source",
+            "type": "string"
+          },
+          "composed": {
+            "title": "Composed",
+            "type": "boolean"
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Domains",
+            "type": "array"
+          },
+          "invalid": {
+            "items": {
+              "$ref": "#/components/schemas/MenuBlockInvalid"
+            },
+            "title": "Invalid",
+            "type": "array"
+          },
+          "measures": {
+            "items": {
+              "$ref": "#/components/schemas/AskableMeasure"
+            },
+            "title": "Measures",
+            "type": "array"
+          },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona"
+          }
+        },
+        "required": [
+          "composed",
+          "measures",
+          "invalid",
+          "persona",
+          "domains",
+          "cell_source"
+        ],
+        "title": "AskableMeasuresResponse",
+        "type": "object"
+      },
       "Attestation": {
         "additionalProperties": false,
         "description": "Who may promote a document_promotion task, stamped when it is filed (1.9.0). `excluded` is\nempty under `self`; under `second_party` it lists the authz_ids that may not promote.",
@@ -2936,15 +3073,8 @@
             "title": "Summary"
           },
           "task_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Id"
+            "title": "Task Id",
+            "type": "string"
           },
           "title": {
             "anyOf": [
@@ -3681,6 +3811,18 @@
               }
             ],
             "title": "Artifact Id"
+          },
+          "askable_pick": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Askable Pick"
           },
           "bound_slots": {
             "anyOf": [
@@ -6884,6 +7026,77 @@
         ]
       }
     },
+    "/askable_measures": {
+      "get": {
+        "description": "The declared measures this caller can ask, for discovery. One entry per declared measure\nrow (`MEASURE_VERB_OVERLAY_DIRS`, the same rows and the same loader as `/menu_blocks`),\nwhether or not the row carries a `menu:` block. An entry is listed only when the caller holds\na domain in the row's declared cells, the same comparison the engine that declares the\nmeasure refuses on, so the list never names a measure the caller would be refused. The\nengine still refuses on its own gate. `verb` joins to a `/menu_blocks` placement's\n`declared_by`. `shape` and `unit` come from the row's render block (`unit` is null when the\nrow declares none). `example_ask` and `group_label` are served as declared, null otherwise.\n\nBuilt-in measures are listed from their listing rows, through the measure's engine's own\nloader. They declare no shape (`shape` is null).\n\nThe list is filtered to the cell an ask would run under, resolved by the ask's own rule\n(`_resolve_ask_cell`): with neither param, the caller's default cell (then the first cell,\nthen none); with params, both are required and every domain must be held under the\npersona, else the request is refused (400 / 403), never narrowed silently. The response\nnames that cell (`persona`, `domains`, `cell_source`).\n\nBuilt-ins are listed whatever the overlay env; declared rows are read only when\n`MEASURE_VERB_OVERLAY_DIRS` is set. `composed: false` means NOTHING was read (a failed\nload is named in `invalid` and logged at ERROR); it never means \"none\".",
+        "operationId": "get_askable_measures_askable_measures_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "active_persona",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Active Persona"
+            }
+          },
+          {
+            "in": "query",
+            "name": "active_domains",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Active Domains"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskableMeasuresResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Askable Measures"
+      }
+    },
     "/bpmn/catalog": {
       "get": {
         "operationId": "bpmn_catalog_retired_bpmn_catalog_get",
@@ -9927,7 +10140,7 @@
     },
     "/menu_blocks": {
       "get": {
-        "description": "The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by\n(subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves\nit, cortex reads it.\n\nNOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,\nand `persona_fit` / `domain_fit` only RANK, they never gate.\n\nNOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay\ndir configured, or one is unreadable); it never means \"no blocks\". `composed: true` with\n`blocks: []` means this deployment declares none. A client replaces a hand-written row only\nwith a served block for the SAME subject. A row that does not validate, or that shares its\n(subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at\nERROR.",
+        "description": "The menu placements the overlay rows declare, sorted by (subject, archetype, verb). Two\nsources: `<overlay>/menu_blocks/*.yaml`, and the in-row `menu:` blocks of declared measure rows\n(`MEASURE_VERB_OVERLAY_DIRS`). A placement is keyed by its declaring verb: distinct verbs may\nshare a (subject, archetype) and are all served; a verb declared twice is left out and named.\nThe 2026-11-07 ruling: the row declares its placement, the BFF serves it, cortex reads it.\n\nNOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,\nand `persona_fit` / `domain_fit` only RANK, they never gate.\n\nNOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay\ndir configured, or one is unreadable); it never means \"no blocks\". `composed: true` with\n`blocks: []` means this deployment declares none. A client replaces a hand-written row only\nwith a served block for the SAME subject. A row that does not validate, or that\ndeclares a verb another row declares, is left out of `blocks`, named in `invalid`, and logged at\nERROR.",
         "operationId": "get_menu_blocks_menu_blocks_get",
         "responses": {
           "200": {
