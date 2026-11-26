@@ -3695,7 +3695,15 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
     A provider that fails or times out CANNOT make the answer `empty`. `empty` is a claim that
     nothing of that kind exists, and an unreachable provider has not made a claim. That is why
     the two are counted apart below.
+
+    THE PERSON TRAVELS AS THEMSELVES: each provider post carries the person's own verified bearer,
+    as `/resolve`'s fan-out does (ruling 2026-11-19 Q2); a provider's 401/403 on it ends the call.
     """
+    if _caller_session_expired():
+        # REFUSED BEFORE THE BIND, as `/resolve_instance` is (ruled 2026-11-19, Q2): the SDK leaves an
+        # expired token unverified, so `_bound` would read it as no person and answer 422
+        # `no_person`. An expired session is reported as one, never as an absent caller.
+        return _session_expired_response()
     request, _ = await _bound(request, route="enumerate_instances")
     # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
     # restate_analyst send a real test persona or get refused -- a domains list is never an
@@ -3712,6 +3720,12 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
             "error": "no_person",
             "message": "this verb answers for a person; the caller carries none",
             "fn": "enumerate_instances"})
+    # THE PERSON TRAVELS AS THEMSELVES on this fan-out too, exactly as in `/resolve`
+    # (`_call_resolver`, ruling 2026-11-19 Q2): their own verified bearer, only to a registered
+    # provider endpoint, for this request. An expired session makes no registry read and no call.
+    relay_mode, relay_headers = _relay_authorization()
+    if relay_mode == "expired":
+        return _session_expired_response()
     discovery = _discover_enumerate_providers()
     if discovery.outcome in ("failed", "unreachable"):
         # **AN OUTAGE IS NOT AN EMPTY REGISTRY**, and this function already knows the difference —
@@ -3759,7 +3773,16 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
                           "bound_slots": dict(request.bound_slots or {}),
                           "user_email": request.user_email or "",
                           "entitled_domains": list(request.entitled_domains or [])},
+                    headers=relay_headers,
                 )
+                # A PROVIDER REFUSING THE PERSON'S OWN TOKEN (ruling 2026-11-19 Q2): the whole
+                # call is refused as 401, as `/fill_slots` does. It is never folded into
+                # `declined`/`empty`/`no_provider` and never answered from the other providers.
+                # The body is read for the reason only and is neither logged nor kept.
+                if relay_mode == "relay" and resp.status_code in (401, 403):
+                    reason = _relayed_refusal_reason(resp.status_code, resp.text)
+                    return JSONResponse(status_code=401, content={
+                        "reason": reason, "message": _PERSON_TOKEN_REFUSAL_DETAIL[reason]})
                 body = resp.json() if resp.status_code == 200 else {}
         except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
             # NARROWED ON PURPOSE. `except Exception` here swallows NameError,
