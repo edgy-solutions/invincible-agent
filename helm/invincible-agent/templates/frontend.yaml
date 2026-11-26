@@ -67,23 +67,34 @@ spec:
 {{- if and $bffAuthGuard.realmAudience (not (has $bffAuthGuard.realmAudience ($bffAuthGuard.acceptedAudiences | default list))) }}
 {{- fail (printf "cortexBff.auth.realmAudience (%q) must be one of cortexBff.auth.acceptedAudiences, or the realm stamps an audience the BFF refuses" $bffAuthGuard.realmAudience) }}
 {{- end }}
+{{- with .Values.cortexBff.answerPath }}
+{{- if not (has . (list "dagster" "durable")) }}
+{{- fail "cortexBff.answerPath must be unset, \"dagster\" or \"durable\"" }}
+{{- end }}
+{{- if and (eq . "durable") (not (($.Values.supervisorService | default dict).enabled)) }}
+{{- fail "cortexBff.answerPath: durable needs supervisorService.enabled: true; with no supervisor registered, run/send reaches nothing (ADR-0072 §3)" }}
+{{- end }}
+{{- end }}
+{{- if or (hasKey (.Values.cortexBff.env | default dict) "IAGENT_ANSWER_PATH") (hasKey ((.Values.agentFleet | default dict).env | default dict) "IAGENT_ANSWER_PATH") }}
+{{- fail "set the answer path with cortexBff.answerPath, not an env map, so the chart's checks apply" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-cortex-bff
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
-    {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.cortexBffComponent" .) "root" .) | nindent 4 }}
 spec:
   replicas: {{ .Values.cortexBff.replicas }}
   selector:
     matchLabels:
-      {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 6 }}
+      {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.cortexBffComponent" .) "root" .) | nindent 6 }}
   template:
     metadata:
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
-        {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.cortexBffComponent" .) "root" .) | nindent 8 }}
     spec:
       {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
@@ -148,6 +159,16 @@ spec:
               value: "http://{{ .Release.Name }}-electric{{ include "invincible-agent.svcDomain" . }}:{{ .Values.electric.port | default 3000 }}"
             {{- end }}
             {{- end }}
+            {{- if .Values.electric.enabled }}
+            # The BFF's own Electric API secret: the SAME Secret and key Electric reads as
+            # ELECTRIC_SECRET (one pair of helpers), by reference, never a literal. The proxy adds it
+            # as `secret=` on the upstream call; a client-supplied `secret` is dropped.
+            - name: ELECTRIC_SHAPE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "invincible-agent.electricApiSecretName" . }}
+                  key: {{ include "invincible-agent.electricApiSecretKey" . }}
+            {{- end }}
             {{- if .Values.dagster.runMonitoring.maxRuntimeSeconds }}
             # The identity vault's reference lives as long as the run's budget, from the one
             # source that bounds a run (docs/plans/identity-propagation-must-not-cross-run-storage.md,
@@ -171,6 +192,10 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            {{- end }}
+            {{- with .Values.cortexBff.answerPath }}
+            - name: IAGENT_ANSWER_PATH
+              value: {{ . | quote }}
             {{- end }}
             # Token acceptance (src/iagent/auth.py verified_claims). Always rendered and after cortexBff.env, so
             # a hand-set env cannot widen it; an empty list refuses every token.
@@ -249,7 +274,7 @@ metadata:
     {{- include "invincible-agent.labels" . | nindent 4 }}
 spec:
   selector:
-    {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.cortexBffComponent" .) "root" .) | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.cortexBff.port }}

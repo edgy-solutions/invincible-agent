@@ -1,0 +1,24 @@
+# Synthetic program B's contract with a declared version dimension: a test fixture only, not wired
+# into any chart. Program B's breakdown is four WBS levels above the control account (the sample's
+# has none), it carries three versions of its figures, and its periods are the 4-4-5 calendar
+# `program_b_445` (tests/fixtures/fin_program_b/fin_calendar). `period` exists only so that
+# several rows of one (path, version) have distinct keys.
+contract_id: program_b_versions
+grain: [wbs_2, wbs_3, wbs_4, wbs_5, control_account, version, period]
+scope: program_id
+period:
+  column: period
+  calendar: program_b_445
+version_dimension:
+  column: version
+  values: [PMB, EAC-CTR, EAC-GOV]
+columns:
+  - {name: program_id, type: string, required: true, nullable: false}
+  - {name: wbs_2, type: string, required: true, nullable: false}
+  - {name: wbs_3, type: string, required: true, nullable: false}
+  - {name: wbs_4, type: string, required: true, nullable: false}
+  - {name: wbs_5, type: string, required: true, nullable: false}
+  - {name: control_account, type: string, required: true, nullable: false}
+  - {name: period, type: string, required: true, nullable: false}
+  - {name: version, type: string, required: true, nullable: false}
+  - {name: amount, type: numeric, required: true, nullable: false}

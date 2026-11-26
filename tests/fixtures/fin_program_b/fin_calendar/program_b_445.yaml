@@ -1,0 +1,17 @@
+# Synthetic program B's calendar: the different-shape control for the calendar seals.
+# Test fixture only; not wired into any chart. A 4-4-5 year; the labels P1..P12 are non-lexical
+# (sorted, P10 falls before P2).
+calendar_id: program_b_445
+periods:
+  - {label: P1, start: 2025-12-28, end: 2026-01-24, fiscal_year: B-Y1, quarter: B-Q1, half: B-H1}
+  - {label: P2, start: 2026-01-25, end: 2026-02-21, fiscal_year: B-Y1, quarter: B-Q1, half: B-H1}
+  - {label: P3, start: 2026-02-22, end: 2026-03-28, fiscal_year: B-Y1, quarter: B-Q1, half: B-H1}
+  - {label: P4, start: 2026-03-29, end: 2026-04-25, fiscal_year: B-Y1, quarter: B-Q2, half: B-H1}
+  - {label: P5, start: 2026-04-26, end: 2026-05-23, fiscal_year: B-Y1, quarter: B-Q2, half: B-H1}
+  - {label: P6, start: 2026-05-24, end: 2026-06-27, fiscal_year: B-Y1, quarter: B-Q2, half: B-H1}
+  - {label: P7, start: 2026-06-28, end: 2026-07-25, fiscal_year: B-Y1, quarter: B-Q3, half: B-H2}
+  - {label: P8, start: 2026-07-26, end: 2026-08-22, fiscal_year: B-Y1, quarter: B-Q3, half: B-H2}
+  - {label: P9, start: 2026-08-23, end: 2026-09-26, fiscal_year: B-Y1, quarter: B-Q3, half: B-H2}
+  - {label: P10, start: 2026-09-27, end: 2026-10-24, fiscal_year: B-Y1, quarter: B-Q4, half: B-H2}
+  - {label: P11, start: 2026-10-25, end: 2026-11-21, fiscal_year: B-Y1, quarter: B-Q4, half: B-H2}
+  - {label: P12, start: 2026-11-22, end: 2026-12-26, fiscal_year: B-Y1, quarter: B-Q4, half: B-H2}

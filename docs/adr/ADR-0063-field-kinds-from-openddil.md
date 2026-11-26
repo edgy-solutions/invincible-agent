@@ -206,7 +206,7 @@ added).**
 | cyber-indicator | **new: `CYBER_DEFENSE`**, ADR-0009 first (F7) | `cyber_watch:<tier>` | the indicator-to-asset scope |
 
 - **The overlay per deployment** is ADR-0036's seed/overlay `compose()`. Deployment rows live
-  under `policy/overlays/<deployment>/`, and `openddil-lab` is the first.
+  under `policy/overlays/<deployment>/`, and the deployment's overlay folder is the first.
 - **The match, by name.** openddil:'s *interlock-rules-as-overlay* is iagent:'s ADR-0036 overlay:
   a deployment's own rules composed over a shared seed, refused at compose when unreadable.
   Neither side restates the other's mechanism (F8).

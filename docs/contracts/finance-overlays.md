@@ -40,6 +40,7 @@ The rules, the same for every kind:
 | method row | `policy/measures/` (three EAC rows) | `MEASURE_OVERLAY_DIRS` | `method_id` |
 | export profile | `policy/fin_export_profiles/` (ships none) | `FIN_EXPORT_PROFILE_OVERLAY_DIRS` | `name` |
 | declared instance | none (the seed holds one program) | `FIN_INSTANCE_OVERLAY_DIRS` | `class` and `instance_id` (section 7) |
+| fiscal calendar | none (the engine holds no calendar) | `FIN_CALENDAR_OVERLAY_DIRS` | `calendar_id` (section 8) |
 
 **Two variables with "measure" in the name.** `MEASURE_VERB_OVERLAY_DIRS` carries measure rows: the
 measures people can ask for and see charted (section 2). `MEASURE_OVERLAY_DIRS` carries method rows:
@@ -52,6 +53,14 @@ only by the platform team's test suite. Do not plan on adding a method row and s
 A measure row declares a number computed per month from a program's earned-value data. After it
 loads, a user can ask for it in chat ("What is the to-complete performance index for NP-MERIDIAN?")
 and it can be a source for an export profile (section 3). The row declares; it never calculates.
+
+**Check the folder before a roll.** `scripts/check_measure_verbs.py <policy-repo>/measure_verbs` builds every row file in the
+folder with the engine's own loader and prints `REFUSED <path>: <message>` for each row the release would refuse at boot
+(a module version that does not match, a bad `depth`, a duplicate id), not only the first. Run it from the checkout of the
+release you are about to roll to, before the roll; it needs no cluster and no secret. It exits 0 when every row loads, 1 when
+any is refused, and 2 for a usage error (a directory that is not there). It checks rows, not data: a rule the engine applies to the
+frame it reads, such as a `minus` row's `varies_within_path` under `per_path: once`, refuses when the row is asked,
+and the check cannot see it.
 
 Top-level keys. Required unless marked optional. A key not in this table is refused at load (a
 `formula`, for example), so nothing you put there can look as if it took effect.
@@ -70,6 +79,8 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
 | `menu` | Optional. Where the card sits on the menu: what it places, the card it draws as, and who it fits. |
+| `example_ask` | Optional. A non-empty string: one question a person could ask that this measure answers. It must route to this measure's own verb; the check that it does is a sandbox eval still to come, so none is written yet. |
+| `group_label` | Optional. A non-empty string: the heading the measure is listed under. |
 | `source` | Optional. Where the measure reads when `FIN_DATASET_URN` is set (section 5a): `asset` (the default) or `seed`, the notional model. A dataset row reads its own asset and is refused if it carries one. |
 | `reason` | Required with `source: seed`, refused otherwise. Why the measure stays on the seed under the flag. |
 | `ratified_by` | Required with `source: seed`, refused otherwise. Who ratified that. |
@@ -95,28 +106,60 @@ with an edge table (below); drawn as `MULTI_SERIES`, it answers with a row per p
 Design: `docs/plans/fin-variance-decomposition.md`. It uses the same top-level keys, with these
 differences under `inputs` and `render`:
 
-- `inputs.params` is `program_id` only (`window` is refused: this kind has no period axis).
+- `inputs.params` is `program_id` (`window` is refused: this kind has no period axis), plus
+  `version`, or `version_a` and `version_b`, when the row's contract declares a version dimension (below).
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
   not consulted), `banner` (required, shown beside every answer), `contract` (required, below),
   `levels` (at least two distinct column names, root first; the root column is selected by
-  `program_id`), `value` and optionally `per_path`. `value` is a numeric column that is not one of the levels, or exactly
+  `program_id`), `value` and optionally `per_path` and `depth`. `value` is a numeric column that is not one of the levels, or exactly
   `{minus: [a, b]}`: two distinct numeric columns, neither a level, whose difference `a - b` is the
-  row's amount (computed per row in exact Decimal). `per_path` is `sum` (the default: every row of
+  row's amount (computed per row in exact Decimal), or exactly
+  `{compare: {column: <amount>, by: <version column>}}`: the amount summed (or taken once, per
+  `per_path`) per path in each of two versions, the paths joined on the full path, and the second
+  version subtracted from the first. A path in one version only counts as zero in the other, and the
+  verdict counts such paths. The served `compare` block also holds `difference_exact` (a less b, an exact
+  Decimal string) and `difference_percent_of_b` (that difference over `abs(b's total)`, a string holding a
+  FRACTION: 0.25 is 25%, as `percent_complete` is). The `abs` keeps the percent's sign equal to the
+  difference's when b's total is negative; it is null, never 0, where b's total is zero, and the verdict
+  then says it is undefined. Both are plain decimals, never in exponent form. `by` is the contract's version column and neither it nor `column` is a
+  level; the row lists `version_a` and `version_b` (never `version`) in `inputs.params`, and the
+  person chooses them as slots. `per_path` is `sum` (the default: every row of
   the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
   group, and a group whose rows disagree is a 502 `asset_contract_violation` with rule
   `varies_within_path`, naming the column(s) and never a value). Anything else is refused at load.
-  The row cap counts rows read, before any reduction.
+  The row cap counts rows read, before any reduction. `depth` is optional: an integer from 1 to the
+  number of levels below the root (`len(levels) - 1`), never a bool, refused at load otherwise. The
+  paths are cut to their first `depth` levels after `per_path` has been applied, so totals are
+  unchanged, and the verdict says `over k of n levels`; absent, the flow is drawn at full depth.
+  The depth is the row's, not the caller's: `program_id` stays the dataset kind's only parameter.
+  A compare row (`value: {compare: …}`) may not declare `depth`, refused at load: its only-in-A and only-in-B counts are taken over the full paths, so a cut table would disagree with its own verdict.
+  A person choosing the level of detail when asking is a later step, part of parity with how
+  finance teams work, and it needs its own slot, census and refusal (ruled 2026-11-24).
+- **A version is a declared dimension.** A contract may carry `version_dimension: {column: <string column>,
+  values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
+  declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is
+  a 502 `asset_contract_violation` with rule `version_outside_list`, naming the column and never a
+  value; a null version is `null_value`, so the version column is declared `nullable: false` (a
+  contract that leaves it nullable refuses every row over it at load). Over such a contract, a row whose value is a column or
+  `minus` lists `version` in `inputs.params` (else it would sum every version together, and the row
+  is refused at load), and a compare row lists `version_a` and `version_b`. A row over a contract
+  with no version lists none of them, and a `MULTI_SERIES` dataset row cannot read a versioned
+  contract (a series by version is a later step). The slot values are the declared list; a value
+  outside it, or `version_a` equal to `version_b`, is a 422.
 - `contract` names the dataset contract the asset is read under: `contracts/<contract>.yaml`
   (`contracts/ev_fixture.yaml` is the worked example; the engine reads that directory, or
   `DATASET_CONTRACT_DIR`). At load, every column the row names must be one the contract declares,
-  a level a string column and a value column a numeric one, and the root level must be the
-  contract's `scope`; anything else is refused naming the file. On every read the WHOLE contract is
-  enforced, not only the columns the row names, each as a 502 `asset_contract_violation` whose
-  message names the column(s) and never a value: a required column, or one the row names, absent is
-  `missing_column`; a column not of its declared type is `wrong_type`; two rows for one value of the
-  contract's `grain` is `duplicate_key`; and a `dependencies` entry (`by` determines each of
-  `determines`) broken by one `by` value carrying two values of such a column is
-  `not_determined_by`, naming both columns.
+  and declares `nullable: false`; a level must be a string column and a value column a numeric one;
+  and the root level must be the contract's `scope`. Anything else is refused naming the file. On
+  every read the WHOLE contract is enforced, not only the columns the row names, each as a 502
+  `asset_contract_violation` whose message names the column(s) and never a value:
+  - a required column, or one the row names, absent is `missing_column`;
+  - a column not of its declared type is `wrong_type`;
+  - a null in a column declared `nullable: false` is `null_value`;
+  - a NaN or infinity in a column declared `numeric` or `float` is `non_finite`;
+  - two rows for one value of the contract's `grain` is `duplicate_key`;
+  - a `dependencies` entry (`by` determines each of `determines`) broken by one `by` value
+    carrying two values of such a column is `not_determined_by`, naming both columns.
 - `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
@@ -136,6 +179,28 @@ differences under `inputs` and `render`:
   `render.other_label` is served by the engine from the module's `OTHER_LABEL`; a row does not
   declare it (a row that does is refused at load). A consumer marks the sink by `node_kind`, never
   by matching the label.
+- The sink edge, and only the sink edge, also carries `members`: one `{target, value, value_exact,
+  sign}` per collapsed child, ordered by value descending then target. Their signed values sum to
+  the sink's signed value exactly. A member is terminal; an `item` edge has no `members` key.
+- A flow row whose value is `{minus: [a, b]}` or `{compare: ...}` also serves the envelope key `walk`:
+  `{start: {label, value, value_exact}, end: {label, value, value_exact}}`; a row of a single column
+  has no `walk` key. For `minus` the `start` is the program's total of column `b` and the `end` that
+  of column `a`, labelled by the two column names unless the row declares `render.walk_labels`. For `compare`
+  the `start` is version `b`'s total and the `end` version `a`'s, labelled by the two versions chosen;
+  `compare` does not change, and its totals equal `compare.total_b_exact` and `total_a_exact`.
+  `value_exact` is the exact total as a plain decimal string, never in exponent form and not
+  quantized; `value` is the cent-quantized float. Both are read in the same pass as the paths.
+  The invariant: `start` plus the signed sum of the level-1 edges equals `end`, exactly. Under
+  `per_path: once` a `minus` row's `(a, b)` PAIR must not vary within a path (rule
+  `varies_within_path`, naming both columns), since a constant `a - b` would otherwise leave the two
+  totals ambiguous. The card does not carry `walk` until the projector's declared tuple does.
+- `render.walk_labels` is optional: `{start: <label>, end: <label>}`, on a `{minus: [a, b]}` row only.
+  Both keys are required and no other key is allowed; each value is a non-empty string. When declared,
+  the `start` end is labelled with `start` and the `end` end with `end`, in place of the column names
+  (use it when a column name is not something a person reads). A row without it keeps the column
+  names. It is refused at load on a column row (which serves no walk) and on a `compare` row (whose
+  ends are the two versions the caller names, so a fixed label would be wrong for any other pair).
+  Nothing else in the envelope changes; `render` still travels whole to the card.
 - A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
   with rule `refused_by_module`; the message names no row value.
 
@@ -148,7 +213,7 @@ worked examples. The differences from a flow row:
 - `inputs.dataset` holds `urn`, `banner`, `contract` (as for a flow row), `scope` (the column the
   read filters to `program_id`, and the contract's `scope`),
   `period` (the x axis), optionally `status` (the column naming the period the program is reported
-  through), `per_period` and `per_program`. `levels`, `value`, `per_path` and
+  through), `per_period` and `per_program`. `levels`, `value`, `per_path`, `depth` and
   `inputs.other_threshold` are refused.
 - `per_period` maps a function keyword to a numeric column, summed exactly over the program's rows
   at each period. It must have at least one entry. `per_program` maps a keyword to a numeric column
@@ -440,9 +505,9 @@ scope: program                       # one file per program
 label: CDRL A001 - Notional EV summary (synthetic)
 audience: program_office
 cdrl: {item: A001, title: Notional Earned Value Summary, data_item: DI-NOTIONAL-0001, frequency: monthly}
-template: {file: cdrl_a001_ev_summary.xlsx, sha256: 041f60148f0a6fb3aedc9c382151482d0e77c7eb48a6e7506ef01a8653d52f4a}
+template: {file: cdrl_a001_ev_summary.xlsx, sha256: eb3708c4d72b03b3089cd412adb634ff95fbfa0f22f475f1018f176819d7e78c}
 sheet: EV Summary
-cells: {B2: program.name, B3: program.id, B4: as_of, B5: cdrl.item}
+cells: {B2: program.name, B3: program.id, B4: as_of, B5: generated_on, B6: cdrl.item}
 sources:
   - fn: fin_performance_indices
   - fn: fin_tcpi
@@ -619,13 +684,22 @@ Design: `docs/plans/fin-inputs-resolver.md`. Nothing here has run on a cluster.
 | --- | --- |
 | `FIN_DATASET_URN` | the asset, `urn:li:dataset:...`. Unset: the notional model answers, as before. |
 | `FIN_DATASET_BANNER` | required with the URN. It is shown beside every answer, so a synthetic asset cannot read as real. |
+| `FIN_DATASET_CONTRACT` | required with the URN: the id of the contract, in the contract directory, the read is held to. |
 | `CENTRAL_GATEWAY_URL` | required with the URN: the gateway that issues the read ticket. |
 | `FIN_ASSET_MAX_ROWS` | optional, default 100000. |
 
 With the URN set, the engine refuses to start if the banner or gateway is missing, the URN is not
-of the `urn:li:dataset:` form, or the mesh client cannot be imported.
+of the `urn:li:dataset:` form, the mesh client cannot be imported, the contract is unset or cannot
+be loaded, or it does not declare engine-fin's roles (the nine columns below, each required and of
+its type and declared `nullable: false`, the scope, the grain and the dependencies).
 
-**Columns.** Fixed names, file-backed assets only, one row per work package and period:
+**Columns.** File-backed assets only. These are the roles the named contract must declare, as
+required columns of these types, each declared `nullable: false`. It must be scoped by
+`program_id`, hold one row per (`work_package`, `period`) at most, and declare `program_name` and
+`program_bac` determined by `program_id` and `control_account` determined by `work_package`. The
+read selects every column the contract declares that the asset carries. It refuses with the shared
+reader's ids: a broken key or dependency as `duplicate_key` and `not_determined_by`, and a null or
+a NaN or infinity as `null_value` and `non_finite`:
 
 | column | type | rule |
 | --- | --- | --- |
@@ -713,3 +787,111 @@ the resolver scores an exact match 1.0 across every class and the router abstain
 
 A declared `Program` is visible only to the callers its `program_id` lists in
 `policy/program_members.yaml` (`grant_to`). A program with no row there is listed to no one.
+A declared row of any other class (a `ControlAccount`, say) loads, but no row can yet name the program
+it belongs to, so there is no program to check: it is listed and resolved to no one, not even a caller
+who may view every program.
+
+### 7a. When resolve or a listing comes back empty
+
+The engine's empty answer looks the same for every cause, so each empty answer writes one line
+saying why, at INFO for the normal case and WARNING for a fault (the architect, 2026-11-25). `/resolve_instance` writes `fin.resolve_empty` when `candidates` is empty. `/enumerate_instances`
+writes `fin.enumerate_empty` when the outcome is `unsupported`, or `members` with none. A non-empty answer,
+`too_many` write nothing. A directory outage writes the line too (`directory_unreachable`), then answers its 503 as before.
+
+The engine makes these reason lines visible at INFO on stdout itself, and only when the deployment's logging would otherwise drop them; set `FIN_REASON_LOG_AUTOCONFIG=0` to turn that off.
+
+```
+fin.resolve_empty reason=<code> class=<name|-> matched=<n> withheld=<code:n,...|-> bearer=<none|user|svc> verified=<true|false|-> body_caller=<empty|matches_bearer|differs_from_bearer|no_bearer> dataset_urn_set=<true|false> declared_instances=<n>
+fin.enumerate_empty reason=<code> class=<name> members=<n> withheld=... bearer=... verified=... body_caller=... dataset_urn_set=... declared_instances=<n>
+```
+
+| reason | level | when |
+|---|---|---|
+| `empty_identifier` | INFO | resolve: the identifier is empty |
+| `bare_number_unscoped` | INFO | resolve: the identifier is all digits and no class was given |
+| `class_not_held` | INFO | a class was given that the engine does not resolve (a listing answers `unsupported`) |
+| `class_has_no_members` | INFO | a held class has no members |
+| `no_match` | INFO | resolve: nothing scored at or above the floor |
+| `no_identity` | WARNING | every match was withheld: the body `user_email` is empty |
+| `service_caller` | WARNING | every match was withheld: the caller is `svc:...` |
+| `directory_unconfigured` | WARNING | every match was withheld: `TOPAZ_DIRECTORY_URL` is unset |
+| `not_a_member` | INFO | every match was withheld: the directory says the caller may not view the program |
+| `program_undecidable` | INFO | every match was withheld: its program cannot be decided |
+| `withheld_mixed` | WARNING if any withheld code is a fault, else INFO | withheld for more than one reason; `withheld` says which |
+| `directory_unreachable` | WARNING | the directory could not be asked; the caller gets a 503, and the line is written |
+
+The fields: `class` is the class's local name (`-` when none was given), with any character outside letters, digits, `_`, `.` and `-` written as `?`, since the URI is the caller's text. `matched` (resolve) and `members`
+(listing) count before the visibility filter. `withheld` is the per-reason tally of members withheld, sorted
+by code. `bearer`, `verified` and `body_caller` report the verified bearer next to the body `user_email`
+the routes act on, so a verified person whose body arrives empty shows as `no_identity` with `bearer=user`
+and `body_caller=empty`. `dataset_urn_set` is whether `FIN_DATASET_URN` is set, and `declared_instances` is
+the count of declared instances of that class (all classes when none was given). The line never carries the
+identifier, an email or authz id, a program or instance id, or the dataset URN.
+
+**Who the caller is.** `/resolve_instance` and `/enumerate_instances` decide for the verified bearer's person
+(the architect, 2026-11-25: "the person is the verified token's subject"). A body `user_email` alone names nobody.
+The rule runs before any membership lookup:
+
+| inbound | result |
+|---|---|
+| no bearer | the caller is empty; the body is never used; everything is withheld as `no_identity` (WARNING) |
+| a bearer that is present but not verified | 401 `session_expired` (an expired token) or `bearer_not_verified` |
+| a verified `svc:` bearer | the service id, so the answer is empty with `service_caller`; the body is never used |
+| a verified person, body empty or the same person (compared after trim and case-fold) | the token's subject |
+| a verified person, body names someone else | 403 `caller_mismatch` |
+
+A 401 or 403 writes one WARNING line, `fin.listing_refused route=<resolve|enumerate> reason=<code>`, with no email,
+authz id or token text. The detail is `{"error": <code>, "message": ...}`. A directory outage is still a 503, decided
+after the caller. `/measure` and `/package_export` are unchanged: a service bearer still acts for the body's person.
+
+Resolve reads the seed and the declared instances, never the `FIN_DATASET_URN` asset, so
+`dataset_urn_set=true` with `declared_instances=0` means the deployment's own programs cannot resolve until
+they are declared.
+
+## 8. The fiscal calendar: declared by the deployment
+
+The finance service holds no fiscal calendar. A deployment declares its periods (their labels, their
+order, their start and end dates, and the fiscal year, quarter and half each belongs to) and the
+service reads that declaration. The variable is `FIN_CALENDAR_OVERLAY_DIRS`: directories separated
+by `:` in the service. The repo ships one SAMPLE under `policy/overlays/sample/fin_calendar/`, the
+US federal fiscal year 2026. It is the sample's choice, not a default.
+
+A file holds exactly two keys:
+
+```yaml
+calendar_id: example_fy
+periods:
+  - {label: P-01, start: 2025-10-01, end: 2025-10-31, fiscal_year: FY-A, quarter: Q-1, half: H-1}
+  - {label: P-02, start: 2025-11-01, end: 2025-11-30, fiscal_year: FY-A, quarter: Q-1, half: H-1}
+```
+
+- **`calendar_id`** is a non-empty string.
+- **`periods`** is a non-empty list, and **the list order is the calendar's order.**
+- **Each period has exactly six keys:** `label`, `start`, `end`, `fiscal_year`, `quarter`, `half`.
+  The label, fiscal year, quarter and half are non-empty strings. `start` and `end` are a YAML date
+  or an ISO `YYYY-MM-DD` string; anything else is refused.
+
+The service refuses to start, naming the file and the reason, when:
+- a key is missing or unknown, at the top or in a period;
+- a label appears twice;
+- a period starts after it ends;
+- the periods are not contiguous: each must start the day after the previous one ends, with no gap
+  and no overlap;
+- the periods of one quarter, one half or one fiscal year are not adjacent in the list;
+- a quarter's periods do not all share one half and one fiscal year, or a half's periods do not all
+  share one fiscal year.
+
+**Composition.** A file with the same `calendar_id` in a later directory replaces the earlier one
+whole; nothing is merged. Calendars are named: several `calendar_id`s may be declared, and a
+contract names the one it uses in `period.calendar`. One declared calendar is the default, so a
+contract may omit `period.calendar`; with several declared, every contract names one. The same
+`calendar_id` in two files of one directory is refused, naming both files. A configured dataset
+with no calendar declared fails at boot (not ready), not on each answer.
+
+**No calendar means every period is refused.** With the variable unset, or pointing at no file, the
+calendar is empty. A read of a dataset refuses with the rule id `period_outside_calendar`, and a
+question over a period window is refused as not in the model. An empty answer is never given. A
+period outside a declared calendar is refused with the same rule id.
+
+**The template names this kind.** `contracts/ev_fixture.yaml` gives `period.calendar`: the
+`calendar_id` of the declared `fin_calendar` the dataset's periods are drawn from.

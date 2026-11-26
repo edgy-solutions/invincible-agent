@@ -4,10 +4,11 @@ contract (`inputs.dataset.contract`), the loader joins the two at load, and the 
 contract on every read of the row's asset. Engine-fin reads this module, and the next engine will
 too. No engine keeps a copy: `tests/test_one_dataset_contract_reader.py` seals that.
 
-THE CONTRACT DECLARES, THE READER ENFORCES. Which columns are required, each column's type, the key
-(`grain`) and the dependencies (`dependencies`: each value of `by` carries one value of each
-`determines` column) are the contract's; the reader holds the generic rules that enforce them and
-names no column of any contract. Ruled 2026-11-10.
+THE CONTRACT DECLARES, THE READER ENFORCES. Which columns are required, each column's type, each
+column's nullability (`nullable: false`), the key (`grain`) and the dependencies (`dependencies`:
+each value of `by` carries one value of each `determines` column) are the contract's; the reader
+holds the generic rules that enforce them and names no column of any contract. Ruled 2026-11-10;
+nullability 2026-11-16.
 
 ONE FILE PER CONTRACT SET, READ BY NAME. A contract `<set>` lives in `<set>.yaml` as its only
 document. A contract `<set>.<table>` lives in `<set>.yaml` among the set's documents, the
@@ -20,6 +21,16 @@ is the deployment's mapping, a row, never this module's. Every contract declares
 or `scope: none`, which declares there is none. Under `scope: none` no value filter applies, and
 the read is decided on the asset grant alone. An engine whose reads need a scope refuses such a
 contract at its join, as engine-fin does.
+
+PERIOD CALENDAR. `period.calendar` (optional) names the declared period calendar the dataset's
+period values are drawn from. The reader resolves it, not this module.
+
+VERSION DIMENSION. `version_dimension` (optional) declares `{column, values}`: the versions
+(baselines, estimates) the dataset's rows carry in `column`, in declared order; the column must be in grain. It is NOT the
+top-level `version`, which is the contract's own revision and is not read here. The values are
+strings, ever: an identifier of this kind is never read as a number. A reader refuses a row whose
+version is not in the list (`version_outside_list`), and a row compares or filters on versions
+only as this list names them.
 
 PERSONAL DATA. A column marked `personal_data: true` records a FACT about the column; the
 classification level and who may see it are the deployment's, applied through its dimensions
@@ -36,9 +47,9 @@ rule that nothing raises would read as enforced. The one exception is `PRODUCER_
 producer checks before it publishes. A block may name them, and no reader raises them.
 
 WHAT LIVES HERE: loading and validating a contract; the read-time checks (`missing_column`,
-`wrong_type`, `personal_data`, `duplicate_key`, `not_determined_by`), which raise
-`ContractViolation`; and the generic load-time hold of a row's named columns (declared, and of a
-type in the role's set: `undeclared`, `not_of`).
+`wrong_type`, `null_value`, `non_finite`, `personal_data`, `duplicate_key`, `not_determined_by`),
+which raise `ContractViolation`; and the generic load-time hold of a row's named columns (declared,
+of a type in the role's set, declared `nullable: false`: `undeclared`, `not_of`, `nullable`).
 
 WHAT DOES NOT LIVE HERE: a row's ROLES (level, scope, period, status; "a series row's status is
 determined by the scope"). They are each engine's, e.g. `finance_agent/measure_verbs._join_contract`.
@@ -48,6 +59,7 @@ and `_default_dir`'s walk-up reaches `/app/contracts`.
 """
 from __future__ import annotations
 
+import datetime
 import os
 import re
 from dataclasses import dataclass, field
@@ -72,6 +84,8 @@ RULES = {
     "duplicate_key": "more than one row for one grain tuple",
     "not_determined_by": "one value of a dependency's `by` column carries two values of a column "
                          "it determines",
+    "null_value": "a column the contract declares nullable: false carries a null",
+    "non_finite": "a column the contract declares numeric or float carries a NaN or an infinity",
 }
 #: Rules the PRODUCER checks before it publishes (ruled 2026-11-14). A contract's block may name
 #: them, and carry their messages; no reader raises them, and a seal holds that it never does.
@@ -101,7 +115,11 @@ class DatasetContract:
     scope: str | None                                        # a read filters on it; None: `scope: none`
     dependencies: tuple[tuple[str, tuple[str, ...]], ...]    # (by, the columns it determines)
     rules: dict[str, str] = field(default_factory=dict)      # rule id -> the contract's message for it
+    non_nullable: tuple[str, ...] = ()                       # the columns declared nullable: false
     personal: frozenset[str] = frozenset()                   # the columns marked personal_data
+    calendar: str | None = None                              # `period.calendar`, else None
+    version_column: str | None = None                        # `version_dimension.column`, else None
+    versions: tuple[str, ...] = ()                           # `version_dimension.values`, in order
 
     @property
     def scoped(self) -> bool:
@@ -175,6 +193,7 @@ def _parse(raw: dict) -> DatasetContract:
     contract_id = raw["contract_id"]
     types: dict[str, str] = {}
     required = []
+    non_nullable = []
     personal = []
     for col in raw["columns"]:
         name, kind = col["name"], col["type"]
@@ -188,6 +207,11 @@ def _parse(raw: dict) -> DatasetContract:
             raise ValueError(f"column {name!r} has required {req!r}; it is true or false")
         if req:
             required.append(name)
+        nullable = col.get("nullable", True)
+        if not isinstance(nullable, bool):
+            raise ValueError(f"column {name!r} has nullable {nullable!r}; it is true or false")
+        if nullable is False:
+            non_nullable.append(name)
         pd = col.get("personal_data", False)
         if not isinstance(pd, bool):
             raise ValueError(f"column {name!r} has personal_data {pd!r}; it is true or false")
@@ -228,9 +252,55 @@ def _parse(raw: dict) -> DatasetContract:
     if not isinstance(rules, dict) or not all(
             isinstance(k, str) and isinstance(v, str) and v for k, v in rules.items()):
         raise ValueError(f"rules maps a rule id to its message; {rules!r} is not")
+    period = raw.get("period")
+    calendar = None
+    if period is not None:
+        if not isinstance(period, dict):
+            raise ValueError(f"period is a mapping; {period!r} is not")
+        if "calendar" in period:
+            calendar = period["calendar"]
+            if not isinstance(calendar, str) or not calendar.strip():
+                raise ValueError(f"period.calendar is a non-empty string; {calendar!r} is not")
+    version_column, versions = _parse_version(raw.get("version_dimension"), types, key)
     return DatasetContract(contract_id=contract_id, types=types, required=tuple(required),
                            key=key, scope=scope, dependencies=dependencies, rules=dict(rules),
-                           personal=frozenset(personal))
+                           non_nullable=tuple(non_nullable), personal=frozenset(personal),
+                           calendar=calendar, version_column=version_column, versions=versions)
+
+
+def _parse_version(version: Any, types: dict[str, str], key: Any) -> tuple[str | None, tuple[str, ...]]:
+    """`(column, values)` of the optional `version_dimension` block, else `(None, ())`. ValueError."""
+    if version is None:
+        return None, ()
+    if not isinstance(version, dict):
+        raise ValueError(f"version_dimension is a mapping of column and values; {version!r} is not")
+    unknown = sorted(str(k) for k in set(version) - {"column", "values"})
+    if unknown:
+        raise ValueError(f"version_dimension carries {unknown}; it holds column and values only")
+    column, values = version.get("column"), version.get("values")
+    if not isinstance(column, str) or column not in types:
+        raise ValueError(f"version_dimension.column {column!r} is not a declared column")
+    if types[column] != "string":
+        raise ValueError(f"version_dimension.column {column!r} is declared {types[column]!r}; a version column is a string")
+    if column not in key:
+        raise ValueError(f"version_dimension.column {column!r} is not in grain; each version's rows are one grain "
+                         f"apart, so the key holds the version column")
+    if not isinstance(values, list) or not values:
+        raise ValueError("version_dimension.values is a non-empty list of strings")
+    for v in values:
+        if isinstance(v, bool):
+            raise ValueError(f"version_dimension.values holds the boolean {v!r}; a version is a string, so quote it")
+        if isinstance(v, int):
+            raise ValueError(f"version_dimension.values holds the number {v!r}; a version is a string, so quote it")
+        if isinstance(v, float):
+            raise ValueError(f"version_dimension.values holds the float {v!r}; a version is a string, so quote it")
+        if isinstance(v, datetime.date):
+            raise ValueError(f"version_dimension.values holds the date {v.isoformat()}; a version is a string, so quote it")
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("version_dimension.values holds only non-empty strings")
+    if len(set(values)) != len(values):
+        raise ValueError("version_dimension.values repeats a value")
+    return column, tuple(values)
 
 
 class ContractViolation(Exception):
@@ -292,11 +362,28 @@ def check_contract_schema(schema: Any, contract: Any, named: tuple[str, ...],
     return [c for c in present if c not in hidden]
 
 
+def check_contract_values(df: Any, contract: Any) -> None:
+    """The values of one read's rows: a null in a column declared `nullable: false` is `null_value`;
+    a NaN or infinity in a column declared `numeric` or `float` is `non_finite`. Checked over every
+    such column the frame carries, whether or not the reading row names it (ruled 2026-11-10 and
+    2026-11-16). A message names the column, never a value."""
+    for c in contract.non_nullable:
+        if c in df.columns and df[c].null_count():
+            raise ContractViolation("null_value", f"null value(s) in column {c}")
+    for c, kind in contract.types.items():
+        if kind in ("numeric", "float") and c in df.columns:
+            # a numeric column may arrive as an integer or decimal dtype, which holds no NaN
+            if df[c].dtype.is_float() and not df[c].is_finite().all():
+                raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
+
+
 def check_contract_rows(df: Any, contract: Any) -> None:
-    """The key and the dependencies, over the rows of one read: one scope value's rows, or the whole
-    asset under `scope: none`. A message names the columns, never a value."""
+    """The values (`check_contract_values`) first, then the key and the dependencies, over the rows
+    of one read: one scope value's rows, or the whole asset under `scope: none`. A message names the
+    columns, never a value."""
     import polars as pl
 
+    check_contract_values(df, contract)
     if df.select(list(contract.key)).is_duplicated().any():
         raise ContractViolation("duplicate_key", f"more than one row for one ({', '.join(contract.key)})")
     for by, determined in contract.dependencies:
@@ -322,3 +409,8 @@ def undeclared(contract: DatasetContract, columns) -> list[str]:
 def not_of(contract: DatasetContract, columns, kinds) -> list[str]:
     """The declared columns of `columns` whose declared type is not one of `kinds`, sorted."""
     return sorted(c for c in columns if c in contract.types and contract.types[c] not in kinds)
+
+
+def nullable(contract: DatasetContract, columns) -> list[str]:
+    """The declared columns of `columns` the contract does not declare `nullable: false`, sorted."""
+    return sorted(c for c in columns if c in contract.types and c not in contract.non_nullable)
