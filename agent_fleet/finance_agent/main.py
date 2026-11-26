@@ -2193,6 +2193,72 @@ def _verb_caller(body_user_email: str) -> str:
     return body_user_email or ""
 
 
+def _listing_session_expired(c: Any) -> bool:
+    """True when the caller's bearer is expired: the SDK names an expired signature, or the
+    claims carry an `exp` at or before now (no leeway). Mirrors engine-o's check."""
+    if "ExpiredSignatureError" in str(getattr(c, "reason", "") or ""):
+        return True
+    raw = getattr(c, "raw", None)
+    if isinstance(raw, dict) and raw.get("exp") is not None:
+        try:
+            return float(raw["exp"]) <= datetime.now(timezone.utc).timestamp()
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def _log_listing_refused(route: str, code: str) -> None:
+    """One WARNING line per listing refusal. The route and the code only: no email, no authz
+    id, no token or reason text."""
+    _reason_log.warning("fin.listing_refused route=%s reason=%s", route, code)
+
+
+_LISTING_NOT_VERIFIED = ("a finance listing reads the caller from a verified bearer; "
+                         "this one is not verified")
+
+
+def _listing_caller(body_user_email: str, route: str = "") -> str:
+    """The person a listing (`/resolve_instance`, `/enumerate_instances`) decides for: the
+    VERIFIED BEARER's subject (ruled 2026-11-25). A body email alone names nobody.
+
+      * no bearer (`c` is None, or reason `absent`)  -> "" (body never used; `_visible_to`
+        then withholds everything as `no_identity`);
+      * a bearer present but not verified            -> 401 `session_expired` |
+        `bearer_not_verified`, before any lookup;
+      * verified `svc:` subject                      -> the id unchanged (`_can_view` refuses
+        it, tallied `service_caller`); never the body;
+      * verified person, body empty or the same after strip+casefold -> the subject;
+      * verified person, body names someone else     -> 403 `caller_mismatch`.
+
+    "Present but unverified" is `c is not None and not c.verified and c.reason != "absent"`:
+    the SDK reports `absent` only when no token came in, and an unverified decoded token may
+    still carry an `authz_id`, which is neither a person nor absence.
+    """
+    c = _current_caller()
+    if c is None or str(getattr(c, "reason", "") or "") == "absent":
+        return ""
+    if not getattr(c, "verified", False):
+        if _listing_session_expired(c):
+            _log_listing_refused(route, "session_expired")
+            raise HTTPException(401, {"error": "session_expired",
+                                      "message": _LISTING_NOT_VERIFIED})
+        _log_listing_refused(route, "bearer_not_verified")
+        raise HTTPException(401, {"error": "bearer_not_verified",
+                                  "message": _LISTING_NOT_VERIFIED})
+    subject = (getattr(c, "authz_id", None) or "").strip()
+    if not subject:
+        return ""
+    if subject.startswith("svc:"):
+        return subject
+    body = (body_user_email or "").strip().casefold()
+    if body and body != subject.casefold():
+        _log_listing_refused(route, "caller_mismatch")
+        raise HTTPException(403, {
+            "error": "caller_mismatch",
+            "message": "the request body names a different person than the verified bearer"})
+    return subject
+
+
 def _require_visible(program_id: Any, caller: str) -> None:
     """403 with the refusal envelope unless the caller may view the program; 503 on an outage.
 
@@ -2491,12 +2557,13 @@ def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str
 @app.post("/resolve_instance")
 def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
     """Resolve a spoken finance name to an identifier in this model."""
+    caller = _listing_caller(req.user_email, "resolve")
     cands = [c for c in _candidates(req.identifier, req.class_uri)
              if c["score"] >= _RESOLVE_FLOOR]
     seen = len(cands)
     withheld: collections.Counter = collections.Counter()
     try:
-        cands = _visible_to(req.user_email, cands, withheld)
+        cands = _visible_to(caller, cands, withheld)
     except httpx.HTTPError as e:
         _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
                    seen=seen, withheld=withheld, user_email=req.user_email,
@@ -2540,6 +2607,7 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
                         falling back because nobody attempted enumeration, which is the case
                         the distinction exists to refuse.
     """
+    caller = _listing_caller(req.user_email, "enumerate")
     if req.class_uri not in _RESOLVABLE:
         _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri, seen=0,
                    withheld=collections.Counter(), user_email=req.user_email)
@@ -2560,7 +2628,7 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
     withheld: collections.Counter = collections.Counter()
     try:
         held = _members_of(req.class_uri)
-        members = _visible_to(req.user_email, held, withheld)
+        members = _visible_to(caller, held, withheld)
     except httpx.HTTPError as e:
         _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
                    seen=len(held), withheld=withheld, user_email=req.user_email,
