@@ -57,7 +57,9 @@ class CoalescingClient:
             body = rendered.body
             if hasattr(body, "raw"):
                 raw = body.raw()
-                data = raw if isinstance(raw, bytes) else str(raw).encode()
+                # A `bytearray` in baml_py 0.219.0: hash the bytes, as model_generations does.
+                data = (bytes(raw) if isinstance(raw, (bytes, bytearray, memoryview))
+                        else str(raw).encode())
             elif hasattr(body, "text"):
                 data = body.text().encode()
             else:

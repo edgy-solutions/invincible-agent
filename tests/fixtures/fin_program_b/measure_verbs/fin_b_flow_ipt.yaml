@@ -1,0 +1,44 @@
+# TEST FIXTURE -- synthetic program B (tests/fixtures/fin_program_b), never shipped. Modelled on
+# policy/overlays/sample/measure_verbs/fin_flow_acwp.yaml. Read under the program_b contract.
+measure_id: fin_b_flow_ipt
+verb: finBFlowIptActualCost
+name: Program B actual cost flow by IPT
+description: >-
+  Where program B's actual cost went, split down its breakdown into a flow map. NOT a variance
+  and NOT a forecast.
+synonyms:
+  - program b ipt flow
+anti_synonyms:
+  - estimate at completion
+inputs:
+  params: {program_id: {required: true}}
+  dataset:
+    urn: "urn:li:dataset:(urn:li:dataPlatform:s3,program_b,PROD)"
+    banner: "SYNTHETIC program B fixture, not a real program."
+    contract: program_b
+    levels: [program_id, ipt_1, ipt_2, work_package]
+    value: acwp
+  other_threshold: "0.15"
+computation:
+  module: agent_fleet.finance_agent.measure_modules.variance_decomposition
+  function: flow_edges
+  version: "1.4.0"
+  derived_from:
+    authority: Test fixture, no external method
+    clause: A signed sum split down a hierarchy
+    citation: name-only
+    transcription: each edge is the signed sum beneath its child
+render:
+  shape: FLOW_DECOMPOSITION
+  value_label: Actual cost
+  unit: USD
+menu:
+  subject: "fin:DeclaredMeasureSeries"
+  archetype: "mesh:FlowDecomposition"
+  persona_fit: [PROGRAM_FINANCE_ANALYST]
+  domain_fit: [PROGRAM_FINANCE]
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: seed
+  reason: a test row over a synthetic fixture

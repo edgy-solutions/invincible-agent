@@ -21,9 +21,11 @@ from typing import Any
 try:  # flat in the image (/app) and inside the embedded page's Pyodide FS
     import measures
     import state_codec
+    from entities import calendar_installed
 except ImportError:
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
+    from agent_fleet.finance_agent.entities import calendar_installed
 
 
 def _canonical(obj: Any) -> str:
@@ -34,7 +36,8 @@ def _canonical(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def verify(state_dict: dict[str, Any], panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def verify(state_dict: dict[str, Any], panels: list[dict[str, Any]],
+           calendar: list[str]) -> list[dict[str, Any]]:
     """Rebuild `FinanceState` from `state_dict` and re-run each panel's verb against it.
 
     `panels` is `[{panel, verb, fn, params, rows}, ...]` — the SERVED rows, exactly as
@@ -49,7 +52,16 @@ def verify(state_dict: dict[str, Any], panels: list[dict[str, Any]]) -> list[dic
     envelope held rows. A refusal here over data that once answered is exactly the
     "cost of guessing" case this engine already treats as load-bearing: silence about it
     would let a stale or tampered state pass as verified.
+
+    `calendar` is the period labels, in order, that the package was computed under: the sender
+    deployment's data, carried with the state. The whole recomputation runs inside it, and it is
+    removed again on exit, so a verify never changes what the engine reads.
     """
+    with calendar_installed(calendar):
+        return _verify(state_dict, panels)
+
+
+def _verify(state_dict: dict[str, Any], panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
     state = state_codec.state_from_dict(state_dict)
     results: list[dict[str, Any]] = []
     for p in panels:

@@ -983,3 +983,37 @@ Keycloak already, and the reconcile must land BEFORE any workload changes (pre-u
 {{- define "invincible-agent.realmReconcileHookPhase" -}}
 {{- if .Release.IsInstall }}post-install{{- else }}pre-upgrade{{- end }}
 {{- end }}
+
+{{/*
+The component labels of the two pods the Electric network policy names: Electric's own (the policy's
+target) and the cortex-bff (the one caller). frontend.yaml and electric.yaml label their pods with these,
+so the policy cannot name a component the chart does not create.
+*/}}
+{{- define "invincible-agent.electricComponent" -}}electric{{- end }}
+{{- define "invincible-agent.cortexBffComponent" -}}cortex-bff{{- end }}
+
+{{/*
+The Secret that holds Electric's API secret, and the key in it. ONE definition: electric.yaml (the
+server's ELECTRIC_SECRET) and frontend.yaml (the BFF's ELECTRIC_SHAPE_SECRET) both read these two
+helpers, so the pair cannot name different objects. Override the name to use a pre-made Secret.
+*/}}
+{{- define "invincible-agent.electricApiSecretName" -}}
+{{- default (printf "%s-electric-api" .Release.Name) .Values.electric.apiSecret.name -}}
+{{- end }}
+
+{{- define "invincible-agent.electricApiSecretKey" -}}
+{{- default "secret" .Values.electric.apiSecret.key -}}
+{{- end }}
+
+{{/*
+Electric's OWN database role: the Secret that holds its password and the key in it. electric.yaml (the pod's
+DATABASE_URL) and electric-role-job.yaml (the CREATE/ALTER ROLE) both read these two helpers, so the pod and the
+role cannot be given different passwords. Override the name to use a pre-made Secret.
+*/}}
+{{- define "invincible-agent.electricDbSecretName" -}}
+{{- default (printf "%s-electric-db" .Release.Name) .Values.electric.db.secret.name -}}
+{{- end }}
+
+{{- define "invincible-agent.electricDbSecretKey" -}}
+{{- default "password" .Values.electric.db.secret.key -}}
+{{- end }}

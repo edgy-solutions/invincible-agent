@@ -1,0 +1,103 @@
+"""The flow table reaches the card: #255's envelope, through the projector, as cortex reads it.
+
+Chris, 2026-11-05: "Projector row accepted as proposed; Lane 1 adds it in 0.4.80." The row was
+`"FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict"))`. Without it the projector
+has no entry for the archetype, and cortex's card at 93d76e8 draws nothing.
+
+The envelope here is the REAL engine route's answer over the EV fixture (the fixtures of
+tests/finance/test_variance_decomposition_over_the_ev_fixture.py). The projector is the real
+function, loaded without the agent's imports. So the join is measured, not restated:
+
+  - `rows` arrive verbatim, root edge first.
+  - `render` arrives whole: `unit` and `other_label` live only inside it.
+  - `value_label` and `verdict` arrive as the engine sent them.
+  - Every key the tuple names is one the engine sends, so no passthrough waits on a field that
+    never comes.
+  - `data_provenance` arrives whole. The accepted tuple left it out; the 11-08 ruling ("arrives
+    whole: dataset URN, as-of, ticket id") answered cortex's 11-06 question, and cortex's row reads it.
+  - The capability row that claims the shape names only fields the engine sends.
+
+Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_the_flow_table_reaches_the_card.py
+"""
+from __future__ import annotations
+
+import pytest
+
+pytest.importorskip("polars")
+
+from tests.finance.test_variance_decomposition_over_the_ev_fixture import (  # noqa: E402,F401
+    _clean_env, flow_rows, gate, members, post,
+)
+from tests.planning.test_planning_archetypes_are_projected import _fns  # noqa: E402
+from tests.finance.test_the_walk_has_a_start_and_an_end import (  # noqa: E402,F401
+    FN_CV, FN_SAMPLE, epost, ev_world,
+)
+
+ARCH = "FLOW_DECOMPOSITION"
+
+
+def _project(env):
+    ns = _fns()
+    raw = [{"persona": "PROGRAM_FINANCE_ANALYST", "expert_response": env}]
+    return ns, ns["_project_planning_archetype"](ARCH, raw, "PROGRAM_FINANCE_ANALYST", None)
+
+
+def _served(post):
+    status, env = post()
+    assert status == 200, env
+    assert env["render"]["shape"] == ARCH          # the engine declares the shape this row serves
+    return env
+
+
+def test_THE_SERVED_FLOW_TABLE_PROJECTS_AS_THE_CARD_READS_IT(post):
+    env = _served(post)
+    _ns, got = _project(env)
+    assert got is not None, "the projector has no FLOW_DECOMPOSITION row: the card draws nothing"
+    assert got["archetype"] == ARCH
+    assert got["rows"] == env["rows"] and got["rows"][0]["source"] is None   # verbatim, root first
+    assert got["render"] == env["render"]                                    # whole, not picked
+    assert "other_label" in got["render"]
+    assert got["value_label"] == env["value_label"] and got["verdict"] == env["verdict"]
+
+
+def test_EVERY_FIELD_THE_ROW_CARRIES_IS_ONE_THE_ENGINE_SENDS(post):
+    env = _served(post)
+    ns, _got = _project(env)
+    payload_key, carried = ns["_PROJECTED_ARCHETYPES"][ARCH]
+    assert payload_key == "rows"
+    # a COLUMN row sends every carried key but `walk`, which only a minus or compare row sends
+    assert [k for k in (payload_key, *carried) if k not in env] == ["walk"]
+
+
+def test_A_MINUS_ROWS_WALK_REACHES_THE_CARD_WHOLE(epost):
+    """The arm the column row cannot be: a minus row's envelope sends EVERY carried key, `walk`
+    included, and the card's `walk` is the engine's {start, end} whole, not picked or rebuilt."""
+    status, env = epost(FN_CV)
+    assert status == 200, env
+    assert env["render"]["shape"] == ARCH
+    assert set(env["walk"]) == {"start", "end"}                 # control: the engine did send a walk
+    ns, got = _project(env)
+    payload_key, carried = ns["_PROJECTED_ARCHETYPES"][ARCH]
+    assert [k for k in (payload_key, *carried) if k not in env] == []
+    assert got is not None and got["walk"] == env["walk"]
+    status, column = epost(FN_SAMPLE)                           # control: a column card has no walk
+    assert status == 200 and "walk" not in column, column
+    _ns, got_column = _project(column)
+    assert got_column is not None and "walk" not in got_column
+
+def test_THE_PROVENANCE_ARRIVES_WHOLE(post):
+    env = _served(post)
+    assert env["data_provenance"].startswith("SYNTHETIC")      # control: the engine does send it
+    _ns, got = _project(env)
+    assert got is not None and got["data_provenance"] == env["data_provenance"]
+
+
+def test_THE_CAPABILITY_ROW_NAMES_ONLY_WHAT_THE_ENGINE_SENDS(post):
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+
+    env = _served(post)
+    (row,) = [c for c in PRESENTATION_CAPABILITIES if c["archetype"] == ARCH]
+    assert row["subject_uri"] == "fin:DeclaredMeasureSeries"   # the one class a declared measure registers as
+    assert row["object_uri"] == "mesh:FlowDecomposition"
+    assert row["expected_fields"]                             # control: the check below is not vacuous
+    assert [f for f in row["expected_fields"] if f not in env] == []

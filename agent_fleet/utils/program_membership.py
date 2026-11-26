@@ -31,9 +31,18 @@ def check_payload(program: str, caller_id: str) -> dict:
     }
 
 
+def _directory_url(directory_url: str | None = None) -> str:
+    return (os.getenv("TOPAZ_DIRECTORY_URL", "") if directory_url is None else directory_url).strip()
+
+
+def directory_configured(directory_url: str | None = None) -> bool:
+    """Whether a directory is named. `can_view_program` answers False without a lookup when not."""
+    return bool(_directory_url(directory_url))
+
+
 def can_view_program(program: str, caller_id: str, *, directory_url: str | None = None) -> bool:
-    url = (os.getenv("TOPAZ_DIRECTORY_URL", "") if directory_url is None else directory_url).strip()
-    if not program or not caller_id or not url:
+    url = _directory_url(directory_url)
+    if not program or not caller_id or not directory_configured(url):
         return False
     with httpx.Client(base_url=url, timeout=5.0) as c:
         r = c.post("/api/v3/directory/check", json=check_payload(program, caller_id))

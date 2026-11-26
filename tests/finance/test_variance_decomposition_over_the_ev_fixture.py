@@ -177,7 +177,7 @@ def test_the_envelope_names_the_shape_the_source_and_the_method(post, gate, flow
         f"(as of {AS_OF}, ticket: tkt-0001) Source: {ROW_URN}"), "the dataset kind cites its read's ticket"
     assert env["measure"] == FN and env["output_uri"].endswith("DeclaredMeasureSeries")
     assert env["artifact_id"].startswith(f"fin:{FN}:")
-    assert env["method"]["version"] == "1.3.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
+    assert env["method"]["version"] == "1.4.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
     assert env["verdict"] and "net" in env["verdict"] and "All other" in env["verdict"]
     assert "series" not in env and "reference" not in env
     assert all(isinstance(e["value"], float) and e["value_exact"] for e in env["rows"])
