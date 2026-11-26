@@ -7,7 +7,7 @@
 
 ## What was asked, and of what
 
-- **The retrieval.** The only retrieval over this manual is the declared walk `s1000d_fault_walk` (`policy/overlays/openddil-lab/verbs/`). The seal runs the real declaration over the committed triples `tests/fixtures/s1000d_mrad/mrad.ttl`, with `fault_code=MRAD-ARR-0417`. It asks the walk, not a model.
+- **The retrieval.** The only retrieval over this manual is the declared walk `s1000d_fault_walk` (`verbs/` in the deployment's overlay folder). The seal runs the real declaration over the committed triples `tests/fixtures/s1000d_mrad/mrad.ttl`, with `fault_code=MRAD-ARR-0417`. It asks the walk, not a model.
 - **The source of truth.** The six XML data modules in doc-tools `tests/fixtures/s1000d/mrad/`. Every expected answer string in the seal was grepped there, and all nine are present verbatim. So an extraction xfail is a real absence, never a typo.
 - **A paragraph can only be cited by position.** The source XML carries no `id=` attribute. The seal's `ANCHOR` table records each answer's position (for example, 520A `preliminaryRqmts/reqSafety/warning[1]`). No arm checks those positions, because the XML is not in this repo.
 
