@@ -10,6 +10,7 @@ invocation as the reference, so the two callers cannot drift apart.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -109,3 +110,72 @@ def test_the_banner_counts_the_syncs_it_ran(mode):
     assert m, f"{mode} mode: no completion banner"
     assert _NUMBER_WORDS.get(m.group(1)) == len(_invocations(doc)), (
         f"{mode} mode: the banner says {m.group(1)!r} syncs, the run invokes {len(_invocations(doc))}")
+
+
+# ── ADDED 2026-11-26: THE RENDERED SCRIPT, RUN (gov, #579: T4, T5 and T6 survived the text seals) ──
+# The text seals above read which syncs the script NAMES. They do not read which ones it RUNS:
+# the recipient-readers gate is three shell lines (the overlay's `[ -f ]`, the flag each branch
+# sets, and the leg's `= "1"`), and a mutant of any one of them left every test green. So the
+# seed container's rendered script runs here under `sh`, with its absolute paths moved into a
+# temporary root and a stub `python` first on PATH that records its argv. Nothing applies;
+# the shell's own branches are what is measured.
+_ROOTS = re.compile(r"(?<![\w$./-])/(app|work|overlay-src|overlay|topaz-config)(?=[/\s\"']|$)", re.M)
+_DATA = re.compile(r"^\s*for f in ([\w. ]+); do$", re.M)
+_STUB = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+
+
+def _seed_script(mode: str) -> str:
+    import yaml
+    spec = yaml.safe_load(_cronjob(mode))["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    scripts = [c["args"][0] for c in spec["containers"]
+               if c.get("args") and "RECIPIENT READER SYNC" in c["args"][0]]
+    assert len(scripts) == 1, f"{mode} mode: expected one seed container, found {len(scripts)}"
+    return scripts[0]
+
+
+def _run_seed(mode: str, tmp_path, *, recipient_readers: bool) -> tuple[int, list[str], str]:
+    root = tmp_path.as_posix()
+    script = _seed_script(mode)
+    (tmp_path / "app" / "policy").mkdir(parents=True)
+    for enum in ("personas.yaml", "domains.yaml"):
+        (tmp_path / "app" / "policy" / enum).write_text("{}\n", encoding="utf-8")
+    if mode != "image":
+        overlay = tmp_path / ("overlay-src/repo/policy" if mode == "git" else "overlay")
+        overlay.mkdir(parents=True)
+        m = _DATA.search(script)
+        assert m, f"{mode} mode: the script has no data-file loop"
+        for f in m.group(1).split():
+            (overlay / f).write_text("{}\n", encoding="utf-8")
+        if recipient_readers:
+            (overlay / "recipient_readers.yaml").write_text("{}\n", encoding="utf-8")
+    stub_dir = tmp_path / "stub-bin"
+    stub_dir.mkdir()
+    (stub_dir / "python").write_text(_STUB, encoding="utf-8", newline="\n")
+    (stub_dir / "python").chmod(0o755)
+    log = tmp_path / "argv.log"
+    env = {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+           "STUB_LOG": log.as_posix()}
+    r = subprocess.run(["sh", "-c", _ROOTS.sub(lambda m: f"{root}/{m.group(1)}", script)],
+                       capture_output=True, text=True, encoding="utf-8", env=env)
+    ran = [ln.split()[0].rsplit("/", 1)[-1].removesuffix(".py")
+           for ln in (log.read_text(encoding="utf-8").splitlines() if log.exists() else []) if ln.strip()]
+    return r.returncode, ran, r.stderr
+
+
+_RUN_CASES = [("image", True), ("configMap", True), ("configMap", False), ("git", True), ("git", False)]
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="sh not installed")
+@pytest.mark.parametrize("mode,present", _RUN_CASES, ids=[f"{m}-{'present' if p else 'absent'}" for m, p in _RUN_CASES])
+def test_recipient_reader_sync_runs_exactly_when_the_overlay_has_the_file(tmp_path, mode, present):
+    rc, ran, stderr = _run_seed(mode, tmp_path, recipient_readers=present)
+    assert rc == 0, f"{mode} mode: the script exited {rc}: {stderr[-1500:]}"
+    # Control: the stub really stood in for python, and the run reached the last leg.
+    assert ran[:1] == ["validate_policy"] and ran[-1:] == ["capability_grant_sync"], ran
+    assert ("recipient_reader_sync" in ran) is present, (
+        f"{mode} mode, recipient_readers.yaml {'present' if present else 'absent'}: ran {ran}")
+    skipped = "recipient_reader_sync skipped" in stderr
+    assert skipped is (not present), f"{mode} mode: the skip warning is {'missing' if not present else 'spurious'}"
+    if mode != "image":
+        copied = (tmp_path / "work" / "policy" / "recipient_readers.yaml").exists()
+        assert copied is present, f"{mode} mode: the composed policy dir {'lacks' if present else 'has'} the file"
