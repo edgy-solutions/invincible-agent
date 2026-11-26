@@ -3,10 +3,12 @@
 Architect ruling 2026-11-24: the prompt and reply TEXT are recorded only when a deployment
 setting turns that on; where it is off the hashes still let two runs be compared.
 
-baml_py's real `Collector` cannot be filled offline (only a live call fills it), so the wrapper's
-`collector_factory` is injected with a stub that has the same read surface (`last.calls[i]
-.http_request.body.raw()`, `.http_response.body.text()`, `.usage`, `.timing`, `.client_name`).
-The fake inner client plays the BAML client: it fills the collector it is handed.
+The wrapper's `collector_factory` is injected with a stub that has the same read surface
+(`last.calls[i].http_request.body.raw()`, `.http_response.body.text()`, `.usage`, `.timing`,
+`.client_name`). The fake inner client plays the BAML client: it fills the collector it is handed.
+The stub's `raw()` returns a `bytearray`, as baml_py 0.219.0's does. A real `Collector` CAN be
+filled offline, against a stub HTTP server, and
+test_a_real_baml_call_records_its_model_and_parameters.py does that.
 
 Run:  uv run python -m pytest tests/routing/test_the_model_call_is_a_generation.py -q
 """
@@ -46,7 +48,7 @@ class _Body:
         self._raw = raw
 
     def raw(self):
-        return self._raw
+        return bytearray(self._raw)  # baml_py 0.219.0's type, not its stub's `bytes`
 
     def text(self):
         return self._raw.decode()
