@@ -134,7 +134,7 @@ in.
 ### Surfaces (no hardcoded dup enum, but the vocabulary is spread out)
 | Surface | What it is | Coupling |
 |---|---|---|
-| **`policy/personas.yaml`** | the canonical enum: `DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST` | image-default; fully overlay-assertable via `overlayEnums` since chart 0.3.12 (the catalog rego walks the directory — no hardcoded list; adding personas included) |
+| **`policy/personas.yaml`** | the canonical enum. The file is the list. The copy that stood here named four of its nine personas, plus `ANALYST`, which 0.4.93 retires | image-default; fully overlay-assertable via `overlayEnums` since chart 0.3.12 (the catalog rego walks the directory — no hardcoded list; adding personas included) |
 | BAML `enum PersonaTarget` | `@@dynamic` — injected at runtime | **not** a dup; nothing to edit |
 | Verb `owner_persona` | set at verb registration (`mesh_registrar`) | must match the enum; empty in current data |
 | JWT persona claim (Keycloak) | where the caller persona originates | must match the enum |

@@ -47,7 +47,7 @@ class _Ctx:
 
 def _cfg(label: bool):
     return SimpleNamespace(
-        user_query="Some measure", user_persona="ANALYST", user_email="alice@example.com",
+        user_query="Some measure", user_persona="DATA_ENGINEER", user_email="alice@example.com",
         trace_id="t", session_id="s", thread_id="th", entitled_domains=["MAINTENANCE"],
         entity_refs=None, pre_resolved=None, predicate_fallback_score_threshold=0.5,
         slots=None, spoken_slot="", spoken_answer="", bound_slots=None,
@@ -56,7 +56,7 @@ def _cfg(label: bool):
 
 
 _PRED = {"verb_iri": "mesh:goodVerb", "score": 0.9, "endpoint": "http://x",
-         "owner_persona": "ANALYST",
+         "owner_persona": "DATA_ENGINEER",
          "slots": [{"name": "program_id", "class_uri": "http://example.invalid/ont#Thing",
                     "mandatory": True}]}
 _TEL = {"fallback_reason": "", "subject_uri": "mesh:Lot", "subject_instance_id": "",

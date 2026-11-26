@@ -164,7 +164,7 @@ def test_a4_low_confidence_records_no_verb_and_the_rejected_one(drive):
 
 def test_a5_the_routed_path_still_carries_a_verb_and_no_reason(drive):
     pred = {"verb_iri": "mesh:goodVerb", "score": 0.9, "endpoint": "http://x",
-            "owner_persona": "ANALYST"}
+            "owner_persona": "DATA_ENGINEER"}
     ctx, _ = drive(ds._ROUTING_MATCHED, pred, dict(_TEL, fallback_reason=""),
                    ctx=_Ctx(stop_after_slots=True))
     md = _one(ctx)

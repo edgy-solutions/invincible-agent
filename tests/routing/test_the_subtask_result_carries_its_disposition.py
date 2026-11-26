@@ -124,7 +124,7 @@ _LOT = {"name": "lot", "type": "integer", "required": True, "kind": "spoken-mand
 
 def _pred(score=0.9):
     return {
-        "verb_iri": "mesh:aVerb", "score": score, "owner_persona": "ANALYST",
+        "verb_iri": "mesh:aVerb", "score": score, "owner_persona": "DATA_ENGINEER",
         "endpoint": "http://engine.invalid/measure/x", "domains": ["MAINTENANCE"],
         "slots": json.dumps([_LOT]),
     }

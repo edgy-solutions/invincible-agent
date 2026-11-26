@@ -310,7 +310,7 @@ def _specialist_payload(monkeypatch, predicate_domains):
     run with no person (the service leg, so no vault redemption is involved)."""
     monkeypatch.setattr("agent_fleet.utils.service_identity.mint_supervisor_token",
                         lambda *a, **k: "svc-token", raising=False)
-    predicate = {"verb_iri": "mesh:aVerb", "endpoint": _ENGINE_URL, "owner_persona": "ANALYST",
+    predicate = {"verb_iri": "mesh:aVerb", "endpoint": _ENGINE_URL, "owner_persona": "DATA_ENGINEER",
                  "score": 0.99}
     if predicate_domains is not None:
         predicate["domains"] = predicate_domains
@@ -323,7 +323,7 @@ def _specialist_payload(monkeypatch, predicate_domains):
         return _EngineResp()
 
     monkeypatch.setattr(ds.requests, "post", post)
-    cfg = ds.SupervisorQueryConfig(user_query="q", user_email="", user_persona="ANALYST",
+    cfg = ds.SupervisorQueryConfig(user_query="q", user_email="", user_persona="DATA_ENGINEER",
                                    entitled_domains=["X", "Y"], thread_id="t", trace_id="tr",
                                    session_id="s")
     ds.execute_subtask.compute_fn.decorated_fn(_Ctx(), cfg, {"sub_query": "q"})

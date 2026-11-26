@@ -253,7 +253,7 @@ _VERB = "mesh:aRenderer"
 
 @pytest.mark.parametrize("endpoint", ["", None, "   ", "<missing>"], ids=["empty", "none", "blank", "missing"])
 def test_d1_a_matched_predicate_with_no_endpoint_abstains(drive, endpoint):
-    pred = {"verb_iri": _VERB, "score": 0.99, "owner_persona": "ANALYST"}
+    pred = {"verb_iri": _VERB, "score": 0.99, "owner_persona": "DATA_ENGINEER"}
     if endpoint != "<missing>":
         pred["endpoint"] = endpoint
     ctx, out = drive(pred)
@@ -276,7 +276,7 @@ def test_d1_a_matched_predicate_with_no_endpoint_abstains(drive, endpoint):
 
 
 def test_d2_the_control_a_real_endpoint_reaches_the_http_double(drive):
-    pred = {"verb_iri": "mesh:aRoutableVerb", "score": 0.99, "owner_persona": "ANALYST",
+    pred = {"verb_iri": "mesh:aRoutableVerb", "score": 0.99, "owner_persona": "DATA_ENGINEER",
             "endpoint": "http://engine.example/run"}
     _, out = drive(pred)
     assert "http://engine.example/run" in drive.record["http"], out

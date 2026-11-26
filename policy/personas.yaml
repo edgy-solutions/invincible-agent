@@ -20,7 +20,6 @@ personas:
   - DATA_ENGINEER
   - ARCHITECT
   - MECHANIC
-  - ANALYST
   # Engine F registers its six finance verbs, plus its resolveInstance and
   # enumerateInstances providers, with owner_persona=PROGRAM_FINANCE_ANALYST
   # (agent_fleet/finance_agent/main.py OWNER_PERSONA). Added 2026-08-31.
