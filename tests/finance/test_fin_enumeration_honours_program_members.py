@@ -54,39 +54,65 @@ def client():
         yield c
 
 
+class _Who:
+    def __init__(self, authz_id, verified=True):
+        self.authz_id, self.verified = authz_id, verified
+        self.reason, self.raw = ("verified" if verified else "invalid: X"), {}
+
+
+@pytest.fixture
+def bearer(monkeypatch):
+    """Who the verified bearer says the caller is (a listing decides for the bearer's person,
+    ruled 2026-11-25). `bearer(None)` is a request with no bearer."""
+    def _set(who):
+        monkeypatch.setattr(engine, "_current_caller",
+                            lambda: _Who(who) if who is not None else None)
+    return _set
+
+
 def _enum(client, cls, **kw):
     r = client.post("/enumerate_instances", json={"class_uri": cls, "limit": 100, **kw})
     assert r.status_code == 200, r.text
     return r.json()
 
 
-def test_1_member_sees_non_member_does_not_for_every_class(double, client):
+def test_1_member_sees_non_member_does_not_for_every_class(double, client, bearer):
     for cls in engine._RESOLVABLE:
+        bearer(ALICE)
         mine = _enum(client, cls, user_email=ALICE)
         assert mine["outcome"] == "members" and mine["members"], f"control empty for {cls}"
+        bearer(CAROL)
         theirs = _enum(client, cls, user_email=CAROL)
         assert theirs["members"] == [], f"carol sees {cls} members"
 
 
-def test_2_no_caller_no_members(double, client):
+def test_2_no_caller_no_members(double, client, bearer):
     cls = engine.FIN + "ControlAccount"
+    bearer(None)
     assert _enum(client, cls, user_email="")["members"] == []
     assert _enum(client, cls)["members"] == []  # old-shape body
-    double.allow_all = True
+    # a body naming a service, with no bearer: nobody (the body alone names no one)
     assert _enum(client, cls, user_email="svc:cortex-bff")["members"] == []
+    # a verified SERVICE bearer: refused as a service, even where the membership double allows all
+    double.allow_all = True
+    bearer("svc:cortex-bff")
+    assert _enum(client, cls, user_email="svc:cortex-bff")["members"] == []
+    bearer(ALICE)
     assert _enum(client, cls, user_email=ALICE)["members"], "control: alice sees members"
 
 
-def test_3_count_is_taken_after_the_filter(double, client):
+def test_3_count_is_taken_after_the_filter(double, client, bearer):
     cls = engine.FIN + "ControlAccount"
+    bearer(ALICE)
     a = _enum(client, cls, user_email=ALICE, limit=0)
     assert a["outcome"] == "too_many" and a["count"] > 0
+    bearer(CAROL)
     c = _enum(client, cls, user_email=CAROL, limit=0)
     assert c["outcome"] != "too_many", c
     assert c["outcome"] == "members" and c["members"] == [] and c["count"] == 0
 
 
-def test_4_resolve(double, client):
+def test_4_resolve(double, client, bearer):
     name = engine.STATE.programs[0].name
 
     def resolve(**kw):
@@ -94,12 +120,16 @@ def test_4_resolve(double, client):
         assert r.status_code == 200, r.text
         return r.json()["candidates"]
 
+    bearer(ALICE)
     assert PROGRAM in {c["instance_id"] for c in resolve(user_email=ALICE)}
+    bearer(CAROL)
     assert resolve(user_email=CAROL) == []
+    bearer(None)
     assert resolve(user_email="") == []
 
 
-def test_5_outage_is_a_503_on_both_routes(double, client):
+def test_5_outage_is_a_503_on_both_routes(double, client, bearer):
+    bearer(ALICE)
     double.raises = httpx.ConnectError("topaz down")
     r = client.post("/enumerate_instances",
                     json={"class_uri": engine.FIN + "Program", "user_email": ALICE})
@@ -119,8 +149,9 @@ def test_6_coverage_seal(double):
         assert engine._visible_to(ALICE, members) == members, cls
 
 
-def test_7_once_per_program(double, client):
+def test_7_once_per_program(double, client, bearer):
     cls = engine.FIN + "ControlAccount"
+    bearer(ALICE)
     mine = _enum(client, cls, user_email=ALICE)
     programs = {c.program_id for c in engine.STATE.control_accounts}
     assert len(mine["members"]) > len(programs)
