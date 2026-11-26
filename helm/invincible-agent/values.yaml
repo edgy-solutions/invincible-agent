@@ -373,6 +373,18 @@ postgresql:
       size: 10Gi
     initdb:
       scriptsConfigMap: "{{ .Release.Name }}-initdb"
+  # Electric's role confined to the projections database in pg_hba (DRAFT, off by default). Renders a ConfigMap and
+  # starts Postgres with `-c hba_file=`: ONE POSTGRES RESTART at the roll (hba_file is read at start). Normal AND
+  # `replication` lines: Electric's role matches only the projections database (a logical replication connection names
+  # its database, so that line admits the slot Electric opens there); every other database, physical replication and
+  # the local socket are rejected for it. The image's other lines are reproduced as ASSUMED defaults of the library
+  # postgres image (not readable from the chart; see templates/_helpers.tpl). REFUSES to render unless
+  # postgresql.enabled, electric.enabled and electric.db.enabled (a rule keyed on Electric's role does nothing while
+  # Electric logs in as the main user), and unless imageStyle is "postgres": a Bitnami image generates its own pg_hba,
+  # which the chart cannot read, so a replacement would silently change every other role's access.
+  electricHba:
+    enabled: false
+    authMethod: scram-sha-256
 
 # Use this when postgresql.enabled=false (bring your own Postgres)
 externalPostgresql:

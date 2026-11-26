@@ -1017,3 +1017,52 @@ role cannot be given different passwords. Override the name to use a pre-made Se
 {{- define "invincible-agent.electricDbSecretKey" -}}
 {{- default "password" .Values.electric.db.secret.key -}}
 {{- end }}
+
+{{/*
+ELECTRIC'S pg_hba (postgresql.electricHba.enabled, default off). Prints "true" when on, nothing when off. REFUSES to render
+unless:
+- postgresql.enabled: the chart renders no pg_hba for an external Postgres;
+- electric.enabled and electric.db.enabled: a rule keyed on Electric's role does nothing while Electric logs in as the main
+  user (templates/electric.yaml, the else branch);
+- postgresql.imageStyle is "postgres": the library image's default pg_hba is the file reproduced below, and a Bitnami image
+  generates its own, which the chart cannot read. Replacing that file with a copy of a guessed default would silently
+  change every other role's access, so the render refuses instead of guessing;
+- the role is a plain identifier and the auth method is one the default image uses.
+*/}}
+{{- define "invincible-agent.electricHba" -}}
+{{- if .Values.postgresql.electricHba.enabled -}}
+{{- if not .Values.postgresql.enabled -}}{{- fail "postgresql.electricHba.enabled requires postgresql.enabled: the chart renders no pg_hba for an external Postgres" -}}{{- end -}}
+{{- if not (and .Values.electric.enabled .Values.electric.db.enabled) -}}{{- fail "postgresql.electricHba.enabled requires electric.enabled and electric.db.enabled: a rule keyed on Electric's role does nothing while Electric logs in as the main user" -}}{{- end -}}
+{{- if ne (default "postgres" .Values.postgresql.imageStyle) "postgres" -}}{{- fail (printf "postgresql.electricHba.enabled supports postgresql.imageStyle=postgres only (got %q): another image generates its own pg_hba, which the chart cannot read, and a replacement would silently change every other role's access" .Values.postgresql.imageStyle) -}}{{- end -}}
+{{- if not (regexMatch "^[a-z_][a-z0-9_]*$" .Values.electric.db.role) -}}{{- fail (printf "electric.db.role: %q is not a plain lower-case SQL identifier" .Values.electric.db.role) -}}{{- end -}}
+{{- if not (has .Values.postgresql.electricHba.authMethod (list "scram-sha-256" "md5")) -}}{{- fail (printf "postgresql.electricHba.authMethod: %q is not scram-sha-256 or md5" .Values.postgresql.electricHba.authMethod) -}}{{- end -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+The pg_hba.conf text. First match wins. Electric's role FIRST: its own database over the network (a logical replication
+connection names its database, so this line also admits the slot Electric opens there), then every other database, the
+`replication` keyword (physical replication) and the local socket are rejected for it. Then the library image's default
+lines, ASSUMED (not readable from the chart): initdb's trust lines for the local socket and loopback, for databases and
+for replication, and the entrypoint's final `host all all all <method>` line.
+*/}}
+{{- define "invincible-agent.electricHbaConf" -}}
+{{- $role := .Values.electric.db.role -}}
+{{- $db := include "invincible-agent.pgDatabase" . -}}
+{{- $m := .Values.postgresql.electricHba.authMethod -}}
+# Rendered by the chart (postgresql.electricHba). First match wins.
+host    {{ $db }}    {{ $role }}    all    {{ $m }}
+host    all    {{ $role }}    all    reject
+host    replication    {{ $role }}    all    reject
+local   all    {{ $role }}    reject
+local   replication    {{ $role }}    reject
+# The image's default lines (assumed: library postgres, initdb defaults plus the entrypoint's last line).
+local   all    all    trust
+host    all    all    127.0.0.1/32    trust
+host    all    all    ::1/128    trust
+local   replication    all    trust
+host    replication    all    127.0.0.1/32    trust
+host    replication    all    ::1/128    trust
+host    all    all    all    {{ $m }}
+{{- end }}
