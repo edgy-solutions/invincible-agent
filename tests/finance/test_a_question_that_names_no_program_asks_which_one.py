@@ -117,6 +117,40 @@ def test_every_shipped_declared_param_agrees_with_its_yaml(tmp_path):
     assert seen
 
 
+# -- (c2) a version the row lists is required whatever its declaration says ------------------------
+# Merged with master's a17c390e ("A version is a declared dimension"): a read that names no version
+# sums every version together, a silent wrong answer, so the row's `required` cannot waive it.
+
+def _versions_declared_not_required(row):
+    row = copy.deepcopy(row)
+    for name in row["inputs"]["params"]:
+        if name in measure_verbs._VERSION_PARAMS:
+            row["inputs"]["params"][name] = {"required": False}
+    return row
+
+
+@pytest.mark.parametrize("which", ["filter", "compare"])
+def test_a_listed_version_is_required_even_when_its_row_says_not(tmp_path, monkeypatch, which):
+    from tests.finance.test_the_version_is_a_declared_dimension import (
+        B_COMPARE, B_FILTER, FN_B, FN_FILTER, PROG_B, load)
+    fn, base, versions = {"filter": (FN_FILTER, B_FILTER, ["version"]),
+                          "compare": (FN_B, B_COMPARE, ["version_a", "version_b"])}[which]
+    row = load(tmp_path, monkeypatch, {fn: _versions_declared_not_required(base)})[fn]
+    assert not set(versions) & set(row.required_params), "the fixture must declare them not required"
+    assert all(engine._declared_param_required(row, v) for v in versions)
+    with pytest.raises(HTTPException) as e:
+        engine._declared_envelope(row, {"program_id": PROG_B})
+    assert e.value.status_code == 422 and e.value.detail["needs_slots"] == versions
+
+
+def test_control_a_param_that_is_not_a_version_still_follows_its_row(tmp_path, monkeypatch):
+    from tests.finance.test_the_version_is_a_declared_dimension import B_FILTER, FN_FILTER, load
+    raw = _versions_declared_not_required(B_FILTER)
+    raw["inputs"]["params"]["program_id"] = {"required": False}
+    row = load(tmp_path, monkeypatch, {FN_FILTER: raw})[FN_FILTER]
+    assert engine._declared_param_required(row, "program_id") is False
+
+
 # -- (d) the route's refusal --------------------------------------------------------------------
 
 def test_a_declared_row_missing_its_required_param_is_a_422_naming_it(tmp_path):
