@@ -407,6 +407,25 @@ PostgreSQL database name
 {{- end }}
 
 {{/*
+ENGINE-LG'S CHECKPOINT DATABASE (graphHost.checkpointsDatabase.enabled, default off). Prints the database name when the
+switch is on, nothing when off. REFUSES to render unless electric.enabled AND electric.db.enabled: the database's only
+control is that PUBLIC has no CONNECT on it, which excludes a role only when Electric logs in as ITS OWN role. With
+electric.db.enabled off, Electric's DATABASE_URL is the main user (templates/electric.yaml, the else branch), who owns
+this database, and the revoke excludes nobody. The name must be a plain identifier and not the projections database.
+*/}}
+{{- define "invincible-agent.checkpointsDatabase" -}}
+{{- if .Values.graphHost.checkpointsDatabase.enabled -}}
+{{- if not (and .Values.electric.enabled .Values.electric.db.enabled) -}}
+{{- fail "graphHost.checkpointsDatabase.enabled requires electric.enabled and electric.db.enabled: with Electric on the main user's login, a database the main user owns excludes nobody" -}}
+{{- end -}}
+{{- $n := .Values.graphHost.checkpointsDatabase.name -}}
+{{- if not (regexMatch "^[a-z_][a-z0-9_]*$" $n) -}}{{- fail (printf "graphHost.checkpointsDatabase.name: %q is not a plain lower-case SQL identifier" $n) -}}{{- end -}}
+{{- if eq $n (include "invincible-agent.pgDatabase" .) -}}{{- fail (printf "graphHost.checkpointsDatabase.name names the projections database %q: nothing would move" $n) -}}{{- end -}}
+{{- $n -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 PostgreSQL username
 */}}
 {{- define "invincible-agent.pgUser" -}}
