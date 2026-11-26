@@ -51,9 +51,11 @@ def _sha(data) -> str:
 
 
 def _body_bytes(body) -> bytes:
+    # baml_py 0.219.0's `raw()` returns a `bytearray` (its stub says `bytes`). Taking only `bytes`
+    # hashed and parsed the text "bytearray(b'...')", so no record carried a model or a parameter.
     if hasattr(body, "raw"):
         raw = body.raw()
-        return raw if isinstance(raw, bytes) else str(raw).encode()
+        return bytes(raw) if isinstance(raw, (bytes, bytearray, memoryview)) else str(raw).encode()
     if hasattr(body, "text"):
         return body.text().encode()
     return json.dumps(body.json(), sort_keys=True).encode()
