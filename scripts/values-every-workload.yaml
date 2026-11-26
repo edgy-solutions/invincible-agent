@@ -13,6 +13,8 @@ engineFinance:
   enabled: true
 graphHost:
   enabled: true
+  checkpointsDatabase:
+    enabled: true
 engineCost:
   enabled: true
 engineSafety:
@@ -56,3 +58,6 @@ keycloak:
   nonInteractiveUsers:
     - username: platform-registrar
       email: platform-registrar@example.com
+electric:
+  db:
+    enabled: true

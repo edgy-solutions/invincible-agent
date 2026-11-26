@@ -104,7 +104,14 @@ spec:
           env:
             {{- range $k, $v := $eng.env }}
             - name: {{ $k }}
+              {{- if and (eq $k "GRAPH_HOST_POSTGRES_DSN") (include "invincible-agent.checkpointsDatabase" $) }}
+              {{- /* graphHost.checkpointsDatabase: the DSN's database part is swapped for the checkpoints database. The DSN is
+                     composed once, in values; a DSN without the part to swap FAILS rather than silently stay on the shared one. */}}
+              {{- if not (contains "$(BPMN_POSTGRES_DB)" $v) }}{{ fail "graphHost.checkpointsDatabase.enabled: GRAPH_HOST_POSTGRES_DSN has no $(BPMN_POSTGRES_DB) part to swap" }}{{ end }}
+              value: {{ $v | replace "$(BPMN_POSTGRES_DB)" (include "invincible-agent.checkpointsDatabase" $) | quote }}
+              {{- else }}
               value: {{ $v | quote }}
+              {{- end }}
             {{- end }}
             {{- if eq .component "engine-a" }}
             # How long Restate keeps a finished case workflow (its state included). Restate's own

@@ -843,6 +843,15 @@ graphHost:
     name: graph-host
     tag: ""
   port: 8098
+  # engine-lg's checkpoints in their OWN database (DRAFT, off by default). When on, the Job in
+  # templates/checkpoints-database-job.yaml creates it (CONNECT revoked from PUBLIC) and GRAPH_HOST_POSTGRES_DSN below
+  # names it instead of the shared projections database. REFUSES to render unless electric.enabled and
+  # electric.db.enabled: the revoke excludes a role only when Electric logs in as its OWN role. The database starts
+  # EMPTY: in-flight checkpoints are Chris's decision (start empty, or copy the tables inside the window); the
+  # old tables stay until one graph has resumed on the new database.
+  checkpointsDatabase:
+    enabled: false
+    name: iagent_checkpoints
   env:
     # ── DURABLE CHECKPOINTING (R-012 shape) ───────────────────────────────────────────
     #
@@ -864,6 +873,10 @@ graphHost:
     # THE SAME DATABASE THE GATEWAY HUMAN TASKS USE — ruled, rather than a new one: a graph
     # that interrupts for a human and the task representing that interrupt belong in one
     # store, and two would make "did this resume" answerable only by joining across them.
+    #
+    # SUPERSEDED where graphHost.checkpointsDatabase.enabled is on (above): the census of 2026-11-26 found no
+    # transaction, connection, join, trigger or foreign key shared between the checkpoint tables and the
+    # human-task tables, so no code uses the one-store property. Off, this stays the one shared database.
     GRAPH_HOST_POSTGRES_DSN: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)"
   resources:
     requests:
