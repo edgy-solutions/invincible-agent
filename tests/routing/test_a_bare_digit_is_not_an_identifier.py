@@ -71,8 +71,67 @@ def _load_module_by_path(path, *, reason: str):
 
 _REPO = Path(__file__).resolve().parents[2]
 _FIN = _REPO / "agent_fleet" / "finance_agent"
-if str(_FIN) not in sys.path:
-    sys.path.insert(0, str(_FIN))
+
+
+def _finance_modules() -> dict:
+    """Every `sys.modules` entry loaded from a file under `_FIN`, under EITHER name: flat
+    (`export`, `measure_modules.*`) or package (`agent_fleet.finance_agent.*`). Not this file's
+    own alias."""
+    out = {}
+    for name, mod in list(sys.modules.items()):
+        if name == _MOD_NAME:
+            continue
+        origin = getattr(mod, "__file__", None)
+        if origin and Path(origin).resolve().is_relative_to(_FIN):
+            out[name] = mod
+    return out
+
+
+def _load_finance_main_and_put_the_rest_back():
+    """Load finance's `main.py` flat, as its image does, then PUT BACK everything but the alias.
+
+    `main` imports its siblings flat first (`import export`), so loading it needs `_FIN` on
+    `sys.path`. That load runs at COLLECTION, before any other module's tests. Left behind, the
+    path entry and the flat siblings outlive this file: the next importer of the PACKAGE
+    `agent_fleet.finance_agent.main` takes the flat branch and binds the flat `export`, so a test
+    that patches `agent_fleet.finance_agent.export` patches a module the engine no longer calls.
+    That was 23 reds in tests/finance whenever this file was collected first. The loaded `main`
+    keeps its own references to the flat modules, so this file's seals still run against them.
+
+    The PACKAGE modules this load creates go too. Some flat sibling imports
+    `agent_fleet.finance_agent.measures` while `_FIN` is on the path, so that package module
+    takes the flat branch and binds the FLAT `entities.MethodRequired`; a test that then imports
+    `agent_fleet.finance_agent.entities` expects a different class of the same name. Removing
+    only the flat modules turned the 23 reds into 5 of that kind.
+
+    By file location, not by `tests/flat_engine_modules.FLAT_NAMES`: that set holds the engines'
+    top-level file stems, and finance's flat load also binds the `measure_modules` package and
+    its children, which `export` imports flat first too."""
+    path_before = list(sys.path)
+    before = _finance_modules()
+    if str(_FIN) not in sys.path:
+        sys.path.insert(0, str(_FIN))
+    try:
+        return _load_module_by_path(_FIN / "main.py",
+                                    reason="finance_agent not importable here")
+    finally:
+        sys.path[:] = path_before
+        for name, mod in _finance_modules().items():
+            prior = before.get(name)
+            if prior is mod:
+                continue
+            if prior is not None:
+                sys.modules[name] = prior
+            else:
+                sys.modules.pop(name, None)
+            # `from pkg import child` reads the parent's ATTRIBUTE before `sys.modules`.
+            parent_name, _, child = name.rpartition(".")
+            parent = sys.modules.get(parent_name) if parent_name else None
+            if parent is not None and getattr(parent, child, None) is mod:
+                if prior is not None:
+                    setattr(parent, child, prior)
+                else:
+                    delattr(parent, child)
 
 # LOADED UNDER A UNIQUE NAME, NOT AS `main`. Both this seal and
 # `test_an_out_of_domain_hit_is_a_candidate_not_an_authority.py` reach a module FILE called
@@ -80,8 +139,7 @@ if str(_FIN) not in sys.path:
 # whichever ran first, so in a full-suite run one of the two seals silently exercises the
 # OTHER engine — 11 reds that are not about the code. Same shape as the dagster stub that
 # broke the standalone CI job: a shared module name in sys.modules, resolved by import order.
-main = _load_module_by_path(_FIN / "main.py",
-                            reason="finance_agent not importable here")
+main = _load_finance_main_and_put_the_rest_back()
 
 
 def _resolved(query: str, class_uri: str | None = None):
