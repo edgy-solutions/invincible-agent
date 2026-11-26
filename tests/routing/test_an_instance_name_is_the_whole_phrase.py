@@ -159,6 +159,25 @@ def test_control_a_phrase_qualifier_the_candidate_does_not_spell_is_refused():
     assert not _passes("crew p_cage", P_CAGE)
 
 
+def _lake(container):
+    return InstanceCandidate(
+        instance_id=f"urn:li:dataset:(urn:li:dataPlatform:s3,store.{container}/publog/p_cage,PROD)",
+        class_uri="http://x/pcn#Table", label="p_cage", score=0.9, provider="p")
+
+
+@pytest.mark.parametrize("container", ["publog-lake", "publog_lake"])
+@pytest.mark.parametrize("ident", ["publog_lake p_cage", "publog-lake p_cage", "PUBLOG__Lake p_cage"])
+def test_ruled_the_separator_rule_applies_to_an_earlier_word_too(ident, container):
+    """The architect, 2026-11-26: "apply the separator rule to the earlier-word check too, so
+    `publog_lake p_cage` matches where `publog-lake p_cage` does." Both sides, as ruling 1 says."""
+    assert _passes(ident, _lake(container))
+
+
+@pytest.mark.parametrize("ident", ["publoglake p_cage", "publog_lak p_cage", "publog_lake_x p_cage"])
+def test_control_an_earlier_word_is_collapsed_never_dropped(ident):
+    assert not _passes(ident, _lake("publog-lake"))
+
+
 @pytest.mark.parametrize("ident", ["lake.p_cage", "minio-svc.publog-lake/publog/p_cage"])
 def test_control_a_path_qualifier_is_still_corroboration_never_a_requirement(ident):
     """Rule 2 is about WORDS of a phrase. A path (`lake.p_cage`) says where the name is, and

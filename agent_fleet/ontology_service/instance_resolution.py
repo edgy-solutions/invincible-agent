@@ -290,8 +290,10 @@ def passes_segment_specificity(identifier: str, candidate_text: str) -> bool:
 #      not the named thing. ... The lookup may return it as a lower-scored suggestion, never as
 #      the subject." So in c, a WORD of a phrase before the name (`Fleet` in `Fleet Readiness`,
 #      `publog` in `publog p_cage`) must be spelled by the candidate: every segment of it must
-#      be a segment of its label, id or matched_on. `publog p_cage` still names the table whose
-#      id is `.../publog/p_cage`; `Fleet Readiness` does not name `Readiness` (`urn:x:readiness`).
+#      be a segment of its label, id or matched_on, compared by the same separator rule, so
+#      `publog_lake p_cage` matches where `publog-lake p_cage` does. `publog p_cage` still
+#      names the table whose id is `.../publog/p_cage`; `Fleet Readiness` does not name
+#      `Readiness` (`urn:x:readiness`).
 #      A PATH qualifier (`lake.p_cage`, no whitespace) is unchanged: it says where the name is,
 #      and stays corroboration, never a requirement. The refused candidate is kept, with its
 #      score and why, in `instance_rejected_top` and the note, never as the subject.
@@ -506,11 +508,12 @@ def _unspelled_phrase_word(identifier: str, c: InstanceCandidate) -> str:
     when every such word is spelled or the identifier is not a phrase. Ruled 2026-11-26: one
     word of a longer name is not the named thing."""
     words = _POSSESSIVE.sub("", (identifier or "").strip()).split()
+    # The separator rule (ruling 1) on both sides here too: `publog_lake` is `publog-lake`.
     spelled: set[str] = set()
     for text in (c.label, c.instance_id, c.matched_on):
-        spelled.update(_segments(text))
+        spelled.update(normalise_identifier(seg) for seg in _segments(text))
     for word in words[:-1]:
-        if not set(_segments(word)) <= spelled:
+        if not {normalise_identifier(seg) for seg in _segments(word)} <= spelled:
             return word
     return ""
 
