@@ -38,7 +38,7 @@ data:
   HF_HUB_DISABLE_TELEMETRY: "1"
 
   # LangGraph checkpointer
-  LANGGRAPH_POSTGRES_URI: {{ include "invincible-agent.pgUri" . | quote }}
+  LANGGRAPH_POSTGRES_URI: {{ include "invincible-agent.pgUriFor" (dict "concern" "checkpoints" "root" .) | quote }}
 
   # Infrastructure URLs
   RESTATE_INGRESS_URL: {{ include "invincible-agent.restateIngressUrl" . | quote }}

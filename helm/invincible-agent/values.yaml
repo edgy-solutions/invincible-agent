@@ -2095,6 +2095,19 @@ projector:
 # with the projector poll loop and watermark column when the
 # Restate+topic successor lands.
 # ==========================================================================
+
+# DATABASE SPLIT (step 4 of the sync-service exposure plan; DRAFT, OFF). A role with REPLICATION can decode every table
+# in its database whatever its SELECT grants say, so Electric's database must hold only the tables Electric may stream.
+# On (and only with electric.enabled): Dagster's tables and the LangGraph checkpoint tables get their own databases;
+# the projections stay in postgresql.auth.database. ON IS A DATA MOVE: the new databases start EMPTY, so Dagster's run
+# history restarts and in-flight graphs lose their checkpoints. Do not turn it on before Chris rules on Dagster history
+# (dump and restore, or restart) and the checkpoints are drained, with no Dagster run STARTED.
+databaseSplit:
+  enabled: false
+  databases:
+    dagster: iagent_dagster
+    checkpoints: iagent_checkpoints
+
 electric:
   enabled: true
   replicas: 1

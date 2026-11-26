@@ -1,0 +1,71 @@
+{{- /*
+DATABASE SPLIT (databaseSplit.enabled; DRAFT, off by default). Creates the per-concern databases, as `postgres`,
+idempotently (CREATE DATABASE only when absent). It does NOT move data: a new database is empty, so Dagster's history
+restarts and the checkpoints are empty. The data move, the history ruling and the drain are in the PR body.
+
+Gated on electric.enabled too: a deployment without Electric keeps one database.
+Hook: post-install,post-upgrade at weight -4 (before electric-role at -3); Dagster's schema migration runs at its
+own start, so a Dagster pod that starts first retries until the database exists. Each name must be a plain identifier.
+*/ -}}
+{{- if include "invincible-agent.databaseSplit" . }}
+{{- $ident := "^[a-z_][a-z0-9_]*$" }}
+{{- $dbs := list }}
+{{- range $concern, $name := .Values.databaseSplit.databases }}
+{{- if not (regexMatch $ident $name) }}{{ fail (printf "databaseSplit.databases.%s: %q is not a plain lower-case SQL identifier" $concern $name) }}{{ end }}
+{{- if eq $name (include "invincible-agent.pgDatabase" $) }}{{ fail (printf "databaseSplit.databases.%s names the projections database %q: the split would move nothing" $concern $name) }}{{ end }}
+{{- $dbs = append $dbs $name }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-database-split
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: database-split
+          image: {{ include "invincible-agent.image" (dict "name" "postgres-client" "registry" .Values.utilImages.postgresClient.registry "repository" .Values.utilImages.postgresClient.repository "tag" .Values.utilImages.postgresClient.tag "root" .) }}
+          env:
+            - name: PGHOST
+              value: {{ include "invincible-agent.pgHost" . }}
+            - name: PGPORT
+              value: {{ include "invincible-agent.pgPort" . | default "5432" | quote }}
+            - name: PGUSER
+              value: "postgres"
+            - name: PGDATABASE
+              value: "postgres"
+            {{- if eq (default "postgres" .Values.postgresql.imageStyle) "bitnami" }}
+            - name: PGPASSWORD
+              value: {{ .Values.postgresql.auth.postgresPassword | default .Values.postgresql.auth.password | quote }}
+            {{- else }}
+            - name: PGPASSWORD
+              value: {{ .Values.postgresql.auth.password | quote }}
+            {{- end }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U postgres; do sleep 2; done
+              psql -v ON_ERROR_STOP=1 <<'SQL'
+              {{- range $dbs }}
+              SELECT format('CREATE DATABASE %I OWNER %I', '{{ . }}', '{{ include "invincible-agent.pgUser" $ }}')
+                WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '{{ . }}') \gexec
+              REVOKE CONNECT ON DATABASE "{{ . }}" FROM PUBLIC;
+              {{- end }}
+              SQL
+{{- end }}
