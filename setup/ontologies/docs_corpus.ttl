@@ -64,9 +64,9 @@ docs:runbook-adding-an-engine a mesh:DocPage ;
   rdfs:label "Runbook — adding an engine" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/dfd238b81b096278668eaa11fe2d42f57a49eabe711ee071997fcbd130fb56a7/adding-an-engine.md" ;
-  mesh:source_committed_at "2026-11-15T22:42:42-06:00" ;
-  mesh:body_sha "dfd238b81b096278668eaa11fe2d42f57a49eabe711ee071997fcbd130fb56a7" ;
+  mesh:source "docs/pages/9da2b5b49ee81940fa7a5cd4ea143c0bbafabc5224be795864cbf49143431076/adding-an-engine.md" ;
+  mesh:source_committed_at "2026-11-26T14:59:12-06:00" ;
+  mesh:body_sha "9da2b5b49ee81940fa7a5cd4ea143c0bbafabc5224be795864cbf49143431076" ;
   mesh:explains mesh:resolveInstance ,
     mesh:enumerateInstances ,
     mesh:InstanceResolution ,

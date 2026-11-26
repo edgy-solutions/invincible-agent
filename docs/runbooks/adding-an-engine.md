@@ -1231,6 +1231,9 @@ engine's own directory are the ones that get forgotten.
     **DEFAULT-OFF IS NOT PROTECTION.** `engineFinance.enabled` is `false` in `values.yaml`
     (only `values-sandbox.yaml` sets it true), so a work upgrade renders no pod and the gap
     stays invisible — right up until someone enables it. Mirror first, enable second.
+    Add the row as a BARE repo with no tag — `@{ src='ghcr.io/edgy-solutions/invincible-agent/<name>'; dst='edgy-solutions/invincible-agent/<name>' }` — the
+    mirror copies only by release digest (`-Release` is mandatory) and tags the copy with the chart
+    version; a `:latest` row is refused by `tests/test_mirror_never_copies_latest.py`.
     Also update the inventory comment's engine count, which states a number that drifts.
 18. **`helm/invincible-agent/Chart.yaml` — BUMP THE VERSION.** Missed on Engine F's first
     push and caught by the release workflow, which fails loudly on exactly this. **Any change
