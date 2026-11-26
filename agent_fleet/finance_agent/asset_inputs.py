@@ -66,6 +66,8 @@ BANNER_ENV = "FIN_DATASET_BANNER"
 GATEWAY_ENV = "CENTRAL_GATEWAY_URL"
 MAX_ROWS_ENV = "FIN_ASSET_MAX_ROWS"
 DEFAULT_MAX_ROWS = 100_000
+DRILL_MAX_ROWS_ENV = "FIN_DRILL_MAX_ROWS"    # the most rows one drill DOWNLOAD serves (a page has no cap)
+DEFAULT_DRILL_MAX_ROWS = 10_000
 URN_PREFIX = "urn:li:dataset:"
 PERIOD_BASES = ("period", "cumulative")    # a flow row's `basis`: the one period, or the program through it
 #: The finance namespace, STATED ONCE: `main.FIN` is this, and a contract's `fin:X` CURIE expands with it.
@@ -175,6 +177,15 @@ def max_rows() -> int:
     return int(raw) if raw else DEFAULT_MAX_ROWS
 
 
+def drill_max_rows() -> int:
+    """The cap on one drill download (`FIN_DRILL_MAX_ROWS`, default 10000). Unset, it is the default
+    or, where the read cap is set lower, the read cap: a default must not refuse a deployment that
+    only lowered `FIN_ASSET_MAX_ROWS`. It is separate from the read cap because a download cap equal
+    to the read cap could never fire: the read refuses first."""
+    raw = (os.environ.get(DRILL_MAX_ROWS_ENV) or "").strip()
+    return int(raw) if raw else min(DEFAULT_DRILL_MAX_ROWS, max_rows())
+
+
 #: ADR-0065:133 rules that `data_provenance` carries the dataset URN, an as-of and a ticket id.
 #: The broker's ticket carries `ticket_id`, `issued_at` and `as_of` (dag-tools 0.13.0, #31), and
 #: `get_dataframe_with_ticket` hands back its receipt beside the frame. `main.mesh_ticketed_read`
@@ -278,6 +289,13 @@ def check_config() -> None:
                 raise ValueError
         except ValueError:
             problems.append(f"{MAX_ROWS_ENV} must be a positive integer")
+    raw = (os.environ.get(DRILL_MAX_ROWS_ENV) or "").strip()
+    if raw:
+        try:
+            if not 1 <= int(raw) <= max_rows():
+                raise ValueError
+        except ValueError:
+            problems.append(f"{DRILL_MAX_ROWS_ENV} must be a positive integer no larger than {MAX_ROWS_ENV}")
     contract_id = dataset_contract_id()
     if contract_id is None:
         problems.append(f"{CONTRACT_ENV} is required: it names the contract the read is held to")
@@ -538,7 +556,32 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     period is `period`, and `"cumulative"` keeps the rows whose position in the calendar is at or
     before `period`'s. The cut is by position in `calendar_labels`, never by comparing the labels
     as strings: `P10` sorts before `P2`. A cut that leaves no row is `NotInModel`, naming the
-    period and the basis."""
+    period and the basis.
+
+    THE SELECTION IS `dataset_frame`, THE REDUCTION IS `reduce_dataset_frame`: the drill reads the rows
+    an amount was computed from through the same `dataset_frame`, so the two cannot drift."""
+    return reduce_dataset_frame(
+        dataset_frame(read, urn, levels, value_columns, program_id, contract, version=version,
+                      version_a=version_a, version_b=version_b, version_column=version_column,
+                      versions=versions, period=period, basis=basis, period_column=period_column,
+                      calendar_labels=calendar_labels),
+        levels, value_columns, value_op, per_path, program_id, version_a=version_a,
+        version_b=version_b, version_column=version_column)
+
+
+def dataset_frame(read: Callable[[str], Any], urn: str, levels: tuple[str, ...],
+                  value_columns: tuple[str, ...], program_id: str, contract: Any, *,
+                  version: Optional[str] = None, version_a: Optional[str] = None,
+                  version_b: Optional[str] = None, version_column: Optional[str] = None,
+                  versions: tuple[str, ...] = (), period: Optional[str] = None,
+                  basis: Optional[str] = None, period_column: Optional[str] = None,
+                  calendar_labels: tuple[str, ...] = ()) -> Any:
+    """The ROWS a dataset-kind row reads, selected: one program's, held to the contract, cut to the
+    period and the version(s) the row names, as a collected frame (every contract column the asset
+    carries, in contract order). Every argument check, the schema check, the row cap, the value,
+    key and dependency checks and every filter are `read_dataset_rows`'s, described there; a
+    comparison keeps the rows of its two versions only. The ONE selection: `read_dataset_rows`
+    reduces this frame to paths, and the drill pages this frame's rows."""
     import polars as pl
 
     for name, given in (("version", version), ("version_a", version_a), ("version_b", version_b)):
@@ -613,6 +656,19 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
         df = df.filter(pl.col(version_column) == version)
         if df.height == 0:
             raise NotInModel(f"the asset holds no rows for program {program_id!r} in that version")
+    if version_a is not None:
+        df = df.filter(pl.col(version_column).is_in([version_a, version_b]))
+    return df
+
+
+def reduce_dataset_frame(df: Any, levels: tuple[str, ...], value_columns: tuple[str, ...],
+                         value_op: str, per_path: str, program_id: str, *,
+                         version_a: Optional[str] = None, version_b: Optional[str] = None,
+                         version_column: Optional[str] = None,
+                         ) -> "list[tuple[tuple[str, ...], Any]] | CompareRead | MinusRead":
+    """`dataset_frame`'s rows as `read_dataset_rows` returns them: one `(path, amount)` per path
+    (see there), a `MinusRead` for `minus`, a `CompareRead` for a comparison."""
+    named_version = (version_column,) if version_column else ()
     n = len(levels) - 1
     compare = version_a is not None
 

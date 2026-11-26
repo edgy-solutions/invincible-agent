@@ -1258,7 +1258,7 @@ _SEED_SOURCED = {"fin_funding_status": {"kind": "seed", "reason": "contract carr
 
 def _built_ins():
     from agent_fleet.finance_agent import measures
-    return sorted(measures.OUTPUT_URI)
+    return sorted(set(measures.OUTPUT_URI) - {"fin_drill_rows"})  # a page of rows: no program, its own seals
 
 
 def test_the_shipped_source_rows_are_the_ruled_ones():

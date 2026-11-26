@@ -1,0 +1,7 @@
+# A built-in drill READ of a dataset flow answer. It reads only the dataset the flow row
+# declares, as the caller, at the answer's as-of, and refuses when the value names no row loaded now.
+# No amount and no verdict.
+measure_id: fin_drill_rows
+source: asset
+name: Rows behind a flow amount
+description: One page of the dataset rows a flow answer's edge or sink members were computed from, opened from the amount.

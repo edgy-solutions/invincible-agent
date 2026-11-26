@@ -138,7 +138,7 @@ def _assert_envelope(r):
 
 
 def test_1_member_runs_every_verb_non_member_is_refused(double, measured, client):
-    fns = sorted(measures.OUTPUT_URI)
+    fns = sorted(set(measures.OUTPUT_URI) - {"fin_drill_rows"})  # a page of rows names no program: its value does; its caller seals are tests/finance/test_an_amount_opens_to_the_rows_it_was_computed_from.py
     assert fns, "the verb table is empty"
     for fn in fns:
         r = client.post(f"/measure/{fn}", json={"params": _params(fn), "user_email": ALICE})

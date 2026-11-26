@@ -191,6 +191,11 @@ fin:HierarchyChildren a owl:Class ;
     rdfs:label "Hierarchy Children" ;
     rdfs:comment "The descendants of one named element of a declared breakdown, to a stated depth, each with its level, its role and its parent, ordered by name within a level. States how many levels were requested and how many were returned. Carries no amount." .
 
+fin:DrillRowPage a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Drill Row Page" ;
+    rdfs:comment "One page of the dataset rows a flow amount was computed from: the rows under one edge of a flow answer, or under the members of its sink, read at the answer's as-of, with the contract's columns and the total row count. Carries no amount of its own and no verdict." .
+
 # =============================================================================
 # Money primitives - FIBO, referenced rather than reinvented (ADR-0045 Decision 2)
 # =============================================================================

@@ -572,7 +572,7 @@ def test_EVERY_table_the_ENVELOPE_BUILDER_reads_is_asserted_on_the_wire():
     gaps: list[str] = []
     for table in sorted(_envelope_tables()):
         decl = getattr(measures, table)
-        for fn in sorted(decl):
+        for fn in sorted(set(decl) - {"fin_drill_rows"}):  # a page of rows, not a measure envelope: its own seals
             expected = decl[fn]
             body = _envelope(fn)
             if callable(expected):
@@ -1090,7 +1090,7 @@ def test_OUTPUT_URI_and_VALUE_LABEL_are_asserted_from_the_DECLARATION_SIDE():
     """
     for table, key in (("OUTPUT_URI", "output_uri"), ("VALUE_LABEL", "value_label")):
         decl = getattr(measures, table)
-        for fn in sorted(decl):
+        for fn in sorted(set(decl) - {"fin_drill_rows"}):  # a page of rows, not a measure envelope: its own seals
             body = _envelope(fn)
             assert body.get(key) == decl[fn], (
                 f"{fn}: {table} declares {decl[fn]!r} and the body carries "

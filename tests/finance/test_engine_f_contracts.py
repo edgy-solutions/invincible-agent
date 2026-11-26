@@ -454,8 +454,8 @@ def test_every_response_discloses_that_the_data_is_notional(member):
     from fastapi.testclient import TestClient
     with TestClient(engine.app) as client:
         for fn in measures.OUTPUT_URI:
-            if fn in lookups.LOOKUP_FNS:
-                continue  # asset-only lookups (ruled 2026-11-25): the asset's own banner, never the seed's
+            if fn in lookups.LOOKUP_FNS | {"fin_drill_rows"}:
+                continue  # (fin_drill_rows: a page of rows, no program, its own seals) asset-only lookups (ruled 2026-11-25): the asset's own banner, never the seed's
             params = {"program_id": "NP-MERIDIAN"}
             if fn == "fin_eac_calculation":
                 params["method"] = "CPI"

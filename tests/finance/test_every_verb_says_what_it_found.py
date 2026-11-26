@@ -53,7 +53,7 @@ def _payload(client, fn):
 
 #: The two built-in lookups answer a list, no amount and no verdict (ruled 2026-11-25), are asset-only,
 #: and are no source of the brief; a "figure" is not a thing they lead with. Their own tests carry them.
-_LOOKUPS = lookups.LOOKUP_FNS
+_LOOKUPS = lookups.LOOKUP_FNS | {"fin_drill_rows"}  # a page of rows beside the lookups: no figure, no verdict
 
 
 @pytest.mark.parametrize("fn", sorted(set(m.OUTPUT_URI) - _LOOKUPS))

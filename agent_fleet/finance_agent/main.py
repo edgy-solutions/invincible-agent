@@ -40,13 +40,14 @@ from typing import Any, Callable, Iterable, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     import asset_inputs
     import cdrl
     import export
+    import drill
     import export_dates
     import export_profiles
     import instance_overlays
@@ -63,6 +64,7 @@ except ImportError:
     from agent_fleet.finance_agent import asset_inputs
     from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import drill
     from agent_fleet.finance_agent import export_dates
     from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import instance_overlays
@@ -511,6 +513,24 @@ VERBS: list[dict[str, Any]] = [
                      "which control accounts are under", "work packages of", "the structure below"],
         "anti_synonyms": ["which period", "fiscal calendar", "status period",
                           "what did it cost", "cost variance", "EAC"],
+    },
+    {
+        "fn": "fin_drill_rows",
+        "verb": "mesh:finDrillRows",
+        "input_uri": FIN + "Program",
+        "also_askable_of": [],
+        "desc": (
+            "One page of the dataset rows a flow amount was computed from, opened from the amount: "
+            "the rows under one edge of a flow answer, or under the members of its 'All other' "
+            "sink, read at the answer's as-of. Takes the `drill` value the answer served on that "
+            "edge, with an offset and a limit. A LOOKUP of rows: no amount and no verdict. NOT a "
+            "new question about cost - that is finVarianceAnalysis. OWNS the phrasings: show the "
+            "rows behind this, drill into this amount, the underlying rows, next page of rows."
+        ),
+        "synonyms": ["show the rows behind this", "drill into this amount", "the underlying rows",
+                     "next page of rows", "what makes up this amount"],
+        "anti_synonyms": ["what did it cost", "cost variance", "EAC", "fiscal calendar",
+                          "children of"],
     },
 ]
 
@@ -1006,7 +1026,7 @@ def _source_sources(source: Optional[dict[str, str]], receipts: list[dict[str, A
     return []
 
 
-def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[str, Any]:
+def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str, route: bool = False) -> dict[str, Any]:
     """Execute one verb and build the envelope `/measure/{fn}` serves.
 
     `caller` IS REQUIRED, AND HAS NO DEFAULT, so that no route can reach a declared measure
@@ -1028,6 +1048,10 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
     registered menu (ADR-0042 §2). An engine that named a view here would re-open
     `archetype-chosen-before-data` from the other end.
     """
+    if fn == drill.DRILL_FN:
+        if not route:  # a drill is a follow-up on one answer, never a panel of a package
+            raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
+        return _drill_page(params, caller)  # names no program: the value does, and the page checks the caller against it
     _require_cell(fn, caller)
     if fn in DECLARED:
         return _declared_envelope(DECLARED[fn], params)
@@ -1320,20 +1344,13 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     scope = (params["period"], params["basis"]) if reads_period else None
     try:
         with _asset_read_errors(urn):
-            calendar_labels = _row_calendar_labels(row)
-            if reads_period and calendar_labels is None:
-                # The row's calendar is no longer declared (the env changed after load): as the series
-                # path, every period is outside it.
-                raise asset_inputs.ContractViolation("period_outside_calendar",
-                                                     "a period outside the fiscal calendar")
-            read = asset_inputs.read_dataset_rows(
-                _ticketed_reader(receipts), urn, row.levels, row.value_columns, row.value_op,
-                row.per_path, program_id, row.contract,
-                **{n: params.get(n) for n in (*measure_verbs._VERSION_PARAMS, *measure_verbs._PERIOD_PARAMS)
-                   if n in row.params},
-                version_column=row.contract.version_column, versions=row.contract.versions,
-                period_column=row.contract.period_column,
-                calendar_labels=(calendar_labels or ()))
+            # The row's calendar no longer declared (the env changed after load) is `_row_frame`'s refusal.
+            frame = _row_frame(row, params, receipts)
+            read = asset_inputs.reduce_dataset_frame(
+                frame, row.levels, row.value_columns, row.value_op, row.per_path, program_id,
+                version_a=params.get("version_a") if "version_a" in row.params else None,
+                version_b=params.get("version_b") if "version_b" in row.params else None,
+                version_column=row.contract.version_column)
             compare = walk = None
             if isinstance(read, asset_inputs.CompareRead):
                 paths = read.paths
@@ -1368,6 +1385,14 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
     fn = row.measure_id
+    receipt = _the_receipt(receipts, urn)
+    as_of = receipt.get("as_of")
+    as_of = as_of if isinstance(as_of, str) and as_of else None
+    drill.annotate(rows, frame, row.levels, as_of=as_of, measure=fn, module_sha256=row.module_sha256,
+                   params={"program_id": program_id,
+                           **{n: str(v) for n, v in _row_read_params(row, params).items()}})
+    if as_of is None:
+        log.info("fin.drill_unavailable measure=%s reason=as_of_unavailable", fn)
     envelope = {
         "measure": fn,
         "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
@@ -1387,9 +1412,18 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         **({"period": params["period"], "basis": params["basis"]} if reads_period else {}),
         **({"compare": compare} if compare is not None else {}),
         **({"walk": walk} if walk is not None else {}),
+        "limits": {"max_rows": asset_inputs.drill_max_rows()},
+        **({"drill_unavailable": "as_of_unavailable"} if as_of is None else {}),
         "rows": rows,
     }
     return envelope
+
+
+def _row_read_params(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
+    """The version/period arguments of the row's read: exactly the ones the row takes. The drill
+    value carries these and the drill read passes them, so the two cannot disagree."""
+    return {n: params.get(n) for n in (*measure_verbs._VERSION_PARAMS, *measure_verbs._PERIOD_PARAMS)
+            if n in row.params}
 
 
 def _row_calendar_labels(row: "measure_verbs.MeasureVerbRow") -> Optional[tuple[str, ...]]:
@@ -1520,8 +1554,167 @@ def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
     if fn not in measures.OUTPUT_URI and fn not in DECLARED:  # a verb name is not a program secret: 404 stays first
         raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
     caller = _verb_caller(req.user_email)
-    _require_visible(req.params.get("program_id"), caller)
-    return _measure_envelope(fn, dict(req.params), caller=caller)
+    if fn != drill.DRILL_FN:
+        _require_visible(req.params.get("program_id"), caller)
+    return _measure_envelope(fn, dict(req.params), caller=caller, route=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fin_drill_rows and POST /drill_rows/download -- the rows an amount was computed from
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# PHASE 1: the edges and sink members of a dataset FLOW answer. The value is a claim about what an
+# answer served (`drill.py`); every rule here is that claim's check on the way back. The read cannot
+# be pinned to an as-of (`mesh_ticketed_read` takes only the URN), so it is made now and REFUSED when
+# its receipt's as-of is not the value's, byte for byte. Never logged: a row, a path or a member value.
+
+def _drill_invalid() -> HTTPException:
+    log.warning("fin.drill_refused reason=drill_invalid")
+    return HTTPException(status_code=400, detail={
+        "error": "drill_invalid", "message": "The drill value is not one this engine served."})
+
+
+def _drill_stale() -> HTTPException:
+    log.warning("fin.drill_refused reason=drill_stale")
+    return HTTPException(status_code=409, detail={
+        "error": "drill_stale",
+        "message": "The measure changed after this answer. Ask again for current figures."})
+
+
+def _drill_read(value: Any, caller: str) -> tuple[dict[str, Any], "measure_verbs.MeasureVerbRow", Any, dict[str, Any]]:
+    """`(doc, row, rows, receipt)`: the rows `value` names, read as `caller` and checked against the
+    answer's as-of (steps 1 to 5 of the drill's contract, the page's and the download's both).
+    `rows` is the selected frame, in one stable order; its count is `rows.height`."""
+    try:
+        doc = drill.decode(value)
+    except drill.DrillInvalid:
+        raise _drill_invalid() from None
+    row = DECLARED.get(doc["measure"])
+    if (row is None or row.kind != measure_verbs.KIND_DATASET or not row.levels
+            or row.archetype == "MULTI_SERIES" or row.module_sha256 != doc["module_sha256"]):
+        raise _drill_stale()
+    wanted = {"program_id", *(n for n in (*measure_verbs._VERSION_PARAMS, *measure_verbs._PERIOD_PARAMS)
+                              if n in row.params)}
+    if set(doc["params"]) != wanted:
+        raise _drill_stale()
+    try:
+        drill.check_depth(doc, row.levels)
+    except drill.DrillInvalid:
+        raise _drill_invalid() from None
+    program_id = doc["params"]["program_id"]
+    _require_visible(program_id, caller)
+    _require_cell(row.measure_id, caller)
+    urn = row.dataset_urn
+    receipts: list[dict[str, Any]] = []
+    try:
+        with _asset_read_errors(urn):
+            frame = _row_frame(row, doc["params"], receipts)
+    except NotInModel as exc:
+        raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+    receipt = _the_receipt(receipts, urn)
+    if receipt.get("as_of") != doc["as_of"]:
+        log.warning("fin.drill_refused reason=as_of_moved")
+        got = receipt.get("as_of")
+        raise HTTPException(status_code=409, detail={
+            "error": "as_of_moved", "answer_as_of": doc["as_of"],
+            "data_as_of": got if isinstance(got, str) and got else None,
+            "message": "The data was reloaded after this answer. Ask again for current figures."})
+    picked = drill.select(frame, row.levels, doc["path"], doc["members"])
+    return doc, row, drill.ordered(picked, row.contract), receipt
+
+
+def _row_frame(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any], receipts: list[dict[str, Any]]) -> Any:
+    """The selected frame of a dataset flow row (`asset_inputs.dataset_frame`) for `params`, read as
+    the caller; to be called inside `_asset_read_errors`."""
+    reads_period = "period" in row.params
+    calendar_labels = _row_calendar_labels(row)
+    if reads_period and calendar_labels is None:
+        raise asset_inputs.ContractViolation("period_outside_calendar", "a period outside the fiscal calendar")
+    return asset_inputs.dataset_frame(
+        _ticketed_reader(receipts), row.dataset_urn, row.levels, row.value_columns, params["program_id"],
+        row.contract, **_row_read_params(row, params),
+        version_column=row.contract.version_column, versions=row.contract.versions,
+        period_column=row.contract.period_column, calendar_labels=(calendar_labels or ()))
+
+
+def _drill_int(params: dict[str, Any], name: str, default: int, low: int, high: Optional[int]) -> int:
+    v = params.get(name, default)
+    if isinstance(v, bool) or not isinstance(v, int) or v < low or (high is not None and v > high):
+        raise HTTPException(status_code=400, detail={
+            "error": "bad_page", "message": f"{name} must be an integer from {low}"
+            + (f" to {high}" if high is not None else "")})
+    return v
+
+
+def _drill_page(params: dict[str, Any], caller: str) -> dict[str, Any]:
+    """`fin_drill_rows`: one page of the rows under the edge a drill value names."""
+    unknown = sorted(set(params) - set(drill.PAGE_PARAMS))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"bad params for {drill.DRILL_FN}: {unknown}")
+    if "drill" not in params:
+        raise HTTPException(status_code=422, detail={
+            "needs_slots": ["drill"],
+            "question": "Which amount's rows? Open the amount to get its drill value."})
+    offset = _drill_int(params, "offset", 0, 0, None)
+    limit = _drill_int(params, "limit", 50, 1, drill.DRILL_PAGE_MAX)
+    doc, row, picked, receipt = _drill_read(params["drill"], caller)
+    urn = row.dataset_urn
+    page = picked.slice(offset, limit)
+    rows = drill.rows_of(page, row.contract)
+    envelope = {
+        "measure": drill.DRILL_FN,
+        "output_uri": measures.OUTPUT_URI[drill.DRILL_FN],
+        "artifact_id": _artifact_id(drill.DRILL_FN, {"offset": offset, "limit": limit, "drill": params["drill"]}, rows),
+        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, receipt, period=_drill_scope(row, doc)),
+        "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, receipt),
+        "columns": drill.columns_of(page, row.contract),
+        "rows": rows,
+        "total_count": picked.height,
+        "offset": offset,
+        "limit": limit,
+        "limits": {"max_rows": asset_inputs.drill_max_rows()},
+        "downloads": [dict(d) for d in drill.DOWNLOADS],
+    }
+    return envelope
+
+
+def _drill_scope(row: "measure_verbs.MeasureVerbRow", doc: dict[str, Any]) -> Optional[tuple[str, str]]:
+    """`(period, basis)` as `_dataset_envelope` passes it to `dataset_provenance`, from the value."""
+    return (doc["params"]["period"], doc["params"]["basis"]) if "period" in row.params else None
+
+
+class DrillDownloadRequest(BaseModel):
+    params: dict[str, Any] = Field(default_factory=dict)
+    user_email: str = ""
+
+
+@app.post("/drill_rows/download")
+def drill_rows_download(req: DrillDownloadRequest) -> Response:
+    """The rows a drill value names, as a file. NOT A MESH VERB: the answer path cannot carry file
+    bytes (ruled), so this is the one route that does. Same caller and steps as the page, all rows."""
+    unknown = sorted(set(req.params) - set(drill.DOWNLOAD_PARAMS))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"bad params for drill download: {unknown}")
+    if "drill" not in req.params:
+        raise HTTPException(status_code=422, detail={
+            "needs_slots": ["drill"],
+            "question": "Which amount's rows? Open the amount to get its drill value."})
+    fmt = req.params.get("format", "csv")
+    if fmt not in drill.FORMATS:
+        raise HTTPException(status_code=400, detail={
+            "error": "format_not_declared",
+            "message": f"the formats this download declares are {sorted(drill.FORMATS)}"})
+    caller = _verb_caller(req.user_email)
+    doc, row, picked, _receipt = _drill_read(req.params["drill"], caller)
+    cap = asset_inputs.drill_max_rows()
+    if picked.height > cap:
+        raise HTTPException(status_code=422, detail={
+            "error": "download_too_large", "row_count": picked.height, "max_rows": cap,
+            "message": f"These rows number {picked.height}; a download holds at most {cap}."})
+    name = drill.filename(row.measure_id, doc["params"]["program_id"])
+    return Response(content=drill.csv_bytes(picked, row.contract), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 # ─────────────────────────────────────────────────────────────────────────────

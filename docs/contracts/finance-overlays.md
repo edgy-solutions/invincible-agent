@@ -707,6 +707,7 @@ Design: `docs/plans/fin-inputs-resolver.md`. Nothing here has run on a cluster.
 | `FIN_DATASET_CONTRACT` | required with the URN: the id of the contract, in the contract directory, the read is held to. |
 | `CENTRAL_GATEWAY_URL` | required with the URN: the gateway that issues the read ticket. |
 | `FIN_ASSET_MAX_ROWS` | optional, default 100000. |
+| `FIN_DRILL_MAX_ROWS` | optional, default 10000 (the read cap when that is lower); a positive integer no larger than `FIN_ASSET_MAX_ROWS`. Binds the drill download only. |
 
 With the URN set, the engine refuses to start if the banner or gateway is missing, the URN is not
 of the `urn:li:dataset:` form, the mesh client cannot be imported, the contract is unset or cannot
@@ -974,3 +975,20 @@ declared calendar (`period.calendar`, section 8). Each is offered once per progr
 asset, so a caller sees them exactly when they may view at least one of the dataset's programs. A
 version or period the data carries and no declaration lists resolves to nothing. They are filters a
 question names, so no verb takes either as its subject.
+
+## The drill: the rows an amount was computed from
+
+Every edge and every sink member of a dataset FLOW answer carries `row_count` (the dataset rows under
+it, counted from the one frame the amounts were reduced from; under `per_path: once` still rows, not
+groups) and, when the read's receipt has an as-of, an opaque `drill` value. The answer carries
+`limits.max_rows` (`FIN_DRILL_MAX_ROWS`), and `drill_unavailable: "as_of_unavailable"` with no `drill`
+anywhere when the receipt has no as-of.
+
+`fin_drill_rows` (`POST /measure/fin_drill_rows`, params `drill`, `offset`, `limit` 1 to 500) pages the
+rows under one edge, or under the members of a sink, in the contract's grain order, read as the caller.
+`POST /drill_rows/download` (params `drill`, `format: csv`) serves all of them as a file; more than
+`FIN_DRILL_MAX_ROWS` is 422 `download_too_large`. The value names no column, URN or caller: the engine
+rebuilds the predicate from its own row declaration. A value it did not serve is 400 `drill_invalid`; one
+for a measure that has changed is 409 `drill_stale`. The read cannot be pinned to an as-of, so it is made
+now and refused, with no rows, as 409 `as_of_moved` when its as-of is not the one inside the value.
+Series and state-kind answers and the variance-driver ranking serve no drill.

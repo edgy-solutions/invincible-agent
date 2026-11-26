@@ -59,6 +59,7 @@ OUTPUT_URI: dict[str, str] = {
     "fin_funding_status":      FIN + "FundingStatusGrid",
     "fin_calendar_periods":    FIN + "FiscalCalendarPeriods",
     "fin_hierarchy_children":  FIN + "HierarchyChildren",
+    "fin_drill_rows":          FIN + "DrillRowPage",
 }
 
 
@@ -1370,3 +1371,17 @@ def fin_hierarchy_children(state: FinanceState, *, program_id: str, element: str
     """The children of `element`, down `depth` levels (default 1) and no further than the work
     package. No amount."""
     raise NotInModel("this lookup reads the deployment's declared dataset; none is configured")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 9. fin_drill_rows  ->  a page of the dataset rows under one edge of a flow answer
+# ────────────────────────────────────────────────────────────────────────────
+#
+# A LOOKUP OF ROWS, NO AMOUNT (`drill`, `main._drill_page`): the rows an edge's amount was computed
+# from, read as the caller at the answer's as-of. It reads only the dataset a flow row declares and
+# never the seed. This function exists so the slots derive from a signature as every verb's do
+# (ADR-0030: `slots_for` reads `getattr(measures, fn)`); the route never calls it.
+
+def fin_drill_rows(state: FinanceState, *, drill: str, offset: int = 0, limit: int = 50) -> list[dict[str, Any]]:
+    """One page of the rows under a flow edge. Served from the dataset only."""
+    raise NotInModel("this lookup reads the dataset a flow row declares; none is configured")
