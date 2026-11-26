@@ -29,6 +29,9 @@ from tests.finance.test_variance_decomposition_over_the_ev_fixture import (  # n
     _clean_env, flow_rows, gate, members, post,
 )
 from tests.planning.test_planning_archetypes_are_projected import _fns  # noqa: E402
+from tests.finance.test_the_walk_has_a_start_and_an_end import (  # noqa: E402,F401
+    FN_CV, FN_SAMPLE, epost, ev_world,
+)
 
 ARCH = "FLOW_DECOMPOSITION"
 
@@ -62,8 +65,25 @@ def test_EVERY_FIELD_THE_ROW_CARRIES_IS_ONE_THE_ENGINE_SENDS(post):
     ns, _got = _project(env)
     payload_key, carried = ns["_PROJECTED_ARCHETYPES"][ARCH]
     assert payload_key == "rows"
-    assert [k for k in (payload_key, *carried) if k not in env] == []
+    # a COLUMN row sends every carried key but `walk`, which only a minus or compare row sends
+    assert [k for k in (payload_key, *carried) if k not in env] == ["walk"]
 
+
+def test_A_MINUS_ROWS_WALK_REACHES_THE_CARD_WHOLE(epost):
+    """The arm the column row cannot be: a minus row's envelope sends EVERY carried key, `walk`
+    included, and the card's `walk` is the engine's {start, end} whole, not picked or rebuilt."""
+    status, env = epost(FN_CV)
+    assert status == 200, env
+    assert env["render"]["shape"] == ARCH
+    assert set(env["walk"]) == {"start", "end"}                 # control: the engine did send a walk
+    ns, got = _project(env)
+    payload_key, carried = ns["_PROJECTED_ARCHETYPES"][ARCH]
+    assert [k for k in (payload_key, *carried) if k not in env] == []
+    assert got is not None and got["walk"] == env["walk"]
+    status, column = epost(FN_SAMPLE)                           # control: a column card has no walk
+    assert status == 200 and "walk" not in column, column
+    _ns, got_column = _project(column)
+    assert got_column is not None and "walk" not in got_column
 
 def test_THE_PROVENANCE_ARRIVES_WHOLE(post):
     env = _served(post)
