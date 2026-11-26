@@ -114,6 +114,27 @@ def test_1_a_body_email_with_no_bearer_lists_nothing_and_says_no_identity(
 
 
 @pytest.mark.parametrize("route", ROUTES)
+def test_1b_the_wires_no_bearer_request_through_the_sdk_lists_nothing_and_says_no_identity(
+        route, double, client, caplog):
+    # The WIRE's shape, which test 1's `None` is not. No `Authorization` header, and
+    # `_current_caller` is NOT monkeypatched (no `bearer` fixture), so the SDK hands
+    # `_listing_caller` its own no-token identity (`reason="absent"`), never `None`. Gov's B7
+    # (the `== "absent"` arm dropped) turns this request into a 401 `bearer_not_verified`.
+    assert "authorization" not in {k.lower() for k in client.headers}
+    r = _post(client, route, DAVE)
+    assert r.status_code == 200, r.text
+    assert _listed(r) == []
+    empties = _lines(caplog, "fin.")
+    assert len(empties) == 1, [e.getMessage() for e in empties]
+    msg = empties[0].getMessage()
+    assert "reason=no_identity" in msg and "body_caller=no_bearer" in msg, msg
+    assert empties[0].levelno == logging.WARNING
+    # The body's person is never looked up. The empty caller may reach the predicate: the real
+    # `can_view_program` answers False for one without a directory call (program_membership.py).
+    assert all(caller == "" for _program, caller in double.calls), double.calls
+
+
+@pytest.mark.parametrize("route", ROUTES)
 def test_2_a_verified_person_whose_body_names_another_is_refused(
         route, double, client, bearer, caplog):
     bearer(Who(ALICE))
