@@ -474,6 +474,21 @@ except ImportError:
         resolve_urn_outcome,
     )
 
+# Where a lineage walk starts: the resolved asset, from either resolution path
+# (supervisor-supplied or the legacy raw /resolve JSON). PURE module.
+try:
+    from lineage_start import (  # type: ignore[no-redef]
+        start_of,
+        supplied_instance,
+        walk_body,
+    )
+except ImportError:
+    from agent_fleet.restate_analyst.lineage_start import (
+        start_of,
+        supplied_instance,
+        walk_body,
+    )
+
 
 # The hint set the ExtractPlatformScope extractor uses to tell a recognized
 # data platform from a typo'd/unknown one. These are GENERIC VENDOR SLUGS
@@ -1352,13 +1367,16 @@ to decide the next call. Use only what the tools return — never invent data.
             import requests as _requests
 
             wrapper_url = os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085")
-            raw_instance = (semantic_ctx.get("instance_id") or "").strip()
+            # Both resolution paths land here: the supervisor's flattened context
+            # (top-level instance_id) and the legacy raw /resolve JSON
+            # (provenance.instance_id). supplied_instance reads either.
             # The supervisor's phone-book match carries the instance's DISPLAY
             # LABEL separately from its URN id (whose key can be a numeric
             # superset id). Prefer the label for prose so the card isn't titled
             # after the URN key; fall back to humanizing the URN only when no
             # label was threaded.
-            resolved_instance_label = (request.get("resolved_instance_label") or "").strip()
+            raw_instance, resolved_instance_label = supplied_instance(
+                semantic_ctx, request.get("resolved_instance_label") or "")
             user_query = request.get("user_query") or task.task_description
 
             # 1. Platform scope (BAML). known_platforms is a hint set so the
@@ -1392,10 +1410,11 @@ to decide the next call. Use only what the tools return — never invent data.
             #    is safe: the /lineage_by_platform walk below enforces
             #    entitlement, so skipping the resolution search never bypasses
             #    the gate.
-            if raw_instance.startswith("urn:"):
+            start = start_of(raw_instance)
+            if start == "urn":
                 resolve = {"outcome": "found", "urn": raw_instance, "candidate_count": 1}
                 asset_label = resolved_instance_label or humanize_urn_label(raw_instance)
-            elif raw_instance:
+            elif start == "name":
                 asset_label = raw_instance
                 resolve = await _TEMPORARY_urn_resolution_belongs_on_engine_d(
                     asset_label=asset_label,
@@ -1422,18 +1441,15 @@ to decide the next call. Use only what the tools return — never invent data.
             # 3. Walk lineage ONLY when the subject resolved cleanly AND (if a
             #    platform was named) it was recognized. Otherwise the assembler
             #    emits the correct say-so outcome without a pointless walk.
-            unrecognized_platform = platform_scope["platform_mentioned"] and not platform_scope["platforms"]
             lineage_result = None
-            if resolve["outcome"] == "found" and not unrecognized_platform:
+            body = None
+            if resolve["outcome"] == "found":
+                body = walk_body(resolve["urn"], platform_scope, caller_entitled_domains, caller_email)
+            if body is not None:
                 try:
                     lr = await asyncio.to_thread(lambda: _requests.post(
                         f"{wrapper_url}/lineage_by_platform",
-                        json={
-                            "subject_urn": resolve["urn"],
-                            "platforms": platform_scope["platforms"],
-                            "entitled_domains": caller_entitled_domains,
-                            "caller_email": caller_email,
-                        },
+                        json=body,
                         timeout=45.0,
                     ))
                     lr.raise_for_status()
