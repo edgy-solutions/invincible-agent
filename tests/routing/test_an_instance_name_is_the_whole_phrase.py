@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -98,22 +99,71 @@ def test_control_a_kind_word_alone_does_not_name_the_candidate():
     assert decide([_dash()], identifier="dashboard").provenance["instance_match"] == "not_specific"
 
 
-# ── the 2026-10-16 ruling is preserved for single-token identifiers ────────────────────
+# ── RULED (architect, 2026-11-26), on #506's two questions ─────────────────────────────
+# 1. "PN 9001 matches the label pn_9001: yes. Compare with case folded and spaces, underscores
+#    and hyphens treated as the same separator, on both sides."
+# 2. "Fleet Readiness does not match a candidate named Readiness. One word of a longer name is
+#    not the named thing. ... The lookup may return it as a lower-scored suggestion, never as
+#    the subject."
 
-def test_a_single_token_identifier_is_still_refused_against_a_spaced_label():
-    """Mirrors test_7b: `PN_9001` against label `pn 9001` stays not_specific."""
-    c = InstanceCandidate(instance_id="CSI-7001", class_uri="http://x/safety#SafetyCriticalItem",
-                          label="pn 9001", score=0.9, provider="p")
-    assert not _passes("PN_9001", c)
-    assert decide([c], identifier="PN_9001").provenance["instance_match"] == "not_specific"
+def _pn(label):
+    return InstanceCandidate(instance_id="CSI-7001", class_uri="http://x/safety#SafetyCriticalItem",
+                             label=label, score=0.9, provider="p")
 
 
-def test_residual_a_phrase_identifier_passes_a_separator_variant_label():
-    """QUESTION FOR THE ARCHITECT, pinned as built: `PN 9001` (whitespace, so a phrase) passes
-    against label `pn_9001`. Should it be refused? This rule passes it."""
-    c = InstanceCandidate(instance_id="CSI-7001", class_uri="http://x/safety#SafetyCriticalItem",
-                          label="pn_9001", score=0.9, provider="p")
-    assert _passes("PN 9001", c)
+@pytest.mark.parametrize("label", ["pn_9001", "pn 9001", "PN-9001", "Pn__9001"])
+@pytest.mark.parametrize("ident", ["PN 9001", "PN_9001", "pn-9001", " PN -_9001 "])
+def test_ruled_a_separator_variant_names_the_same_label_on_both_sides(ident, label):
+    assert _passes(ident, _pn(label))
+    assert decide([_pn(label)], identifier=ident).provenance["instance_match"] != "not_specific"
+
+
+@pytest.mark.parametrize("ident", ["PN 9002", "PN9001", "PN 90011", "PN 9001 9001"])
+def test_control_a_different_identifier_is_still_refused_by_the_label(ident):
+    """Collapsed, never dropped: `PN9001` has no separator, so it is not `pn_9001`."""
+    assert not _passes(ident, _pn("pn_9001"))
+
+
+_READINESS = InstanceCandidate(instance_id="urn:x:readiness", class_uri="http://x/p#Metric",
+                               label="Readiness", score=0.9, provider="p")
+
+
+def test_ruled_one_word_of_a_longer_name_is_not_the_named_thing():
+    assert not _passes("Fleet Readiness", _READINESS)
+    assert not _passes("fleet readiness", replace(_READINESS, label=""))
+
+
+def test_ruled_it_is_recorded_as_a_suggestion_never_the_subject():
+    d = decide([_READINESS], identifier="Fleet Readiness")
+    prov = d.provenance
+    assert prov["instance_match"] == "not_specific"
+    assert d.subject_uri != _READINESS.class_uri
+    (top,) = prov["instance_rejected_top"]
+    assert top["label"] == "Readiness" and top["score"] == 0.9
+    assert rejected_match_note(prov).startswith("The instance lookup found 'Readiness' (Metric)")
+
+
+def test_ruled_a_lower_scored_whole_name_is_the_subject_over_a_higher_scored_word():
+    whole = InstanceCandidate(instance_id="urn:x:fleet_readiness", class_uri="http://x/p#Score",
+                              label="Fleet Readiness", score=0.8, provider="p")
+    d = decide([_READINESS, whole], identifier="Fleet Readiness")
+    assert d.subject_uri == "http://x/p#Score"
+
+
+def test_control_a_phrase_qualifier_the_candidate_spells_still_passes():
+    """The qualifier corroborates when the candidate carries it: the id is fleet/readiness."""
+    assert _passes("Fleet Readiness", replace(_READINESS, instance_id="urn:x:fleet/readiness"))
+
+
+def test_control_a_phrase_qualifier_the_candidate_does_not_spell_is_refused():
+    assert not _passes("crew p_cage", P_CAGE)
+
+
+@pytest.mark.parametrize("ident", ["lake.p_cage", "minio-svc.publog-lake/publog/p_cage"])
+def test_control_a_path_qualifier_is_still_corroboration_never_a_requirement(ident):
+    """Rule 2 is about WORDS of a phrase. A path (`lake.p_cage`) says where the name is, and
+    the 2026-08-30 rule stands for it: the name is the last component."""
+    assert _passes(ident, P_CAGE)
 
 
 # ── the refusal is recorded with why ──────────────────────────────────────────────────

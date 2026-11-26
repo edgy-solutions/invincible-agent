@@ -280,15 +280,21 @@ def passes_segment_specificity(identifier: str, candidate_text: str) -> bool:
 #   c. QUALIFIED (the rule above, unchanged): `passes_segment_specificity`, but ONLY against a
 #      single-segment candidate text, so `publog p_cage` still names `p_cage` and a multi-word
 #      label is never matched on its last word.
-# a and b apply to a candidate's label and id ONLY when the identifier is a PHRASE
-# (`identifier.strip()` contains whitespace); a single-token identifier (`PN_9001`) keeps the
-# segment rule (c) there, so the 2026-10-16 ruling stands: label `pn 9001` is refused for
-# `PN_9001`. `matched_on` takes a and b for any identifier.
-# RESIDUAL (question for the architect): a whitespace identifier such as `PN 9001` PASSES
-# against label `pn_9001` under this rule; should it be refused?
-# RESIDUAL (a question for the architect): a QUALIFIED pass still lets `Fleet Readiness` match a
-# candidate whose whole name is the single word `Readiness`; the qualifier is corroboration, as
-# for `publog p_cage`.
+# RULED (architect, 2026-11-26), the two questions this PR asked:
+#   1. "PN 9001 matches the label pn_9001: yes. Compare with case folded and spaces, underscores
+#      and hyphens treated as the same separator, on both sides." So a and b apply to the label,
+#      the id and matched_on, for ANY identifier, single token or phrase. Label `pn 9001` now
+#      names `PN_9001`; until this ruling it was refused. Collapsed, never dropped: `PN9001`
+#      is still not `pn_9001`.
+#   2. "Fleet Readiness does not match a candidate named Readiness. One word of a longer name is
+#      not the named thing. ... The lookup may return it as a lower-scored suggestion, never as
+#      the subject." So in c, a WORD of a phrase before the name (`Fleet` in `Fleet Readiness`,
+#      `publog` in `publog p_cage`) must be spelled by the candidate: every segment of it must
+#      be a segment of its label, id or matched_on. `publog p_cage` still names the table whose
+#      id is `.../publog/p_cage`; `Fleet Readiness` does not name `Readiness` (`urn:x:readiness`).
+#      A PATH qualifier (`lake.p_cage`, no whitespace) is unchanged: it says where the name is,
+#      and stays corroboration, never a requirement. The refused candidate is kept, with its
+#      score and why, in `instance_rejected_top` and the note, never as the subject.
 #
 # REGRESSION-GUARDED, not assumed: the three defects the gate was built for
 # (`cage`->`p_cage`, `publog`->a table inside it, `p_caeg`->`p_cage`) are still refused, and
@@ -490,28 +496,44 @@ def passes_candidate_specificity(identifier: str, c: InstanceCandidate) -> bool:
     return not specificity_refusal(identifier, c)
 
 
+#: An English possessive on a phrase word (`publog's p_cage`): grammar, not part of the word.
+_POSSESSIVE = re.compile(r"['\u2019]s(?=\s)", re.IGNORECASE)
+
+
+def _unspelled_phrase_word(identifier: str, c: InstanceCandidate) -> str:
+    """The first WORD of the identifier's phrase, before its last word, that the candidate does
+    not spell (some segment of it is in none of the candidate's label, id or matched_on), or ""
+    when every such word is spelled or the identifier is not a phrase. Ruled 2026-11-26: one
+    word of a longer name is not the named thing."""
+    words = _POSSESSIVE.sub("", (identifier or "").strip()).split()
+    spelled: set[str] = set()
+    for text in (c.label, c.instance_id, c.matched_on):
+        spelled.update(_segments(text))
+    for word in words[:-1]:
+        if not set(_segments(word)) <= spelled:
+            return word
+    return ""
+
+
 def specificity_refusal(identifier: str, c: InstanceCandidate) -> str:
     """"" when the gate passes the candidate (rules a, b, c above); otherwise why it did not."""
     kind = _own_kind_word(c.class_uri)
-    phrase = bool(_WHITESPACE.search((identifier or "").strip()))
+    unspelled = _unspelled_phrase_word(identifier, c)
     why = ""
-    for text, is_matched_on in ((c.label, False), (c.instance_id, False), (c.matched_on, True)):
+    for text in (c.label, c.instance_id, c.matched_on):
         if not text:
             continue
-        # Rules a and b apply to a label or id only when the identifier is a PHRASE; a
-        # single-token identifier keeps the segment rule there (2026-10-16 preserved).
-        # matched_on takes a and b for any identifier.
-        if phrase or is_matched_on:
-            miss = _name_match(identifier, text, kind)
-            if not miss:
-                return ""
-        else:
-            miss = (f"name {normalise_identifier(identifier).replace('-', ' ')!r} is a single "
-                    f"token; segment rule against candidate name "
-                    f"{normalise_identifier(candidate_name(text)).replace('-', ' ')!r}")
-        # c. QUALIFIED: only against a single-segment text, never a phrase's last word.
-        if not _WHITESPACE.search(text.strip()) and passes_segment_specificity(identifier, text):
+        # a and b: the normalised identifier against the normalised text, both sides (2026-11-26).
+        miss = _name_match(identifier, text, kind)
+        if not miss:
             return ""
+        # c. QUALIFIED: only against a single-segment text, never a phrase's last word, and
+        # only when the candidate spells every word of the phrase before the name.
+        if not _WHITESPACE.search(text.strip()) and passes_segment_specificity(identifier, text):
+            if not unspelled:
+                return ""
+            miss = (f"{miss}; {unspelled.casefold()!r} of the phrase is not in the candidate, and "
+                    f"one word of a longer name is not the named thing")
         why = why or miss
     if c.matched_on and normalise_identifier(identifier) == normalise_identifier(c.matched_on):
         return ""
