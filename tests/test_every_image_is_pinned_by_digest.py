@@ -111,11 +111,6 @@ def test_arm3_every_optional_workload_on_is_all_digest():
     assert len(every) > len(base), "switching every workload on added no pod: the flag file is inert"
 
 
-# Flags that add no image and refuse to render alone BY DESIGN (a prerequisite the sandbox values cannot meet). Each is
-# sealed for "adds no image" in its own chart test, named here.
-_REFUSES_ALONE = {("postgresql", "electricHba"): "tests/test_postgres_electric_hba_chart.py::test_on_adds_no_image"}
-
-
 def _enabled_flags(values: dict) -> list[tuple[str, ...]]:
     """Paths (depth 1 and 2) of every dict whose `enabled` is False, derived from values.yaml."""
     out = []
@@ -138,8 +133,6 @@ def test_arm3_census_every_flag_that_adds_an_image_is_in_the_workload_file(tmp_p
     # one the file needs; it must be on in the file (or this render could not have contained it).
     missing = []
     for path in _enabled_flags(values):
-        if path in _REFUSES_ALONE:
-            continue
         node = every
         for p in path:
             node = node.get(p, {}) if isinstance(node, dict) else {}

@@ -110,7 +110,8 @@ spec:
               {{- end }}
             {{- if include "invincible-agent.electricHba" . }}
             - name: pg-hba
-              mountPath: /etc/iagent-pg-hba
+              {{- /* bitnami: its scripts copy a pg_hba.conf mounted in /bitnami/postgresql/conf into their conf dir (inferred, documented behaviour); the library image reads it through -c hba_file above. */}}
+              mountPath: {{ if eq $style "bitnami" }}/bitnami/postgresql/conf{{ else }}/etc/iagent-pg-hba{{ end }}
               readOnly: true
             {{- end }}
   volumeClaimTemplates:
