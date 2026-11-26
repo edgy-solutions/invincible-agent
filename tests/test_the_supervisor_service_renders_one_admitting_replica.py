@@ -153,3 +153,31 @@ def test_restate_init_waits_for_and_registers_the_service_on_its_port():
     assert f"{_RELEASE}-supervisor." in script
     assert f":{port}/healthz" in script
     assert f':{port}/restate", "force": true' in script
+
+
+def _registrations(script: str) -> dict[str, dict]:
+    """Each `curl ... /deployments ... -d '<json>'` body in the restate-init script, keyed by
+    the service host its `uri` names."""
+    import json
+    out = {}
+    for line in script.splitlines():
+        if "/deployments" not in line or " -d '" not in line:
+            continue
+        body = json.loads(line.split(" -d '", 1)[1].rsplit("'", 1)[0])
+        out[body["uri"].split("//", 1)[1].split(".", 1)[0].split(":", 1)[0]] = body
+    return out
+
+
+def test_the_supervisor_is_registered_over_http_1_1_because_uvicorn_serves_nothing_else():
+    """The 0.4.92 roll: Restate's discovery spoke HTTP/2 to the supervisor, uvicorn refused it
+    ("Invalid HTTP request received"), Restate logged META0014, and the hook's curl (no -f) still
+    exited 0, so SupervisorAnswer was never registered. The supervisor's server is uvicorn, so its
+    registration must ask for HTTP/1.1. The engines (hypercorn) are the control: they must not."""
+    docs = _render(*_ON)
+    sup = _container(_one(docs, "Deployment", f"{_RELEASE}-supervisor"))
+    assert sup["command"][:3] == ["python", "-m", "uvicorn"], sup["command"]  # HTTP/1.1 only
+    regs = _registrations(_restate_init_script(docs))
+    assert regs[f"{_RELEASE}-supervisor"].get("use_http_11") is True, regs[f"{_RELEASE}-supervisor"]
+    engines = {h: b for h, b in regs.items() if h != f"{_RELEASE}-supervisor"}
+    assert engines, "control: the script registers engines too"
+    assert [h for h, b in engines.items() if "use_http_11" in b] == []
