@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -439,3 +440,51 @@ def test_the_samples_flow_row_reads_one_period_and_through_it(post):
     assert root_value(env) != total(held)
     status, env = post(FN_EV, program=PROGRAM, period="P10", basis="period")
     assert status == 422, "program B's label is not a period of the sample's calendar"
+
+
+# -- 5. the guards of #569, each failing with its guard removed ------------------------------------
+
+def _program_b_contract(edit=None):
+    raw = copy.deepcopy(contracts_raw()["program_b"])
+    if edit is not None:
+        edit({c["name"]: c for c in raw["columns"]}, raw)
+    return raw
+
+
+def _declare_column(name, **changes):
+    def edit(columns, raw):
+        columns[name].update(changes)
+    return edit
+
+
+def test_the_unmodified_program_b_contract_parses():
+    from agent_fleet.utils import dataset_contracts
+    assert dataset_contracts._parse(_program_b_contract()).period_column == "period"
+
+
+@pytest.mark.parametrize("edit, message", [
+    (_declare_column("acwp", additive_over=["work_package", "no_such_axis"]),
+     "column 'acwp' is additive over ['no_such_axis'], which no column declares"),                    # C1
+    (_declare_column("period", nullable=True),
+     "period.column 'period' is nullable; a period column is declared nullable: false"),              # C2
+    (_declare_column("period", type="numeric"),
+     "period.column 'period' is declared 'numeric'; a period column is a string"),                    # C3
+], ids=["C1_additive_over_an_undeclared_column", "C2_nullable_period_column", "C3_non_string_period_column"])
+def test_a_contract_guard_refuses_with_its_own_message(edit, message):
+    from agent_fleet.utils import dataset_contracts
+    with pytest.raises(ValueError, match=re.escape(message)):
+        dataset_contracts._parse(_program_b_contract(edit))
+
+
+def test_M4_a_period_row_whose_calendar_is_no_longer_declared_refuses_before_the_read(monkeypatch, tmp_path):
+    rows = declare(monkeypatch, tmp_path, {FN_B: b_row()}, contracts_raw())
+    gate = serve(monkeypatch, rows, {URN_B: frame()})
+    reads = []
+    real = engine._ticketed_reader
+    monkeypatch.setattr(engine, "_ticketed_reader", lambda receipts: (reads.append(1), real(receipts))[1])
+    monkeypatch.setattr(engine, "_row_calendar_labels", lambda row: None)
+    with TestClient(engine.app) as c:
+        status, env = call_of(c)(FN_B, period="P10", basis="period")
+    assert status == 502, env
+    assert env["detail"]["error"] == "asset_contract_violation" and env["detail"]["rule"] == "period_outside_calendar"
+    assert gate.asked == [] and reads == [], "the dataset was never read"
