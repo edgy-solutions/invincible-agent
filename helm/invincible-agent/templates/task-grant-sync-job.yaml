@@ -2,9 +2,10 @@
 TASK GRANT STARTUP SYNC — closes the "topazSeed is default-OFF" gap for task_grant_sync and (as
 of 2026-10-02) program_member_sync.
 
-WHY THIS EXISTS. `topaz-seed-cronjob.yaml` runs SIX syncs (persona/asset/grant/ontology/task/
-capability) and is itself default-disabled (`topazSeed.enabled: false`) so it never surprise-
-prunes five scopes nobody asked to touch today. Task grants (task_audience `actor` relations —
+WHY THIS EXISTS. `topaz-seed-cronjob.yaml` runs EIGHT syncs (persona/asset/program-member/
+recipient-reader/grant/ontology/task/capability; the program-member and recipient-reader legs
+since 0.4.93, with the same invocation as this Job) and is itself default-disabled
+(`topazSeed.enabled: false`) so it never surprise-prunes scopes nobody asked to touch today. Task grants (task_audience `actor` relations —
 see policy/sync/task_grant_sync.py) are a narrower need: they must exist on every install and
 every upgrade, without a human hand-running the sync, and without turning on the other five
 syncs to get them. This Job runs task_grant_sync.py, as an idempotent post-install/post-
