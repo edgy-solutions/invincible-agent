@@ -88,7 +88,7 @@ def _decide(rules, ctype: str, db: str, user: str, addr: str | None, physical: b
     return None
 
 
-_CONNS = [("local", None), ("host", "127.0.0.1"), ("host", "::1"), ("host", "10.42.3.7")]
+_CONNS = [("local", None), ("host", "127.0.0.1"), ("host", "::1"), ("host", "192.0.2.7")]
 _DBS = [_PROJ, "iagent_other", "postgres"]
 _USERS = [_ROLE, "iagent", "postgres", "someone_else"]
 
@@ -122,10 +122,10 @@ def test_off_changes_nothing():
 
 def test_on_admits_electrics_role_on_the_projections_database_only():
     rules = _rules(_hba_text(_render(*_ON)))
-    assert _decide(rules, "host", _PROJ, _ROLE, "10.42.3.7", False) == _METHOD
+    assert _decide(rules, "host", _PROJ, _ROLE, "192.0.2.7", False) == _METHOD
     for db in ("iagent_other", "postgres"):
-        assert _decide(rules, "host", db, _ROLE, "10.42.3.7", False) == "reject"
-    assert _decide(rules, "host", _PROJ, _ROLE, "10.42.3.7", True) == "reject"      # the `replication` keyword
+        assert _decide(rules, "host", db, _ROLE, "192.0.2.7", False) == "reject"
+    assert _decide(rules, "host", _PROJ, _ROLE, "192.0.2.7", True) == "reject"      # the `replication` keyword
     assert _decide(rules, "host", _PROJ, _ROLE, "127.0.0.1", True) == "reject"      # even from loopback
     assert _decide(rules, "local", _PROJ, _ROLE, None, False) == "reject"
     assert _decide(rules, "local", _PROJ, _ROLE, None, True) == "reject"
@@ -143,8 +143,8 @@ def test_every_other_role_keeps_the_assumed_image_default_over_the_whole_grid():
 def test_the_matcher_has_a_control_it_can_tell_apart():
     # Control: the default alone DOES admit Electric's role everywhere, so the grid can see a missing restriction.
     default = _rules(_DEFAULT)
-    assert _decide(default, "host", "iagent_other", _ROLE, "10.42.3.7", False) == _METHOD
-    assert _decide(default, "host", "x", "iagent", "10.42.3.7", True) is None
+    assert _decide(default, "host", "iagent_other", _ROLE, "192.0.2.7", False) == _METHOD
+    assert _decide(default, "host", "x", "iagent", "192.0.2.7", True) is None
 
 
 def test_the_statefulset_reads_the_rendered_file():
