@@ -925,7 +925,7 @@ realm-reconcile-bodies Secret (a file the script sends with -d @file) for a clie
 {{- $c := .c }}{{- $claim := .claim }}{{- $bffAud := .bffAud }}
 {{- $kind := $c.kind | default "service" }}
 {{- $secret := "" }}
-{{- if $c.secretRef }}{{- $secret = get .root.Values.keycloak $c.secretRef }}{{- end -}}
+{{- if $c.secretRef }}{{- $secret = get .root.Values.keycloak $c.secretRef | required (printf "keycloak.%s is unset: client %s names it as its secretRef and the chart ships no default; set it in a values file kept out of git" $c.secretRef $c.clientId) }}{{- end -}}
 {
                     "clientId": {{ $c.clientId | quote }},
                     "enabled": true,

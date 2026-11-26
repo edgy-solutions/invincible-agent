@@ -193,7 +193,7 @@ jobs:
           fi
           cat "${out}" >> "$GITHUB_STEP_SUMMARY"
           for extra in "" scripts/values-every-workload.yaml; do
-            args="-f ${out}"
+            args="-f scripts/values-render-placeholders.yaml -f ${out}"
             if [ -n "${extra}" ]; then args="${args} -f ${extra}"; fi
             rc=0
             helm template invincible-agent helm/invincible-agent ${args} > "${RUNNER_TEMP}/render.yaml" 2> "${RUNNER_TEMP}/render.err" || rc=$?

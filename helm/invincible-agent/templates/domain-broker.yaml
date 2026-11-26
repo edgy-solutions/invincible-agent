@@ -136,7 +136,7 @@ spec:
             - name: CH_USER
               value: {{ .Values.domainBroker.chUser | default "iagent" | quote }}
             - name: CH_PASSWORD
-              value: {{ .Values.domainBroker.chPassword | default "changeme-clickhouse-sandbox" | quote }}
+              value: {{ .Values.domainBroker.chPassword | required "domainBroker.chPassword is unset: the chart ships no default for this credential; set it in a values file kept out of git" | quote }}
             - name: CH_DATABASE
               value: {{ .Values.domainBroker.chDatabase | default "iagent" | quote }}
             - name: S3_ENDPOINT_URL
@@ -144,7 +144,7 @@ spec:
             - name: S3_ACCESS_KEY
               value: {{ .Values.domainBroker.s3AccessKey | default "minio-sandbox" | quote }}
             - name: S3_SECRET_KEY
-              value: {{ .Values.domainBroker.s3SecretKey | default "minio-sandbox-secret" | quote }}
+              value: {{ .Values.domainBroker.s3SecretKey | required "domainBroker.s3SecretKey is unset: the chart ships no default for this credential; set it in a values file kept out of git" | quote }}
             - name: S3_REGION
               value: {{ .Values.domainBroker.s3Region | default "us-east-1" | quote }}
           ports:

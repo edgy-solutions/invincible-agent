@@ -95,6 +95,10 @@ def registry_head(registry: str, repo: str, digest: str) -> "tuple[int, str | No
 
 def helm_render(chart: str, values: "list[str]") -> str:
     cmd = ["helm", "template", "invincible-agent", chart]
+    # The chart ships no default for a credential, so a render needs the render-only overlay
+    # (never deployed, never part of the release values this script writes). First, so any file
+    # in `values` still overrides it.
+    cmd += ["-f", str(_HERE / "values-render-placeholders.yaml")]
     for v in values:
         cmd += ["-f", v]
     done = subprocess.run(cmd, capture_output=True, text=True)

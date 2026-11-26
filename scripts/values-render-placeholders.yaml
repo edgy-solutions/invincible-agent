@@ -1,0 +1,37 @@
+# RENDER-ONLY placeholders. NEVER deploy with this file.
+#
+# The chart ships no default for a credential and refuses to render when one is unset (0.4.93). A render that only
+# INSPECTS the chart (the test suite, the release image seal, the digest writer) layers this file first; a real
+# deployment sets its own values in a file kept out of git. Every value says what it is, and each is distinct per key so
+# a test that checks two readers agree still can tell the keys apart.
+keycloak:
+  caseRunnerClientSecret: render-only-caseRunnerClientSecret
+  graphHostClientSecret: render-only-graphHostClientSecret
+  engineDClientSecret: render-only-engineDClientSecret
+  engineEClientSecret: render-only-engineEClientSecret
+  engineOClientSecret: render-only-engineOClientSecret
+  engineWClientSecret: render-only-engineWClientSecret
+  reviewStarterClientSecret: render-only-reviewStarterClientSecret
+  planningAgentClientSecret: render-only-planningAgentClientSecret
+  financeAgentClientSecret: render-only-financeAgentClientSecret
+  safetyAgentClientSecret: render-only-safetyAgentClientSecret
+  docsAgentClientSecret: render-only-docsAgentClientSecret
+  costAgentClientSecret: render-only-costAgentClientSecret
+  dataAnalystClientSecret: render-only-dataAnalystClientSecret
+  supervisorClientSecret: render-only-supervisorClientSecret
+  engineAClientSecret: render-only-engineAClientSecret
+  docToolsClientSecret: render-only-docToolsClientSecret
+  auth:
+    adminPassword: render-only-keycloak-adminPassword
+neo4j:
+  auth:
+    password: render-only-neo4j-password
+fuseki:
+  auth:
+    adminPassword: render-only-fuseki-adminPassword
+domainBroker:
+  chPassword: render-only-domainBroker-chPassword
+  s3SecretKey: render-only-domainBroker-s3SecretKey
+minioBucketInit:
+  accessKey: render-only-minioBucketInit-accessKey
+  secretKey: render-only-minioBucketInit-secretKey
