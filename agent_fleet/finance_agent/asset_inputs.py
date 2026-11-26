@@ -520,6 +520,8 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
         if not period_column:
             raise NotInModel("the row's contract declares no period column")
     named_version = (version_column,) if version_column else ()
+    # Named so a contract whose period column is not `required` still gets the `missing_column` check;
+    # `check_contract_schema` already selects every declared column the asset carries.
     named_period = (period_column,) if period is not None else ()
 
     t0 = time.perf_counter()
