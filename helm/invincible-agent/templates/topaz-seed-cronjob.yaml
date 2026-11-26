@@ -50,7 +50,7 @@ overlay refuses whole (fail-closed) instead of applying four syncs and
 dying on the fifth. A failed clone likewise fails the Job before any
 apply — an unreachable repo can never prune the directory.
 
-Runs all six syncs with the fixed readback as a GATING step (see the
+Runs all eight syncs with the fixed readback as a GATING step (see the
 script below for the order rationale).
 
 DEFAULT-DISABLED (`topazSeed.enabled: false`) so it never surprise-runs and
@@ -224,6 +224,7 @@ spec:
                   cd /app
                   {{- if eq $mode "image" }}
                   POLICY_DIR=/app/policy
+                  RECIPIENT_READERS_PRESENT=1
                   {{- else }}
                   echo "===== COMPOSE policy dir (enums from image, data from overlay) ====="
                   {{- if eq $mode "git" }}
@@ -262,9 +263,21 @@ spec:
                     fi
                     cp "$OVERLAY/$f" /work/policy/
                   done
+                  # recipient_readers.yaml is OPTIONAL, as in the taskGrantSync hook: ABSENT means no
+                  # reader is asserted, so every recipient check denies (fail-closed) -- a loud WARN
+                  # and the leg is skipped, not a FATAL. Never fall back to the image's copy.
+                  if [ -f "$OVERLAY/recipient_readers.yaml" ]; then
+                    cp "$OVERLAY/recipient_readers.yaml" /work/policy/
+                    RECIPIENT_READERS_PRESENT=1
+                  else
+                    echo "WARN: policy overlay has no recipient_readers.yaml -- recipient_reader_sync SKIPPED; no recipient reader is asserted, every recipient check denies (fail-closed)" >&2
+                    RECIPIENT_READERS_PRESENT=0
+                  fi
                   POLICY_DIR=/work/policy
                   {{- end }}
                   export ASSET_GRANTS_FILE="$POLICY_DIR/asset_grants.yaml"
+                  export PROGRAM_MEMBERS_FILE="$POLICY_DIR/program_members.yaml"
+                  export RECIPIENT_READERS_FILE="$POLICY_DIR/recipient_readers.yaml"
                   export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
                   export ONTOLOGY_COMPARTMENTS_FILE="$POLICY_DIR/ontology_compartments.yaml"
                   export CAPABILITY_GRANTS_FILE="$POLICY_DIR/capability_grants.yaml"
@@ -288,6 +301,20 @@ spec:
                   echo ""
                   echo "===== ASSET SYNC (datahub_topaz_sync) ====="
                   python policy/sync/datahub_topaz_sync.py
+                  echo ""
+                  echo "===== PROGRAM MEMBER SYNC (program_member_sync — program membership, runs BEFORE grants) ====="
+                  # program `member` relations from policy/program_members.yaml: the same invocation as
+                  # the taskGrantSync hook, so a membership change reaches Topaz on the next scheduled
+                  # run instead of the next helm upgrade. Disjoint prune scope (program member only);
+                  # both callers read the same full file. AFTER the manifest load, so `program` exists.
+                  python policy/sync/program_member_sync.py
+                  echo ""
+                  echo "===== RECIPIENT READER SYNC (recipient_reader_sync — recipient disclosure readers, runs AFTER program_member_sync) ====="
+                  if [ "$RECIPIENT_READERS_PRESENT" = "1" ]; then
+                    python policy/sync/recipient_reader_sync.py
+                  else
+                    echo "WARN: recipient_reader_sync skipped (no recipient_readers.yaml in the overlay)" >&2
+                  fi
                   echo ""
                   echo "===== GRANT SYNC (grant_sync — git-asserted reader grants) ====="
                   # AFTER the asset sync: reader grants reference dataset objects,
@@ -327,7 +354,7 @@ spec:
                     echo "FAIL: grant_sync could not read the approved-grant ledger (exit $GRANT_SYNC_RC); nothing was pruned and the other syncs ran" >&2
                     exit "$GRANT_SYNC_RC"
                   fi
-                  echo "===== SEED COMPLETE — six syncs applied + readbacks passed ====="
+                  echo "===== SEED COMPLETE — eight syncs applied + readbacks passed ====="
               {{- if or (ne $mode "image") .Values.topazSeed.loadManifest }}
               volumeMounts:
                 {{- if eq $mode "git" }}
