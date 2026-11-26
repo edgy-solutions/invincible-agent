@@ -3701,8 +3701,8 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
     """
     if _caller_session_expired():
         # REFUSED BEFORE THE BIND, as `/resolve_instance` is (ruled 2026-11-19, Q2): the SDK leaves an
-        # expired token unverified, so `_bound` would read it as no person and answer 422
-        # `no_person`. An expired session is reported as one, never as an absent caller.
+        # expired token unverified, so `_bound` would bind no person, and the `no_person` check
+        # below would answer 422. An expired session is reported as one, never as an absent caller.
         return _session_expired_response()
     request, _ = await _bound(request, route="enumerate_instances")
     # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
