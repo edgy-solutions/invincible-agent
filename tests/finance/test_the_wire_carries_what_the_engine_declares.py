@@ -1627,12 +1627,22 @@ def _both_directions_or_the_rule_is_untested():
 #: frontend's to bind; it is what the two files DO. Recorded as the reason because it is the
 #: true one, and flagged because a reason describing a pattern is weaker than one citing a
 #: decision.
+#:
+#: WATERFALL (Lane 1, 2026-11-26) is the one entry of a different kind, and it is not in
+#: DERIVED_BINDINGS. Its reason is written out below.
 _ARCHETYPES_BOUND_IN_THE_FRONTEND_MIRROR = {
     "CANVAS_SEED": "mesh:CanvasSeedResult -> mesh:CanvasSeed, in DERIVED_BINDINGS",
     "INTERVAL_TIMELINE": "mesh:IntervalSchedule and mesh:ContributionSequence, in DERIVED_BINDINGS",
     "MATRIX_GRID": "mesh:MaturityMatrix -> mesh:MatrixGrid, in DERIVED_BINDINGS",
     "PERIOD_SERIES": "mesh:PeriodCostSeries -> mesh:PeriodSeries, in DERIVED_BINDINGS",
     "THRESHOLD_GRID": "mesh:LoadThresholdGrid -> mesh:ThresholdGrid, in DERIVED_BINDINGS",
+    "WATERFALL": (
+        "selected only by a served render.shape WATERFALL (capability_registry.select_by_declared_shape) "
+        "from the caller's menu, which cortex's mesh:Waterfall row joins once #553 is deployed "
+        "(cortex holds it until then: src/archetypes/waterfall/advertise.test.ts). A backend row "
+        "on fin:DeclaredMeasureSeries would make WATERFALL a candidate for every declared "
+        "measure, not only one whose row declares the shape"
+    ),
 }
 
 

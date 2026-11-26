@@ -159,6 +159,16 @@ _EXEMPT = {
         "an independent computation) and tests/finance/test_the_flow_table_reaches_the_card.py "
         "(the served envelope through the projector)"
     ),
+    # WATERFALL (Lane 1, 0.4.93). No engine declares the shape yet: fin's COMPUTED_SHAPES entry
+    # will, from the same dataset-kind measure row as FLOW_DECOMPOSITION, which this file's walk
+    # of built-in measures cannot reach.
+    "WATERFALL": (
+        "no PLANNING producer emits a waterfall - engine-fin's dataset-kind measure row will, "
+        "once fin's COMPUTED_SHAPES entry declares the shape. Conformance is beside the engine: "
+        "tests/finance/test_the_waterfall_reaches_the_card.py (a minus row's served envelope, "
+        "rows plus walk, through the projector, and the passthrough against cortex's "
+        "WATERFALL_ENVELOPE_FIELDS)"
+    ),
 }
 
 #: THE MIRROR — used only when the sibling repo is absent, and cross-checked against the
