@@ -812,7 +812,8 @@ class Mesh:
 
     def __init__(self, *, route_status=200, route_body=None, on_post=None):
         self.route_status = route_status
-        self.on_post = on_post       # (handler, answer_id, mesh) after a SupervisorAnswer reply
+        self.on_post = on_post       # (handler, answer_id, mesh) after a SupervisorAnswer reply;
+        #                              a returned _Resp replaces the reply (a failed read)
         self.route_body = {"mode": "ONE_SHOT"} if route_body is None else route_body
         self.log: list = []          # ("post", tag, answer_id) and ("ev", event_name), in order
         self.launched: dict = {}
@@ -836,7 +837,9 @@ class Mesh:
                 return _Resp(200, {"status": "CANCELED", "events": [], "steps": [], "result": None})
             body = await getattr(svc, handler)(ctx)
             if self.on_post is not None:
-                self.on_post(handler, aid, self)
+                alt = self.on_post(handler, aid, self)
+                if alt is not None:
+                    return alt
             return _Resp(200, body)
         if url.endswith("/route_intent"):
             self.log.append(("post", ADM_ROUTE, None))
@@ -1464,6 +1467,57 @@ async def test_a_restart_between_two_reads_of_a_wait_is_refused(mesh_env, monkey
     assert m.n(ADM_ROUTE) == 0 and m.n("run/send") == 0       # no model call, no launch
     errs = _events(blob, "pipeline_error")
     assert len(errs) == 1 and errs[0]["cause"] == "answer_admission_lost", errs
+
+
+@pytest.mark.asyncio
+async def test_a_failed_read_of_a_wait_is_not_an_admission(mesh_env, monkeypatch):
+    """A snapshot read that fails gives no status. The wait loop must look again, never take it
+    for an admission (gov's N3 on #422: `continue` -> `break` there survived tests/perf). Read 2
+    fails (a 500, so the fetch gives nothing); the gate restarts after read 3; read 4 is LOST."""
+    adm.reset_gate_for_tests(1, 5)
+    _gate_full(("h",))
+    reads = {"snapshot": 0}
+
+    def after(handler, aid, mesh):
+        if handler == "snapshot":
+            reads["snapshot"] += 1
+            if reads["snapshot"] == 2:
+                return _Resp(500, {})
+            if reads["snapshot"] == 3:
+                _restart()
+        return None
+
+    m = mesh_env(on_post=after)
+    monkeypatch.setattr(gw, "_DURABLE_ANSWERS", DurableAnswers(
+        "http://ingress", client_factory=m.client, snapshot_ttl_s=0.0))
+    blob = await asyncio.wait_for(_stream(m), 10)
+    assert reads["snapshot"] >= 4, reads          # it read past the failed read, then saw LOST
+    assert "answer_admitted" not in blob
+    assert m.n(ADM_ROUTE) == 0 and m.n("run/send") == 0       # no model call, no launch
+    errs = _events(blob, "pipeline_error")
+    assert len(errs) == 1 and errs[0]["cause"] == "answer_admission_lost", errs
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_read_through_the_handler_keeps_an_unclaimed_waiter_queued(monkeypatch):
+    """The touch tests above call gate.touch directly. This one reads through the `snapshot`
+    handler, as the BFF does (gov's A8 on #422: dropping the handler's touch survived). The
+    waiter that is read every 10 s stays queued past the 30 s idle limit; the one never read,
+    in the same gate on the same clock, leaves the queue (the control)."""
+    monkeypatch.setenv(adm.WAITER_IDLE_ENV, "30")
+    t = [0.0]
+    gate = adm.reset_gate_for_tests(1, 5, clock=lambda: t[0])
+    assert gate.try_enter("h", 1.0) == "admitted"
+    gate.claim("h")
+    assert gate.try_enter("idle", 2.0) == "queued"
+    assert gate.try_enter("read", 3.0) == "queued"
+    seen = []
+    for tick in range(10, 200, 10):
+        t[0] = float(tick)
+        snap = await svc.snapshot(_Shared(FakeCtx("read")))
+        seen.append((tick, snap["status"], (snap.get("queue") or {}).get("position")))
+    assert all(st == "QUEUED" and pos is not None for _, st, pos in seen), seen
+    assert gate.position("idle") is None and gate.position("read") == 1
 
 
 class _BusyBackend(FakeBackend):
