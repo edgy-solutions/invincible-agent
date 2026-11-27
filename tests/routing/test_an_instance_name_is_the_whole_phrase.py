@@ -185,6 +185,36 @@ def test_control_a_path_qualifier_is_still_corroboration_never_a_requirement(ide
     assert _passes(ident, P_CAGE)
 
 
+# Rule c (segment specificity) is for a single-token text only. Against a phrase label, the last
+# word alone is one word of a longer name, and ruling 2 refuses it (gov's R3 on #506).
+@pytest.mark.parametrize("ident, label, instance_id", [
+    ("Readiness", "Fleet Readiness", "urn:x:fleet-readiness"),
+    ("cage", "p cage", "urn:x:1"),
+    ("p_cage", "publog p_cage", "urn:x:2"),
+])
+def test_ruled_a_single_word_does_not_name_a_phrase_label(ident, label, instance_id):
+    cand = InstanceCandidate(instance_id=instance_id, class_uri="http://x/p#Metric",
+                             label=label, score=0.9, provider="p")
+    assert not _passes(ident, cand)
+
+
+def test_control_the_whole_phrase_label_still_names_it():
+    cand = InstanceCandidate(instance_id="urn:x:fleet-readiness", class_uri="http://x/p#Metric",
+                             label="Fleet Readiness", score=0.9, provider="p")
+    assert _passes("Fleet Readiness", cand)
+
+
+# An earlier phrase word is spelled only when EVERY segment of it is spelled: one spelled segment
+# of a dotted word does not carry the others (gov's R13 on #506).
+@pytest.mark.parametrize("ident", ["zzz.publog p_cage", "publog.zzz p_cage"])
+def test_ruled_a_phrase_word_spelled_only_in_part_is_refused(ident):
+    assert not _passes(ident, P_CAGE)
+
+
+def test_control_a_dotted_phrase_word_spelled_in_full_passes():
+    assert _passes("minio.publog p_cage", P_CAGE)
+
+
 # ── the refusal is recorded with why ──────────────────────────────────────────────────
 
 _CREW = InstanceCandidate(instance_id="urn:x:crew", class_uri="http://x/p#Metric",
@@ -222,9 +252,9 @@ def test_the_note_is_one_sentence_for_a_refusal_and_empty_otherwise():
 
 
 # ── the merge ─────────────────────────────────────────────────────────────────────────
-# No harness in tests/routing drives /resolve() itself with a stubbed classifier, so the merge is
-# pinned in two halves: the real `_resolve_instance` carries the record into the provenance the
-# merge reads, and the call site on the weak path appends the note (source seal).
+# The real `_resolve_instance` carries the record into the provenance the merge reads; the call
+# site on the weak path appends the note (source seal); and /resolve() itself, driven with a
+# stubbed classifier, RETURNS that note in its reasoning (gov's R9 on #506).
 
 def _main():
     try:
@@ -276,3 +306,89 @@ def test_the_weak_path_appends_the_note_and_keeps_the_classifiers_subject():
     prov = {"instance_match": "not_specific", "instance_rejected_top": [{"why": "w"}]}
     _c, _r, kept = recall_override_guard("u", 0.5, [], "r", prov)
     assert kept["instance_rejected_top"] == [{"why": "w"}]
+
+
+_GUESS = "http://x/p#Component"
+_CLASSIFIER_REASONING = "the classifier picked Component"
+
+
+class _Tb:
+    """A TypeBuilder double: the class enum only records the values it is offered."""
+    def __init__(self):
+        class _OC:
+            @staticmethod
+            def add_value(uri):
+                class _V:
+                    @staticmethod
+                    def description(d):
+                        return _V
+                return _V
+        self.OntologyClass = _OC
+
+
+class _Baml:
+    async def ClassifyDomainIntent(self, **kw):
+        class _R:
+            resolved_uri = _GUESS
+            confidence_score = 0.9
+            reasoning = _CLASSIFIER_REASONING
+            instance_identifier = "Fleet Readiness"
+        return _R()
+
+
+def test_the_weak_path_returns_the_note_in_its_reasoning(monkeypatch):
+    """Assert on what /resolve() RETURNS, not on the string the weak path builds: a weak path
+    that built the note and then returned the classifier's reasoning would fail here."""
+    main = _main()
+    resolvers = [{"provider": "prov", "endpoint_url": "http://p", "timeout_s": None,
+                  "domains": ["D"]}]
+
+    async def _call(resolver, term, query, **_caller):
+        return _Outcome([_CREW])
+
+    async def _no_chains(uris):
+        return {}, "unavailable"
+
+    async def _docs(request):
+        return None
+
+    async def _pool(**kw):
+        return [{"uri": _GUESS, "label": "Component", "description": "d", "score": None}], "hybrid"
+
+    async def _served(domains, include_referents=False):
+        return frozenset({_GUESS})
+
+    async def _verbs(*a, **k):
+        return []
+
+    async def _bound_as_sent(request, **kw):
+        # The verified caller holds D. Without this double, /resolve() binds the absent caller
+        # to NO_GRANT, the provider for D is demoted, and the lookup is `empty`, never reaching
+        # the specificity refusal this seal is about.
+        return request, None
+
+    monkeypatch.setattr(main, "_bound", _bound_as_sent)
+    monkeypatch.setattr(main, "_discover_instance_resolvers",
+                        lambda *a, **k: main.MeshResult.answered(resolvers))
+    monkeypatch.setattr(main, "_call_resolver", _call)
+    monkeypatch.setattr(main, "_read_class_chains", _no_chains)
+    monkeypatch.setattr(main, "_resolve_docs_subject", _docs)
+    monkeypatch.setattr(main, "class_pool_with_mode", _pool)
+    monkeypatch.setattr(main, "_served_class_uris", _served)
+    monkeypatch.setattr(main, "predicate_hybrid_search", _verbs)
+    monkeypatch.setattr(main, "ENABLE_AGENTIC_AUTH", False)
+    monkeypatch.setattr(main, "_can_view_class", lambda email, uri: True)
+    monkeypatch.setattr(main, "_NEO4J_DRIVER", None)
+    monkeypatch.setattr(main, "TypeBuilder", _Tb)
+    monkeypatch.setattr(main, "b", _Baml())
+    resp = asyncio.run(main.resolve(main.ResolveRequest(
+        query="how is Fleet Readiness trending", domain="D", domains=["D"],
+        user_email="c@example.org")))
+    assert resp.provenance["instance_match"] == "not_specific"
+    note = main._ir_rejected_match_note(resp.provenance)
+    assert note.startswith("The instance lookup found 'Crew Readiness'")
+    assert resp.reasoning.endswith(note), resp.reasoning
+    # The drive reached the weak path (not an abstention): the classifier's subject and its
+    # reasoning are kept, with the note after them.
+    assert resp.resolved_uri == _GUESS, "the classifier's subject is kept"
+    assert _CLASSIFIER_REASONING in resp.reasoning
