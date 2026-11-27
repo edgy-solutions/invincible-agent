@@ -10,6 +10,7 @@ Run: uv run --no-sync pytest -c pyproject.toml --rootdir=. -p no:cacheprovider -
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from agent_fleet.finance_agent import asset_inputs, lookups  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from agent_fleet.finance_agent.entities import NotInModel  # noqa: E402
 from agent_fleet.utils import dataset_contracts  # noqa: E402
+from agent_fleet.utils.dataset_contracts import ContractViolation  # noqa: E402
 from tests.finance.test_a_calendar_lookup_lists_the_periods_in_order import Recorder  # noqa: E402
 from tests.finance.test_a_flow_row_draws_to_its_declared_depth import b_frame  # noqa: E402
 from tests.finance.test_fin_inputs_resolver import _clean_env, frame_of, token  # noqa: E402,F401
@@ -81,6 +83,22 @@ def test_depth_two_returns_two_levels_in_the_nested_answer_and_the_table(b):
     assert len({r["identity"] for r in answer["rows"]}) == len(answer["rows"])
 
 
+def test_a_nodes_table_identity_is_its_path_and_its_under_is_its_own_parent(b):
+    f = b_frame()
+    top = f.filter(pl.col("wbs_2") == "B-1.1")["wbs_1"].unique().to_list()
+    assert len(top) == 1
+    answer, _ = ask(b, f, PROG_B, "B-1.1", depth=2)
+    by_name = {r["name"]: r for r in answer["rows"]}
+    # depth 1: under the asked element; depth 2: under the depth-1 node, NOT the asked element
+    assert {(r["name"], r["parent"]) for r in answer["rows"] if r["depth"] == 1} == {
+        ("B-1.1.1", "B-1.1"), ("B-1.1.2", "B-1.1")}
+    assert {(r["name"], r["parent"]) for r in answer["rows"] if r["depth"] == 2} == {
+        ("B-1.1.1.1", "B-1.1.1"), ("B-1.1.1.2", "B-1.1.1"),
+        ("B-1.1.2.1", "B-1.1.2"), ("B-1.1.2.2", "B-1.1.2")}
+    assert by_name["B-1.1.1"]["identity"] == json.dumps([top[0], "B-1.1", "B-1.1.1"])
+    assert by_name["B-1.1.1.2"]["identity"] == json.dumps([top[0], "B-1.1", "B-1.1.1", "B-1.1.1.2"])
+
+
 def test_a_depth_beyond_the_work_package_stops_there_and_says_so(b):
     answer, _ = ask(b, b_frame(), PROG_B, "B-1.1.1.1", depth=9)  # wbs_4 -> control account -> work package
     assert (answer["depth_requested"], answer["depth_returned"]) == (9, 2)
@@ -126,6 +144,86 @@ def test_an_ambiguous_element_refuses_and_an_unambiguous_one_answers(b):
     assert "wbs_2" in exc.value.message and "wbs_3" in exc.value.message
     answer, _ = ask(b, f, PROG_B, "B-2.1")  # the control: the same frame, an element at one level only
     assert answer["level"] == "wbs_2"
+
+
+# -- a name under two parents (gov's review of #576) ---------------------------------------------------
+
+COLUMNS = ["program_id", "program_name", "program_bac", "wbs_1", "wbs_2", "wbs_3", "wbs_4",
+           "control_account", "work_package", "ipt_1", "ipt_2", "period", "bcws", "bcwp", "acwp"]
+HW_ROW = ("HW", "Design", "HW.D.1", "HW.D.1.1", "CA-1", "WP-a")
+SW_ROW = ("SW", "Design", "SW.D.1", "SW.D.1.1", "CA-2", "WP-b")
+
+
+def frame_from(paths, drop=()):
+    """A frame holding EVERY declared column of Program B, one row per path
+    (wbs_1, wbs_2, wbs_3, wbs_4, control_account, work_package); `drop` removes columns."""
+    rows = [{"program_id": PROG_B, "program_name": "B", "program_bac": 1.0, "wbs_1": p[0], "wbs_2": p[1],
+             "wbs_3": p[2], "wbs_4": p[3], "control_account": p[4], "work_package": p[5], "ipt_1": "i1",
+             "ipt_2": "i2", "period": "P1", "bcws": 1.0, "bcwp": 1.0, "acwp": 1.0} for p in paths]
+    return pl.DataFrame(rows, schema_overrides={c: pl.String for c in ("wbs_1", "wbs_2", "wbs_3", "wbs_4")}
+                        ).drop(list(drop))
+
+
+def test_a_name_under_two_parents_is_refused_naming_both_and_the_table_keeps_the_nodes_apart(b):
+    f = frame_from([HW_ROW, SW_ROW])
+    with pytest.raises(lookups.LookupRefused) as exc:  # (i) the contract accepts this frame; the lookup asks
+        ask(b, f, PROG_B, "Design")
+    assert exc.value.code == "element_ambiguous"
+    assert "'Design'" in exc.value.message and "wbs_2" in exc.value.message
+    assert "HW" in exc.value.message and "SW" in exc.value.message
+    assert exc.value.message.index("HW") < exc.value.message.index("SW")  # sorted, never chosen
+    program, _ = ask(b, f, PROG_B, PROG_B, depth=2)  # (ii) two nodes named Design, two identities
+    assert len({r["identity"] for r in program["rows"]}) == len(program["rows"]) == 4
+    assert sorted((r["name"], r["parent"]) for r in program["rows"] if r["name"] == "Design") == [
+        ("Design", "HW"), ("Design", "SW")]
+    assert {r["identity"] for r in program["rows"]} >= {json.dumps(["HW", "Design"]), json.dumps(["SW", "Design"])}
+    answer, _ = ask(b, f, PROG_B, "HW", depth=2)  # (iii) asking under one parent answers for that one
+    assert [(r["name"], r["parent"]) for r in answer["rows"]] == [("Design", "HW"), ("HW.D.1", "Design")]
+    assert names(answer["children"]) == ["Design"] and names(answer["children"][0]["children"]) == ["HW.D.1"]
+
+
+def test_the_control_the_same_frame_with_the_name_made_distinct_answers(b):
+    f = frame_from([HW_ROW, (SW_ROW[0], "Design-SW", *SW_ROW[2:])])
+    answer, _ = ask(b, f, PROG_B, "Design")
+    assert names(answer["children"]) == ["HW.D.1"]
+    program, _ = ask(b, f, PROG_B, PROG_B, depth=2)
+    assert len({r["identity"] for r in program["rows"]}) == len(program["rows"]) == 4
+
+
+# -- the shared reader's three guards, through a lookup read ------------------------------------------
+
+def test_an_over_cap_read_is_refused_not_cut(b, monkeypatch):
+    monkeypatch.setenv(asset_inputs.MAX_ROWS_ENV, "3")
+    three = [(f"T{i}", f"T{i}.2", f"T{i}.3", f"T{i}.4", f"CA-{i}", f"WP-{i}") for i in range(3)]
+    rows = asset_inputs.read_hierarchy_rows(Recorder(frame_from(three).lazy()), "urn", program_id=PROG_B,
+                                            contract=b)
+    assert len(rows) == 3  # the control: exactly cap rows read
+    four = [*three, ("T3", "T3.2", "T3.3", "T3.4", "CA-3", "WP-3")]
+    with pytest.raises(asset_inputs.AssetTooLarge) as exc:
+        asset_inputs.read_hierarchy_rows(Recorder(frame_from(four).lazy()), "urn", program_id=PROG_B, contract=b)
+    assert exc.value.max_rows == 3
+
+
+def test_a_frame_that_breaks_a_value_rule_is_refused_through_the_lookup_read(b):
+    ask(b, frame_from([HW_ROW, SW_ROW]), PROG_B, "HW")  # the control: the clean frame reads
+    nulled = frame_from([HW_ROW, SW_ROW]).with_columns(
+        pl.when(pl.col("wbs_1") == "SW").then(None).otherwise(pl.col("wbs_2")).alias("wbs_2"))
+    with pytest.raises(ContractViolation) as exc:
+        ask(b, nulled, PROG_B, "HW")
+    assert exc.value.rule == "null_value" and "null value(s) in column wbs_2" in exc.value.message
+    # one work package under two paths: the last level does not determine the rest
+    split = frame_from([HW_ROW, ("SW", *HW_ROW[1:])])
+    with pytest.raises(ContractViolation) as exc:
+        ask(b, split, PROG_B, "HW")
+    assert exc.value.rule == "not_determined_by" and "not determined by work_package" in exc.value.message
+
+
+def test_a_frame_missing_declared_columns_is_refused_through_the_lookup_read(b):
+    ask(b, frame_from([HW_ROW, SW_ROW]), PROG_B, "HW")  # the control: every declared column present
+    with pytest.raises(ContractViolation) as exc:
+        ask(b, frame_from([HW_ROW, SW_ROW], drop=("bcws", "period")), PROG_B, "HW")
+    assert exc.value.rule == "missing_column"
+    assert "missing column(s)" in exc.value.message and "bcws" in exc.value.message
 
 
 def test_no_amount_is_selected_the_request_names_the_scope_and_the_hierarchy_only(b):
@@ -191,6 +289,24 @@ def test_the_route_answers_the_children_with_no_amount_and_the_reads_provenance(
     assert env["data_source"] == {"kind": "asset", "urn": ROW_URN} and len(env["sources"]) == 1
     assert not {"value_unit", "verdict", "series"} & set(env)
     assert len(route.gate.asked) == 1
+
+
+def test_the_route_refuses_an_unknown_param_naming_it_and_answers_the_known_ones(route):
+    status, env = route({"program_id": PROGRAM, "element": "1.1", "bogus": 1})
+    assert status == 400 and "bogus" in env["detail"], env
+    assert route.gate.asked == []
+    status, env = route({"program_id": PROGRAM, "element": "1.1", "depth": 1})  # the control
+    assert status == 200, env
+
+
+def test_the_route_with_no_depth_answers_one_level(route):
+    status, env = route({"program_id": PROGRAM, "element": PROGRAM})
+    assert status == 200, env
+    assert env["depth_requested"] == 1 and env["depth_returned"] == 1
+    assert {c["role"] for c in env["children"]} == {"control_account"}
+    assert all(c["children"] == [] for c in env["children"])
+    status, env = route({"program_id": PROGRAM, "element": PROGRAM, "depth": 2})  # the control: a deeper ask
+    assert status == 200 and env["depth_returned"] == 2, env
 
 
 def test_the_route_refuses_a_bad_depth_before_the_read(route):
