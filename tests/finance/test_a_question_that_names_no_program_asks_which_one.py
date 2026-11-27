@@ -218,12 +218,18 @@ def test_a_listed_version_declared_not_required_is_registered_mandatory(tmp_path
 
 # -- (f) a declaration the loader cannot read as true or false is refused --------------------------
 
-@pytest.mark.parametrize("decl", [{"required": "true"}, {"required": 1}, {}, None, True, "required"],
-                         ids=["quoted", "one", "empty", "null", "bare-bool", "string"])
+@pytest.mark.parametrize("decl", [{"required": "true"}, {"required": 1}, {}, None, True, "required",
+                                  {"requird": True}, {"mandatory": True},
+                                  {"required": True, "requird": True}],
+                         ids=["quoted", "one", "empty", "null", "bare-bool", "string",
+                              "misspelled", "other-key", "extra-key"])
 def test_a_malformed_param_declaration_is_refused_at_load_naming_the_param(tmp_path, decl):
     with pytest.raises(measure_verbs.MeasureVerbError) as e:
         _row(tmp_path, {"program_id": {"required": True}, "window": decl})
     assert "row.yaml" in str(e.value) and "inputs.params.window" in str(e.value)
+    # A key other than `required` is named, so a misspelling is found from the message alone.
+    for key in (set(decl) - {"required"} if isinstance(decl, dict) else ()):
+        assert key in str(e.value)
 
 
 def test_control_required_true_unquoted_loads_and_is_required(tmp_path):

@@ -758,6 +758,10 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         if not isinstance(decl, dict) or not decl:
             raise ValueError(f"inputs.params.{n} is {decl!r}; a param is declared as a mapping, "
                              f"e.g. `{n}: {{required: true}}`")
+        other_keys = sorted(set(decl) - {"required"}, key=str)
+        if other_keys:
+            raise ValueError(f"inputs.params.{n} declares {other_keys}; a param declares `required` "
+                             f"and nothing else")
         if "required" in decl and not isinstance(decl["required"], bool):
             raise ValueError(f"inputs.params.{n}.required is {decl['required']!r}; it is true or "
                              f"false, unquoted")
