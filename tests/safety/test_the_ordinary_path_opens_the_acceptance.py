@@ -309,8 +309,17 @@ def test_the_stream_awaits_the_consumer_after_the_poll_and_before_the_success_br
     yields = [n for n in ast.walk(body[i]) if isinstance(n, ast.Yield)]
     assert yields and ast.unparse(yields[0].value) == body[i].target.id
 
-    polls = [j for j, s in enumerate(body)
-             if isinstance(s, (ast.For, ast.While)) and _backend_status_calls(s)]
+    # The poll loop is a body-level loop, or the loop a body-level `try` wraps: the admission
+    # limit (ADR-0072 §5) wraps it so that a stream closed while its answer is QUEUED withdraws
+    # it. Either way it is ONE statement of the body, so the order below still holds.
+    def is_poll(s):
+        if isinstance(s, (ast.For, ast.While)):
+            return bool(_backend_status_calls(s))
+        if isinstance(s, ast.Try):
+            return any(isinstance(b, (ast.For, ast.While)) and _backend_status_calls(b) for b in s.body)
+        return False
+
+    polls = [j for j, s in enumerate(body) if is_poll(s)]
     assert len(polls) == 1, "the poll loop is not identifiable by the status call it makes"
     success = [j for j, s in enumerate(body)
                if isinstance(s, ast.If) and ast.unparse(s.test) == "is_success"]
