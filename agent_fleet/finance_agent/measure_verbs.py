@@ -288,6 +288,9 @@ class MeasureVerbRow:
     compare_by: str = ""                  # a compare row's version column; "" for every other row
     example_ask: str = ""     # optional: a question that routes to this measure; "" = undeclared
     group_label: str = ""     # optional: the heading the measure is grouped under; "" = undeclared
+    # The params whose declaration in `inputs.params` says `required: true`. `params` keeps only
+    # the names; what the row SAYS about each is here, so no engine decides it by a name.
+    required_params: tuple[str, ...] = ()
 
     @property
     def series_key(self) -> str:
@@ -749,6 +752,20 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
     if unknown_params:
         raise ValueError(f"inputs.params names {unknown_params}; this engine fills only {sorted(allowed_params)}"
                          + (" for a dataset row (a read is the whole program)" if kind == KIND_DATASET else ""))
+    for n, decl in inputs["params"].items():
+        # A declaration is read for `required` alone; anything else would make the param optional
+        # without saying so, so the loader refuses it (the file is named by `compose_rows`).
+        if not isinstance(decl, dict) or not decl:
+            raise ValueError(f"inputs.params.{n} is {decl!r}; a param is declared as a mapping, "
+                             f"e.g. `{n}: {{required: true}}`")
+        other_keys = sorted(set(decl) - {"required"}, key=str)
+        if other_keys:
+            raise ValueError(f"inputs.params.{n} declares {other_keys}; a param declares `required` "
+                             f"and nothing else")
+        if "required" in decl and not isinstance(decl["required"], bool):
+            raise ValueError(f"inputs.params.{n}.required is {decl['required']!r}; it is true or "
+                             f"false, unquoted")
+    required_params = tuple(n for n, decl in inputs["params"].items() if decl.get("required") is True)
     dataset: dict = {}
     if kind == KIND_DATASET:
         dataset = _check_dataset_series(inputs) if series_kind else _check_dataset(inputs)
@@ -896,6 +913,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         menu=menu,
         source=source, source_reason=source_reason, ratified_by=ratified_by,
         compare_by=dataset.get("compare_by", ""),
+        required_params=required_params,
         **_listing_fields(raw),
     )
 

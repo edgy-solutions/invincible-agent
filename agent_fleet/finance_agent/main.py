@@ -568,7 +568,11 @@ def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]
         (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
         slots += [{**enum, "name": n, "values": list(row.contract.versions)}
                   for n in measure_verbs._VERSION_PARAMS if n in row.params]
-    return slots
+    # Whether a slot is asked for is the row's, not the copied built-in's: the registration and
+    # the route read the same rule (`_declared_param_required`), so the ask never omits a param
+    # the engine then refuses for, nor demands one the row waived.
+    return [{**s, "required": req, "kind": "spoken-mandatory" if req else "spoken-optional"}
+            for s in slots for req in (_declared_param_required(row, s["name"]),)]
 
 
 def _registration_calls() -> list[dict[str, Any]]:
@@ -1389,7 +1393,11 @@ def _package_provenance(program_source: Optional[dict[str, Any]],
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
-    return name == "program_id" or name in measure_verbs._VERSION_PARAMS
+    """Whether a read must name the param: the ROW declares it required
+    (`inputs.params.<name>.required: true`), or it is a version the row lists. A read that named
+    no version would sum every version together, so a listed version is required whatever the
+    row's declaration says (`_check_versions` holds the listing to the contract)."""
+    return name in row.required_params or name in measure_verbs._VERSION_PARAMS
 
 
 @app.post("/measure/{fn}")
