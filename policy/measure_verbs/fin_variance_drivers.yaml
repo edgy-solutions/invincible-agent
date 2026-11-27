@@ -4,3 +4,6 @@ measure_id: fin_variance_drivers
 source: asset
 name: Variance drivers
 description: The control accounts or work packages behind a variance, ranked by their share of it.
+explanations:
+  - id: top_share
+    template: "{kind} is {total}; {top_label} contributes {top_share}."

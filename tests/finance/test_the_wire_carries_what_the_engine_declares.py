@@ -689,13 +689,44 @@ _NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows", "artifact_i
 # absent for a seed answer, so it arrives through a conditional spread. Its one dict is composed
 # in `_ANSWER_SOURCES_COMPOSER`, which returns `[]` or a one-element list holding a literal dict
 # of exactly these members, `type` among them.
+#
+# `explanations` and `explanations_withheld` joined 2026-11-27 (the architect's Q6 ruling: a
+# built-in's row may declare sentences restating its own computed ranking). Absent unless the row
+# declares one, so each arrives through its own conditional spread. Their dicts are composed in
+# `measures.explanations_for`, appended as literal dicts to `done` and `withheld`; a member added
+# there reds here.
 _COMPOSED_SPREAD = {
     "data_source": frozenset({"kind", "urn", "reason", "ratified_by"}),
     "sources": frozenset({"type", "label", "uri", "snippet", "data_as_of"}),
+    "explanations": frozenset({"id", "text", "filled_from"}),
+    "explanations_withheld": frozenset({"id", "reason"}),
 }
 _SOURCE_COMPOSER = "_measure_source"
 _ANSWER_SOURCES_COMPOSER = "_answer_sources"
-_DISCRIMINATOR = {"data_source": "kind", "sources": "type"}
+_EXPLANATIONS_COMPOSER = "explanations_for"
+_EXPLANATION_LISTS = {"explanations": "done", "explanations_withheld": "withheld"}
+_DISCRIMINATOR = {"data_source": "kind", "sources": "type", "explanations": "id",
+                  "explanations_withheld": "id"}
+
+
+def _explanation_dicts(key: str) -> list[ast.Dict]:
+    """The dicts `measures.explanations_for` appends to the list `key` is served from. Every
+    `.append` onto that list must take a literal dict, and there must be at least one."""
+    src = (_ROOT / "agent_fleet" / "finance_agent" / "measures.py").read_text(encoding="utf-8")
+    fns = [n for n in ast.walk(ast.parse(src))
+           if isinstance(n, ast.FunctionDef) and n.name == _EXPLANATIONS_COMPOSER]
+    assert len(fns) == 1, f"`{key}` is composed by `{_EXPLANATIONS_COMPOSER}`, found {len(fns)}"
+    target = _EXPLANATION_LISTS[key]
+    found = []
+    for call in (n for n in ast.walk(fns[0]) if isinstance(n, ast.Call)):
+        f = call.func
+        if (isinstance(f, ast.Attribute) and f.attr == "append" and isinstance(f.value, ast.Name)
+                and f.value.id == target):
+            assert len(call.args) == 1 and isinstance(call.args[0], ast.Dict), (
+                f"`{_EXPLANATIONS_COMPOSER}` appends {ast.unparse(call)!r} to `{target}`, not a literal dict")
+            found.append(call.args[0])
+    assert found, f"`{_EXPLANATIONS_COMPOSER}` appends no dict to `{target}`"
+    return found
 
 
 def _answer_sources_dicts() -> list[ast.Dict]:
@@ -758,6 +789,8 @@ def _composed_spread_keys(builder: ast.Dict) -> set[str]:
         value = outer.values[0]
         if key == "sources":
             dicts = _answer_sources_dicts()
+        elif key in _EXPLANATION_LISTS:
+            dicts = _explanation_dicts(key)
         else:
             dicts = _composer_dicts(value.id) if isinstance(value, ast.Name) else [value]
         assert all(isinstance(d, ast.Dict) for d in dicts), (

@@ -22,8 +22,9 @@ Nothing proprietary, nothing derived from any real program.
 """
 from __future__ import annotations
 
-from decimal import Decimal
-from typing import Any, Literal, Optional, get_args
+import re
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, Callable, Literal, NamedTuple, Optional, get_args
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     from entities import (
@@ -64,6 +65,46 @@ def _money(d: Decimal) -> Decimal:
     """Money to the cent. Rates and ratios are NOT quantized — a ratio is a factor, not an
     amount, and rounding it would change the arithmetic rather than present it."""
     return d.quantize(Decimal("0.01"))
+
+
+_MINUS = "\u2212"  # U+2212 MINUS SIGN: prose never carries a hyphen-minus for a negative figure
+_PROSE_UNITS = ((Decimal("1000000000"), "B"), (Decimal("1000000"), "M"), (Decimal("1000"), "K"))
+
+
+def _tenths(d: Decimal) -> str:
+    """One decimal, ROUND_HALF_UP, a trailing `.0` dropped (`1.0` -> `1`)."""
+    text = f"{d.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP):f}"
+    return text[:-2] if text.endswith(".0") else text
+
+
+def prose_money(value: Decimal) -> str:
+    """ONE prose formatter for money: Decimal in, str out. `-1234567` -> `\u22121.2M`.
+
+    The unit is chosen AFTER rounding, so 999 950 reads `1M` and never `1000K`. Below 1 000 the
+    exact figure is kept with a trailing `.00` dropped (`0`, `0.01`, `999.50`). A negative carries
+    U+2212, never a hyphen-minus; zero carries no sign.
+    """
+    cents = _money(Decimal(value))
+    magnitude = abs(cents)
+    if magnitude < Decimal("1000"):
+        text = f"{magnitude:f}"
+        text = text[:-3] if text.endswith(".00") else text
+    else:
+        for i, (div, suffix) in enumerate(_PROSE_UNITS):
+            if magnitude >= div:
+                rounded = (magnitude / div).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+                if rounded >= 1000 and i > 0:
+                    div, suffix = _PROSE_UNITS[i - 1]
+                text = _tenths(magnitude / div) + suffix
+                break
+    return (_MINUS + text) if (cents < 0) else text
+
+
+def prose_share(value: Decimal) -> str:
+    """A share as a whole percent of share x 100, ROUND_HALF_UP, `%` suffix, U+2212 for a negative
+    (`-0.114` -> `\u221211%`). A share that rounds to zero carries no sign."""
+    pct = (Decimal(value) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return ((_MINUS if pct < 0 else "") + f"{abs(pct):f}%")
 
 
 def _eac_comparison_summary(rows: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -351,6 +392,147 @@ VALUE_LABEL: dict[str, str] = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Restatement templates a BUILT-IN's row may declare over its own computed ranking (Q6)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# THE RULING: "The engine never names a cause and never chooses the selection. It may write a
+# sentence restating its own computed ranking, filled from the numbers. Each such sentence is a
+# template a row declares. The narrative of why stays a person's."
+
+_RANK_PLACEHOLDER = re.compile(r"^rank([1-9]|10)_(label|contribution|share)$")
+_TOP_ALIASES = {"top_label": "rank1_label", "top_contribution": "rank1_contribution",
+                "top_share": "rank1_share"}
+_PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
+
+#: Words whose presence in a template's literal text is refused at load. A TRIPWIRE, NOT A PROOF:
+#: a sentence can name a cause without any of them, and one of them can be innocent. It catches
+#: the common phrasing so that the refusal names the ruling at the moment somebody writes it.
+CAUSE_WORDS = ("because", "due to", "caused", "causes", "driven by", "owing to",
+               "as a result of", "reason", "attributable to", "on account of")
+_CAUSE_RE = re.compile(r"\b(" + "|".join(re.escape(w) for w in CAUSE_WORDS) + r")\b", re.IGNORECASE)
+EXPLANATION_ID_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+def _rank(rows: list[dict[str, Any]], n: int) -> Optional[dict[str, Any]]:
+    """The n-th SERVED row (1-based), or None. IT INDEXES THE SERVED ORDER: it never sorts,
+    filters, maxes or picks, because the ranking is the engine's computed order and a second
+    ordering here could disagree with the one the card draws."""
+    return rows[n - 1] if len(rows) >= n else None
+
+
+def _drivers_placeholder(name: str, rows: list[dict[str, Any]]) -> Optional[tuple[str, str]]:
+    """`(text, served)` for one `fin_variance_drivers` placeholder, or None where the answer
+    serves no such field. `served` is the exact served string; `text` is what the sentence says.
+    READS THE SERVED ROWS IN SERVED ORDER; NEVER SORTS, FILTERS, MAXES OR PICKS."""
+    name = _TOP_ALIASES.get(name, name)
+    if name in ("kind", "unit", "total"):
+        first = _rank(rows, 1)
+        key = {"kind": "property_label", "unit": "value_unit", "total": "variance_total_exact"}[name]
+        value = None if first is None else first.get(key)
+        if value is None:
+            return None
+        return (prose_money(Decimal(value)) if name == "total" else str(value)), str(value)
+    hit = _RANK_PLACEHOLDER.match(name)
+    row = _rank(rows, int(hit.group(1))) if hit else None
+    if row is None:
+        return None
+    what = hit.group(2)
+    key = {"label": "entity_name", "contribution": "contribution_exact",
+           "share": "share_of_total_exact"}[what]
+    value = row.get(key)
+    if value is None:
+        return None
+    text = (str(value) if what == "label" else
+            prose_money(Decimal(value)) if what == "contribution" else prose_share(Decimal(value)))
+    return text, str(value)
+
+
+class ExplanationVocabulary(NamedTuple):
+    """The closed placeholder set of one built-in verb, and how each is read from its served rows."""
+    names: frozenset[str]
+    resolve: Callable[[str, list[dict[str, Any]]], Optional[tuple[str, str]]]
+
+
+#: Built-in verb -> its vocabulary. A built-in with no entry cannot carry `explanations`.
+EXPLANATION_VOCABULARY: dict[str, ExplanationVocabulary] = {
+    "fin_variance_drivers": ExplanationVocabulary(
+        frozenset({"kind", "unit", "total", *_TOP_ALIASES,
+                   *(f"rank{n}_{w}" for n in range(1, 11)
+                     for w in ("label", "contribution", "share"))}),
+        _drivers_placeholder),
+}
+
+
+def check_explanation_template(verb: str, template: str) -> None:
+    """Refuse a template at LOAD. ValueError naming the fault; the caller names the row and id.
+
+    Refused: an empty template; an unbalanced or nested brace; a format spec or conversion inside
+    a placeholder (`{total:.0f}`, `{x!r}`); a placeholder outside the verb's vocabulary; and a
+    CAUSE word in the literal text. THE CAUSE CHECK IS A TRIPWIRE, NOT A PROOF.
+    """
+    vocab = EXPLANATION_VOCABULARY[verb].names
+    if not isinstance(template, str) or not template.strip():
+        raise ValueError("the template is empty")
+    literal, i = [], 0
+    while i < len(template):
+        ch = template[i]
+        if ch == "}":
+            raise ValueError("unbalanced brace: a `}` with no `{`")
+        if ch != "{":
+            literal.append(ch)
+            i += 1
+            continue
+        end = template.find("}", i + 1)
+        if end == -1:
+            raise ValueError("unbalanced brace: a `{` is never closed")
+        inner = template[i + 1:end]
+        if "{" in inner:
+            raise ValueError("nested brace: a placeholder holds no other brace")
+        if ":" in inner or "!" in inner:
+            raise ValueError(f"placeholder {{{inner}}} carries a format spec or conversion; the "
+                             f"formatting is the engine's, one formatter, not the row's")
+        if inner not in vocab:
+            raise ValueError(f"unknown placeholder {{{inner}}}; {verb} offers {sorted(vocab)}")
+        literal.append(" ")
+        i = end + 1
+    hit = _CAUSE_RE.search("".join(literal))
+    if hit:
+        raise ValueError(f"the literal text says {hit.group(1).lower()!r}: \"the narrative of why "
+                         f"stays a person's\" (the architect's ruling, Q6); a template restates "
+                         f"the ranking and names no cause")
+
+
+def explanations_for(verb: str, declared: tuple[tuple[str, str], ...],
+                     rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """`(explanations, withheld)` for a built-in's declared templates over its served rows, each
+    in declared order. A template with a placeholder the answer serves no field for (fewer ranked
+    rows than N, no rows, no share) is WITHHELD with its reason, never partly filled.
+
+    THE FILL NEVER SORTS, FILTERS, MAXES OR PICKS: it indexes the served order.
+    """
+    resolve = EXPLANATION_VOCABULARY[verb].resolve
+    done: list[dict[str, Any]] = []
+    withheld: list[dict[str, Any]] = []
+    for ident, template in declared:
+        texts: dict[str, str] = {}
+        filled: dict[str, str] = {}
+        missing: list[str] = []
+        for name in dict.fromkeys(_PLACEHOLDER.findall(template)):
+            got = resolve(name, rows)
+            if got is None:
+                missing.append(name)
+                continue
+            texts[name], filled[name] = got
+        if missing:
+            withheld.append({"id": ident, "reason": "the answer serves no field for "
+                             + ", ".join("{" + n + "}" for n in missing)})
+        else:
+            done.append({"id": ident, "filled_from": filled,
+                         "text": _PLACEHOLDER.sub(lambda m: texts[m.group(1)], template)})
+    return done, withheld
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Shared arithmetic — one implementation, so two verbs cannot disagree about CPI
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -358,7 +540,8 @@ VALUE_LABEL: dict[str, str] = {
 #: not from everything that looks like an amount: `bac` arrives from the seed unchanged and is
 #: passed through, so it is a value this verb REPORTS rather than one it PRODUCES, and the
 #: money ruling scopes to producers and to consumers that subtract or compare.
-_DRIVER_MONEY_FIELDS = ("contribution", "bcws", "bcwp", "acwp", "withheld_contribution")
+_DRIVER_MONEY_FIELDS = ("contribution", "bcws", "bcwp", "acwp", "withheld_contribution",
+                        "variance_total")
 
 #: The money fields `fin_performance_indices` computes. The two VARIANCES are why this verb is
 #: in scope at all -- they are subtractions -- and the six quantities are the operands they and
@@ -1257,8 +1440,14 @@ def fin_variance_drivers(
     # change; the figures moved here because the INPUTS changed type, which is this verb's
     # doing and not the module's. That the seam absorbed a money-representation change without
     # editing is the strongest evidence available that it was cut in the right place.
+    ranked = variance_driver_ranking.rank_drivers(scored, top_n=top_n)
+    # THE RANKING SERVES ITS TOTAL (Q6). `total` above is the figure every `share_of_total` was
+    # divided by; it was computed and not served, so a sentence restating the ranking had nothing
+    # to quote it from. Per row, beside `withheld_contribution`, so no row is read without it.
+    for row in ranked:
+        row["variance_total"] = total
     return _emit_money(
-        variance_driver_ranking.rank_drivers(scored, top_n=top_n),
+        ranked,
         money_fields=_DRIVER_MONEY_FIELDS,
         ratio_fields=("share_of_total",),
     )

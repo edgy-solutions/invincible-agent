@@ -100,6 +100,30 @@ ratified_by: owner
 A deployment whose asset carries funding lines replaces it with an overlay row of the same id
 saying `source: asset`.
 
+**A built-in's row may also declare `explanations`** (the architect's Q6 ruling: "The engine never names
+a cause and never chooses the selection. It may write a sentence restating its own computed ranking,
+filled from the numbers ... The narrative of why stays a person's."). Only a built-in's row carries it; a
+declared measure row naming it is refused as an unknown key. Form: `explanations: [{id, template}]`, `id`
+matching `^[a-z0-9_]+$`. The platform ships one, on `fin_variance_drivers`:
+`{kind} is {total}; {top_label} contributes {top_share}.`
+
+- **Vocabulary, closed, per built-in.** `fin_variance_drivers` offers `{kind}`, `{unit}`, `{total}`,
+  `{rank1_label}` to `{rank10_label}` (and `_contribution`, `_share`), and `{top_label}`,
+  `{top_contribution}`, `{top_share}` (aliases of `rank1_*`). Each reads a field the answer already
+  serves, from the ranked rows in SERVED order; the fill never sorts, filters, maxes or picks. A built-in
+  with no vocabulary refuses the key at load, naming the verbs that have one.
+- **Load checks** (the row is refused, naming the row and the explanation id): an unknown placeholder, an
+  unbalanced or nested brace, a format spec or conversion (`{total:.0f}`, `{x!r}`), an empty template, a
+  duplicate id, a list that is not exactly `{id, template}` mappings.
+- **Cause tripwire.** The literal text (outside placeholders, case-insensitive, whole words) is refused if
+  it holds `because`, `due to`, `caused`, `causes`, `driven by`, `owing to`, `as a result of`, `reason`,
+  `attributable to` or `on account of`. A tripwire, not a proof.
+- **Served** beside `rows`, absent when the row declares none: `explanations: [{id, text, filled_from}]`,
+  with `filled_from` the exact served string of each placeholder, and `explanations_withheld: [{id,
+  reason}]` for a sentence whose placeholder has no field (fewer ranked rows than named, no rows, no
+  share): never a partly filled sentence. Money reads `-1.2M`, `350K`, `2.5B` (U+2212 for a minus, one
+  decimal, half up); a share reads as a whole percent.
+
 **A second kind of row: a dataset row.** A row whose `inputs` holds `dataset` instead of `state` is
 drawn one of two ways. Drawn as `FLOW_DECOMPOSITION`, it reads named columns of one asset and answers once,
 with an edge table (below); drawn as `MULTI_SERIES`, it answers with a row per period (the next part).

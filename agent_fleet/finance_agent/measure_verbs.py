@@ -149,7 +149,8 @@ _SOURCES = frozenset({SOURCE_ASSET, SOURCE_SEED})
 #: Every key a row naming a BUILT-IN may carry: it says where the built-in reads, and nothing else.
 _SOURCE_KEYS = frozenset({"measure_id", "source", "reason", "ratified_by"})
 #: A built-in's row may also list it (`name` and `description`, together): the askable list.
-_BUILTIN_ROW_KEYS = _SOURCE_KEYS | {"name", "description", "example_ask", "group_label"}
+_BUILTIN_ROW_KEYS = _SOURCE_KEYS | {"name", "description", "example_ask", "group_label",
+                                  "explanations"}
 #: Optional listing fields, on a declared row and on a built-in's listing row: a non-empty string.
 _LISTING_KEYS = ("example_ask", "group_label")
 #: The render shapes this engine's runner fills: one declared series per period. A MECHANISM list,
@@ -232,6 +233,8 @@ class SourceRow:
     description: str = ""
     example_ask: str = ""
     group_label: str = ""
+    #: `(id, template)` restatements of the built-in's own ranking, in declared order (Q6). Checked at load.
+    explanations: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -648,6 +651,34 @@ def _listing_fields(raw: dict) -> dict[str, str]:
     return out
 
 
+def _explanations(verb: str, raw: Any) -> tuple[tuple[str, str], ...]:
+    """A built-in row's `explanations`: `[{id, template}]`, restatements of the verb's own ranking.
+    ValueError naming the explanation id (`compose_rows` names the file and the row). A verb with
+    no placeholder vocabulary refuses the key, naming the verbs that have one."""
+    vocab = _measures.EXPLANATION_VOCABULARY
+    if verb not in vocab:
+        raise ValueError(f"`explanations` is declared on {verb!r}, which has no placeholder "
+                         f"vocabulary; the verbs that have one are {sorted(vocab)}")
+    if not isinstance(raw, list) or not raw or not all(
+            isinstance(e, dict) and set(e) == {"id", "template"} for e in raw):
+        raise ValueError("`explanations` must be a non-empty list of mappings holding exactly "
+                         "`id` and `template`")
+    out, seen = [], set()
+    for e in raw:
+        ident = e["id"]
+        if not isinstance(ident, str) or not _measures.EXPLANATION_ID_RE.match(ident):
+            raise ValueError(f"explanation id {ident!r} must match ^[a-z0-9_]+$")
+        if ident in seen:
+            raise ValueError(f"explanation id {ident!r} is declared twice")
+        seen.add(ident)
+        try:
+            _measures.check_explanation_template(verb, e["template"])
+        except ValueError as exc:
+            raise ValueError(f"explanation {ident!r}: {exc}") from None
+        out.append((ident, e["template"].strip()))
+    return tuple(out)
+
+
 def _check_walk_labels(wl: Any, kind: str, op: str) -> None:
     """`render.walk_labels`: optional `{start, end}` naming the walk's two ends, on a `minus` row only.
     ValueError (the file is named by `compose_rows`)."""
@@ -684,13 +715,14 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         for k in listed:
             if not isinstance(raw[k], str) or not raw[k].strip():
                 raise ValueError(f"`{k}` must be a non-empty string")
+        explanations = _explanations(raw["measure_id"], raw["explanations"]) if "explanations" in raw else ()
         extras = _listing_fields(raw)
         if extras and not listed:
             raise ValueError(f"a built-in's row carries {', '.join('`'+k+'`' for k in sorted(extras))} only with `name` and "
                              f"`description`: they describe a listing, and this row lists nothing")
         return SourceRow(raw["measure_id"], *_source(raw),
                          name=raw.get("name", "").strip(), description=raw.get("description", "").strip(),
-                         **extras)
+                         explanations=explanations, **extras)
     moved = sorted(k for k in _MOVED_OUTPUT_KEYS if isinstance(raw.get("outputs"), dict)
                    and k in raw["outputs"])
     if moved:
