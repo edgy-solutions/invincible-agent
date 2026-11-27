@@ -568,7 +568,11 @@ def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]
         (enum,) = [s for s in slots_for("fin_eac_calculation") if s["name"] == "method"]
         slots += [{**enum, "name": n, "values": list(row.contract.versions)}
                   for n in measure_verbs._VERSION_PARAMS if n in row.params]
-    return slots
+    # Whether a slot is asked for is the row's, not the copied built-in's: the registration and
+    # the route read the same rule (`_declared_param_required`), so the ask never omits a param
+    # the engine then refuses for, nor demands one the row waived.
+    return [{**s, "required": req, "kind": "spoken-mandatory" if req else "spoken-optional"}
+            for s in slots for req in (_declared_param_required(row, s["name"]),)]
 
 
 def _registration_calls() -> list[dict[str, Any]]:

@@ -90,12 +90,12 @@ def _row(tmp_path, params):
 
 
 def test_a_param_is_required_when_the_row_declares_it(tmp_path):
-    row = _row(tmp_path, {"program_id": {}, "window": {"required": True}})
+    row = _row(tmp_path, {"program_id": {"required": True}, "window": {"required": True}})
     assert engine._declared_param_required(row, "window") is True
 
 
-def test_a_param_declared_without_required_is_not_required(tmp_path):
-    row = _row(tmp_path, {"program_id": {}, "window": {"required": False}})
+def test_a_param_declared_not_required_is_not_required(tmp_path):
+    row = _row(tmp_path, {"program_id": {"required": False}, "window": {"required": False}})
     assert engine._declared_param_required(row, "program_id") is False
     assert engine._declared_param_required(row, "window") is False
 
@@ -113,7 +113,7 @@ def test_every_shipped_declared_param_agrees_with_its_yaml(tmp_path):
         (row,) = measure_verbs.load_measure_verbs(tmp_path / "none", [ov], builtins=((), ()))
         for name, decl in raw["inputs"]["params"].items():
             seen += 1
-            assert engine._declared_param_required(row, name) is bool((decl or {}).get("required")), (path.name, name)
+            assert engine._declared_param_required(row, name) is decl.get("required", False), (path.name, name)
     assert seen
 
 
@@ -160,3 +160,72 @@ def test_a_declared_row_missing_its_required_param_is_a_422_naming_it(tmp_path):
     with pytest.raises(HTTPException) as e:
         engine._declared_envelope(row, {"program_id": "NP-ALPHA"})
     assert e.value.status_code == 422 and e.value.detail["needs_slots"] == ["window"]
+
+
+# -- (e) what is REGISTERED follows the row --------------------------------------------------------
+# The ask is built from the registered slots, so they must say what `_declared_param_required`
+# says: a param the row requires but registered optional is never asked for, and the call then
+# comes back a 422 `needs_slots`.
+
+def _registered(monkeypatch, row):
+    monkeypatch.setattr(engine, "DECLARED", {row.measure_id: row})
+    (call,) = [c for c in engine._registration_calls() if c["fn"] == row.measure_id]
+    return {s["name"]: (s["kind"], s["required"]) for s in call["slots"]}
+
+
+def _asked(required):
+    return ("spoken-mandatory", True) if required else ("spoken-optional", False)
+
+
+def test_a_row_that_requires_window_registers_it_mandatory(tmp_path, monkeypatch):
+    row = _row(tmp_path, {"program_id": {"required": True}, "window": {"required": True}})
+    assert _registered(monkeypatch, row)["window"] == _asked(True)
+
+
+def test_control_the_same_row_waiving_window_registers_it_optional(tmp_path, monkeypatch):
+    row = _row(tmp_path, {"program_id": {"required": True}, "window": {"required": False}})
+    assert _registered(monkeypatch, row)["window"] == _asked(False)
+
+
+def test_a_row_that_waives_program_id_registers_it_optional(tmp_path, monkeypatch):
+    row = _row(tmp_path, {"program_id": {"required": False}, "window": {"required": False}})
+    assert _registered(monkeypatch, row)["program_id"] == _asked(False)
+
+
+def test_every_shipped_row_registers_what_its_row_requires(tmp_path, monkeypatch):
+    """The population: each shipped row loaded alone, every registered slot read back."""
+    seen = 0
+    for i, path in enumerate(sorted((REPO / "policy").rglob("measure_verbs/*.yaml"))):
+        if "source" in yaml.safe_load(path.read_text(encoding="utf-8")):
+            continue
+        ov = tmp_path / f"ov{i}"
+        ov.mkdir()
+        (ov / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        (row,) = measure_verbs.load_measure_verbs(tmp_path / "none", [ov], builtins=((), ()))
+        registered = _registered(monkeypatch, row)
+        assert set(registered) == set(row.params), path.name
+        for name in row.params:
+            seen += 1
+            assert registered[name] == _asked(engine._declared_param_required(row, name)), (path.name, name)
+    assert seen
+
+
+def test_a_listed_version_declared_not_required_is_registered_mandatory(tmp_path, monkeypatch):
+    from tests.finance.test_the_version_is_a_declared_dimension import B_FILTER, FN_FILTER, load
+    row = load(tmp_path, monkeypatch, {FN_FILTER: _versions_declared_not_required(B_FILTER)})[FN_FILTER]
+    assert _registered(monkeypatch, row)["version"] == _asked(True)
+
+
+# -- (f) a declaration the loader cannot read as true or false is refused --------------------------
+
+@pytest.mark.parametrize("decl", [{"required": "true"}, {"required": 1}, {}, None, True, "required"],
+                         ids=["quoted", "one", "empty", "null", "bare-bool", "string"])
+def test_a_malformed_param_declaration_is_refused_at_load_naming_the_param(tmp_path, decl):
+    with pytest.raises(measure_verbs.MeasureVerbError) as e:
+        _row(tmp_path, {"program_id": {"required": True}, "window": decl})
+    assert "row.yaml" in str(e.value) and "inputs.params.window" in str(e.value)
+
+
+def test_control_required_true_unquoted_loads_and_is_required(tmp_path):
+    row = _row(tmp_path, {"program_id": {"required": True}, "window": {"required": True}})
+    assert "window" in row.required_params

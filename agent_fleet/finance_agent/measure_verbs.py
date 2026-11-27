@@ -747,13 +747,21 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
             f"inputs carries {extra}; a row names quantities from the vocabulary and holds no "
             f"formula, expression or query (ADR-0053 section 3)")
     params = tuple(inputs["params"])
-    required_params = tuple(
-        n for n, decl in inputs["params"].items() if isinstance(decl, dict) and decl.get("required") is True)
     allowed_params = _DATASET_PARAMS if kind == KIND_DATASET else _PARAMS
     unknown_params = sorted(set(params) - allowed_params)
     if unknown_params:
         raise ValueError(f"inputs.params names {unknown_params}; this engine fills only {sorted(allowed_params)}"
                          + (" for a dataset row (a read is the whole program)" if kind == KIND_DATASET else ""))
+    for n, decl in inputs["params"].items():
+        # A declaration is read for `required` alone; anything else would make the param optional
+        # without saying so, so the loader refuses it (the file is named by `compose_rows`).
+        if not isinstance(decl, dict) or not decl:
+            raise ValueError(f"inputs.params.{n} is {decl!r}; a param is declared as a mapping, "
+                             f"e.g. `{n}: {{required: true}}`")
+        if "required" in decl and not isinstance(decl["required"], bool):
+            raise ValueError(f"inputs.params.{n}.required is {decl['required']!r}; it is true or "
+                             f"false, unquoted")
+    required_params = tuple(n for n, decl in inputs["params"].items() if decl.get("required") is True)
     dataset: dict = {}
     if kind == KIND_DATASET:
         dataset = _check_dataset_series(inputs) if series_kind else _check_dataset(inputs)
