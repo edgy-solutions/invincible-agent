@@ -1,5 +1,9 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.94 — not yet cut
+
+**Opened at the 0.4.93 cut** (the architect's order of 2026-11-22: after every cut, open the next version as not yet cut, as a small PR). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.93 one. `Chart.yaml` stays at 0.4.93 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
+
 ## 0.4.93 — 2026-11-26
 
 **0.4.93 is 0.4.92 (`f7c3f5e6`) plus the 13 merges below, `f7c3f5e6..ac56bc40`, merged by sha in this order.** The architect moved it up (2026-11-26, via Chris): it is cut as soon as its three gates are merged. The gates are:
