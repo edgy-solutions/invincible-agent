@@ -80,6 +80,15 @@ class DurableAnswers:
         return [{"stepKey": s.get("stepKey"), "status": s.get("status"), "endTime": s.get("endTime")}
                 for s in snap.get("steps") or []]
 
+    async def get_progress(self, answer_id: str) -> tuple | None:
+        """What moves when the answer moves: its status, how many events it has logged, and each
+        step's status. `None` on a failed read, which is no movement seen."""
+        snap = await self._snapshot(answer_id)
+        if snap is None:
+            return None
+        return (snap.get("status"), len(snap.get("events") or []),
+                frozenset((s.get("stepKey"), s.get("status")) for s in snap.get("steps") or []))
+
     async def get_failure(self, answer_id: str) -> dict:
         """The failed step and the trace id the snapshot carries (ADR-0072 8.1). `{}` on a failed read."""
         snap = await self._snapshot(answer_id)
