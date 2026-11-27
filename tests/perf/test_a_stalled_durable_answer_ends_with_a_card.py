@@ -208,6 +208,64 @@ async def test_a_run_paused_for_its_person_is_waiting_not_stalled(base, clock, m
     assert 230 + STALL_S - 2 * POLL_S <= clock["now"] <= 230 + STALL_S + 2 * POLL_S, clock["now"]
 
 
+QUEUED_S = 200  # past the bound
+PLACE = {"position": 1, "ahead": 0, "limit": 1}
+
+
+def _queued_then(after):
+    """QUEUED with a place for QUEUED_S, then `after(now)`: waiting its turn, then admitted."""
+    def snap(now, n):
+        if now < QUEUED_S:
+            return {"status": "QUEUED", "queue": dict(PLACE), "events": [], "steps": [],
+                    "result": None}
+        return after(now)
+    return snap
+
+
+def _assert_took_the_queue(pairs):
+    """Reach: the stream saw the place and the admission, so the hold was on the path."""
+    assert [q["position"] for q in _of(pairs, "answer_queued")] == [1], pairs
+    assert len(_of(pairs, "answer_admitted")) == 1, pairs
+
+
+@pytest.mark.asyncio
+async def test_a_run_queued_past_the_bound_then_moving_delivers_its_answer(
+    base, clock, monkeypatch
+):
+    """Waiting its turn is not a stall (the join with #422): queued for longer than the bound,
+    then admitted and moving, the run delivers its answer and no card."""
+    def moving(now):
+        done = [{"stepKey": f"execute_subtask[{i}]", "status": "SUCCESS", "endTime": float(i)}
+                for i in range(int((now - QUEUED_S) // 10))]
+        if now >= QUEUED_S + 3 * STALL_S:
+            return {"status": "SUCCESS", "events": [], "steps": [PLAN, *done],
+                    "result": {"payload": ANSWER, "referenced_uris": []}}
+        return {"status": "STARTED", "events": [], "steps": [PLAN, *done], "result": None}
+
+    _durable(monkeypatch, _queued_then(moving), clock=clock)
+    blob = await _drive()
+    pairs = _parse(blob)
+    _assert_took_the_queue(pairs)
+    assert _of(pairs, "final_payload") == [ANSWER], blob[-2000:]
+    assert _of(pairs, "pipeline_error") == []
+    assert clock["now"] >= QUEUED_S + 3 * STALL_S
+
+
+@pytest.mark.asyncio
+async def test_a_run_queued_past_the_bound_then_stuck_gets_the_card_a_bound_after_admission(
+    base, clock, monkeypatch
+):
+    """The queued time is held, not forgiven once: admitted and stuck, the card comes a full
+    bound after the last queued tick, not as the run is admitted."""
+    _durable(monkeypatch, _queued_then(lambda now: _stuck(now, 0)), clock=clock)
+    blob = await _drive()
+    pairs = _parse(blob)
+    _assert_took_the_queue(pairs)
+    _assert_stall_card(blob, base["bundles"])
+    assert QUEUED_S + STALL_S - 2 * POLL_S <= clock["now"] <= QUEUED_S + STALL_S + 2 * POLL_S, \
+        clock["now"]
+
+
 # -- the control ------------------------------------------------------------------------------
 
 @pytest.mark.asyncio
