@@ -40,6 +40,7 @@ SAMPLE_CAL = REPO / "policy" / "overlays" / "sample" / "fin_calendar"
 B_DIR = REPO / "tests" / "fixtures" / "fin_program_b"
 FN_SAMPLE, FN_WBS, FN_IPT, FN_ONCE = "fin_flow_acwp", "fin_b_flow_wbs", "fin_b_flow_ipt", "fin_b_flow_wbs_once"
 PROG_B = "PRG-B"
+PROG_B_NAME = "Program B (synthetic)"
 URN_B = "urn:li:dataset:(urn:li:dataPlatform:s3,program_b,PROD)"
 WBS_COLUMNS = ["wbs_1", "wbs_2", "wbs_3", "wbs_4", "control_account", "work_package"]
 IPT_COLUMNS = ["ipt_1", "ipt_2", "work_package"]
@@ -72,7 +73,8 @@ def b_frame():
     each WBS-4 and TWO work packages under each control account: 40 work packages, 12 periods; then
     `EXTRA_ACCOUNTS`, four more control accounts of one work package each. A
     control account's two work packages carry the SAME amount in every period. Amounts are
-    multiples of 0.25, so every sum is exact."""
+    multiples of 0.25, so every sum is exact. Every row also carries the program-level `program_name`
+    and `program_bac` (the sum of `bcws` over the frame) the state read needs."""
     rows, ca, wp = [], 0, 0
     for w1, w2, weight in BRANCHES:
         for i3 in (1, 2):
@@ -84,7 +86,8 @@ def b_frame():
                     for k, period in enumerate(PERIODS):
                         amount = weight + 0.25 * ((ca + k) % 4)
                         rows.append({
-                            "program_id": PROG_B, "wbs_1": w1, "wbs_2": w2, "wbs_3": f"{w2}.{i3}",
+                            "program_id": PROG_B, "program_name": PROG_B_NAME, "wbs_1": w1, "wbs_2": w2,
+                            "wbs_3": f"{w2}.{i3}",
                             "wbs_4": f"{w2}.{i3}.{i4}", "control_account": f"CA-{ca:02d}",
                             "work_package": f"WP-{wp:04d}", "ipt_1": ipt_1, "ipt_2": ipt_2,
                             "period": period, "bcws": amount, "bcwp": amount, "acwp": amount})
@@ -93,9 +96,13 @@ def b_frame():
         wp += 1
         for period in PERIODS:
             rows.append({
-                "program_id": PROG_B, "wbs_1": w1, "wbs_2": w2, "wbs_3": w3, "wbs_4": w4,
+                "program_id": PROG_B, "program_name": PROG_B_NAME, "wbs_1": w1, "wbs_2": w2,
+                "wbs_3": w3, "wbs_4": w4,
                 "control_account": account, "work_package": f"WP-{wp:04d}", "ipt_1": ipt_1,
                 "ipt_2": ipt_2, "period": period, "bcws": amount, "bcwp": amount, "acwp": amount})
+    bac = sum(r["bcws"] for r in rows)
+    for r in rows:
+        r["program_bac"] = bac
     return pl.DataFrame(rows)
 
 

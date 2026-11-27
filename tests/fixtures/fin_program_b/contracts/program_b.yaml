@@ -2,7 +2,9 @@
 # Modelled on contracts/ev_fixture.yaml (same format, same parser). Program B's work breakdown is
 # four WBS levels above the control account, it carries a two-level integrated product team (IPT)
 # breakdown beside it, and its periods are the 4-4-5 calendar `program_b_445`
-# (tests/fixtures/fin_program_b/fin_calendar). Period amounts, never cumulative.
+# (tests/fixtures/fin_program_b/fin_calendar). Period amounts, never cumulative. B carries the
+# program-level columns engine-fin's state read needs (its name and its budget at completion),
+# determined by the program.
 contract_id: program_b
 version: "1.0.0"
 status: sample
@@ -13,14 +15,20 @@ scope: program_id
 
 # A work package sits in one place of each breakdown.
 dependencies:
+  - {by: program_id, determines: [program_name, program_bac]}
   - {by: work_package, determines: [wbs_1, wbs_2, wbs_3, wbs_4, control_account, ipt_1, ipt_2]}
 
 period:
   column: period
   calendar: program_b_445
 
+# The breakdown, top first: four WBS levels, the control account, the work package.
+hierarchy: [wbs_1, wbs_2, wbs_3, wbs_4, control_account, work_package]
+
 columns:
   - {name: program_id, type: string, required: true, nullable: false}
+  - {name: program_name, type: string, required: true, nullable: false}
+  - {name: program_bac, type: numeric, unit: USD, required: true, nullable: false, additive_over: []}
   - {name: wbs_1, type: string, required: true, nullable: false}
   - {name: wbs_2, type: string, required: true, nullable: false}
   - {name: wbs_3, type: string, required: true, nullable: false}

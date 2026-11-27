@@ -22,6 +22,7 @@ Sections 3 and 4 are not checked at startup. They fail at the first read, as a 4
 | `FIN_DATASET_BANNER` | yes, with the URN | must be non-empty. It is the line that stops a synthetic asset from reading as real |
 | `FIN_DATASET_CONTRACT` | yes, with the URN | must name a contract that loads and passes section 2 |
 | `FIN_ASSET_MAX_ROWS` | no (default 100000) | if set, a positive integer. A larger read is a 422 `asset_too_large` |
+| `FIN_DRILL_MAX_ROWS` | no (default 10000, or `FIN_ASSET_MAX_ROWS` when that is lower) | if set, a positive integer no larger than `FIN_ASSET_MAX_ROWS`; boot refuses otherwise. More rows under a drill than this is a 422 `download_too_large` on the download; a page has no cap |
 | `CENTRAL_GATEWAY_URL` | yes, with the URN | must be non-empty. It comes from the chart's shared configmap, not from `engineFinance.env` |
 
 The base `values.yaml` sets none of the `FIN_` keys.

@@ -315,6 +315,8 @@ NOT_POLICY: dict[str, str] = {
     f"{FIN}::package_export::panel {{}} ({{}}) is scoped to program {{}}, not {{}} —":
         "a recipient discloses only its own program; no grant widens it",
     # -- 409s and the status= / wrapper forms (2026-10-25) --
+    f"{FIN}::_drill_stale::drill_stale | The measure changed after this a": CONFLICT,  # the engine's measure or params moved since the answer: re-ask
+    f"{FIN}::_drill_read::as_of_moved | The data was reloaded after this": CONFLICT,  # the dataset was reloaded since the answer: re-ask
     'agent_fleet/docs_agent/main.py::explain_endpoint::<str>': CONFLICT,
     'agent_fleet/ontology_service/main.py::write_decision_record::decision_record_immutable | a DIFFERENT record already exist': CONFLICT,
     'agent_fleet/planning_agent/main.py::fork::<str>': CONFLICT,

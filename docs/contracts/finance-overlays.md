@@ -107,7 +107,8 @@ Design: `docs/plans/fin-variance-decomposition.md`. It uses the same top-level k
 differences under `inputs` and `render`:
 
 - `inputs.params` is `program_id` (`window` is refused: this kind has no period axis), plus
-  `version`, or `version_a` and `version_b`, when the row's contract declares a version dimension (below).
+  `version`, or `version_a` and `version_b`, when the row's contract declares a version dimension (below),
+  plus, on a flow row, `period` and `basis` (below).
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
   not consulted), `banner` (required, shown beside every answer), `contract` (required, below),
   `levels` (at least two distinct column names, root first; the root column is selected by
@@ -135,6 +136,25 @@ differences under `inputs` and `render`:
   A compare row (`value: {compare: …}`) may not declare `depth`, refused at load: its only-in-A and only-in-B counts are taken over the full paths, so a cut table would disagree with its own verdict.
   A person choosing the level of detail when asking is a later step, part of parity with how
   finance teams work, and it needs its own slot, census and refusal (ruled 2026-11-24).
+- **A flow row reads one period, or the program through it.** A flow row that lists neither reads every
+  period of the program. A row may list `period` and `basis` in `inputs.params`, both or neither
+  (a period with no basis would not say whether it is the one period or the program through it; a basis with
+  no period has nothing to read through), and the person chooses them as slots. `basis` is `period` (the
+  rows of that period alone) or `cumulative` (every period of the row's calendar up to and including it).
+  The row's contract must name its period column (`period.column`, a declared string column with
+  `nullable: false`), else the row is refused at load. Under `per_path: sum`, a cumulative read adds a column
+  across periods, so every value column must declare the period column in its `additive_over` (the axes
+  along which summing the column is meaningful); a row over a column that does not is refused at load, with
+  the message that a cumulative read would sum a column the contract does not declare additive over its
+  periods. `per_path: once` takes a path's amount once, and is exempt. The slot `period` lists the labels of
+  the ROW'S calendar, in calendar order; `basis` lists `period` and `cumulative`. The cut is by position in
+  that calendar, never by comparing labels as strings (`P10` sorts before `P2` as a string, and not in a 4-4-5
+  year). A period that is not in the row's calendar, or a basis that is neither value, is a 422 before the
+  asset is read; a row whose period is outside the calendar is a 502 `period_outside_calendar`; a period the
+  asset holds no rows for is a 422 naming the period. A comparison reads both versions over the same periods.
+  The answer names what it read: the envelope carries `period` and `basis`, and the verdict and the data
+  provenance say "period P7 alone" or "period P7, cumulative", so a period total is never read as the whole
+  program's. A series row refuses `period` and `basis` at load.
 - **A version is a declared dimension.** A contract may carry `version_dimension: {column: <string column>,
   values: [<string>, ...]}`: the versions (baselines, estimates) its rows carry in `column`, in
   declared order. The column must be in `grain` (each version's rows are one grain apart, so the key holds it). The values are strings; quote a number. A row whose version is not in the list is
@@ -687,6 +707,7 @@ Design: `docs/plans/fin-inputs-resolver.md`. Nothing here has run on a cluster.
 | `FIN_DATASET_CONTRACT` | required with the URN: the id of the contract, in the contract directory, the read is held to. |
 | `CENTRAL_GATEWAY_URL` | required with the URN: the gateway that issues the read ticket. |
 | `FIN_ASSET_MAX_ROWS` | optional, default 100000. |
+| `FIN_DRILL_MAX_ROWS` | optional, default 10000 (the read cap when that is lower); a positive integer no larger than `FIN_ASSET_MAX_ROWS`. Binds the drill download only. |
 
 With the URN set, the engine refuses to start if the banner or gateway is missing, the URN is not
 of the `urn:li:dataset:` form, the mesh client cannot be imported, the contract is unset or cannot
@@ -787,8 +808,10 @@ the resolver scores an exact match 1.0 across every class and the router abstain
 
 A declared `Program` is visible only to the callers its `program_id` lists in
 `policy/program_members.yaml` (`grant_to`). A program with no row there is listed to no one.
-A declared row of any other class (a `ControlAccount`, say) loads, but no row can yet name the program
-it belongs to, so there is no program to check: it is listed and resolved to no one, not even a caller
+A declared row of any other class (a `ControlAccount`, say) may name the program it belongs to with
+the optional key `program` (a non-empty string; a `Program` row may not carry one, a program is its own
+program). It is then listed and resolved to the callers who may view that program, and to no one else.
+Without `program` there is no program to check: it is listed and resolved to no one, not even a caller
 who may view every program.
 
 ### 7a. When resolve or a listing comes back empty
@@ -895,3 +918,77 @@ period outside a declared calendar is refused with the same rule id.
 
 **The template names this kind.** `contracts/ev_fixture.yaml` gives `period.calendar`: the
 `calendar_id` of the declared `fin_calendar` the dataset's periods are drawn from.
+
+## The two built-in lookups, and the contract keys they read
+
+`fin_calendar_periods` lists the periods of the declared fiscal calendar in the calendar's own order
+(never sorted by label) and marks the period the data reports through. `fin_hierarchy_children` takes
+`element` and an optional `depth` (an integer of at least 1, default 1) and lists the element's
+children down that many levels, no further than the work package. Both answer an
+`INSTANCES_BY_PROPERTY` table with no amount, unit or verdict, are asset-only (with no dataset
+configured they refuse, and never answer from the seed), and read the asset as the caller.
+
+They read two optional keys of the dataset contract (ADR-0066):
+
+- `status_period`: one declared string column, `nullable: false`, determined by the contract's scope.
+  Its value in the program's rows names the status period. A value outside the declared calendar is
+  refused (`period_outside_calendar`). With no key, nothing is marked.
+- `hierarchy`: two or more distinct declared string columns, `nullable: false`, outermost first; the
+  last must determine the rest. The last two are the shipped levels (control account, work package);
+  any column above them is a WBS level, declared by the contract and never by the engine. With no key
+  the lookup refuses `hierarchy_not_declared`.
+
+An element named at more than one level is refused (`element_ambiguous`), naming the levels; a depth
+that is not an integer of at least 1 is refused (`bad_depth`) before anything is read.
+
+## Dimensions: the values a contract declares, resolved for their program's members
+
+A dimension is a column whose distinct values are members of a class: a control account, a work
+package, an organisation unit. The service resolves and lists them without a seed row for each.
+Two things declare one, and both are the contract's (ADR-0066), never the engine's:
+
+- the `hierarchy` columns: the control account and work package levels are shipped terms
+  (`fin:ControlAccount`, `fin:WorkPackage`), and any level above them is a `fin:WBSElement`;
+- the optional top-level key `dimensions`, a mapping `{column: class}` (for example
+  `obs: fin:OBSElement`). Each column must be declared in `columns`, and each class must be one the
+  service resolves; a class it does not resolve is refused at load, naming the column and the class.
+  A `personal_data` column is refused as a dimension: its values would be offered as members.
+  A column named by both `hierarchy` and `dimensions` with two different classes is refused.
+
+A contract that declares `dimensions`, `hierarchy` or `version_dimension` must name a scope. Under
+`scope: none` the service refuses the contract (`dimension_without_scope`, naming the keys): a
+dimension's members belong to programs, and with no scope there is no program to place them in.
+
+Each listing request (`/resolve_instance`, `/enumerate_instances`) reads the asset ONCE, as the caller,
+selecting only the scope column and the dimension columns, distinct rows, capped by the same row limit
+as the other reads. A value becomes one member per (class, value, program), and the caller sees it only
+if they may view that program. A member carries its `program` and a `provenance`
+(`dataset`, `column`, `as_of` of the read's ticket). Null and empty values are skipped, and a seed or
+declared id wins over an asset member of the same id. With no dataset configured nothing is read. When
+the read is refused or fails (no bearer, no grant on the asset, a contract violation, the broker down)
+the asset adds no members, the seed and the declared instances still answer, the response is 200, and
+one `asset_unread` line names the refusal's code and never a value.
+
+A **version** and a **fiscal period** are never searched in the data. `fin:Version` has one member per
+value of the contract's `version_dimension.values`; `fin:FiscalPeriod` has one per label of the
+declared calendar (`period.calendar`, section 8). Each is offered once per program present in the
+asset, so a caller sees them exactly when they may view at least one of the dataset's programs. A
+version or period the data carries and no declaration lists resolves to nothing. They are filters a
+question names, so no verb takes either as its subject.
+
+## The drill: the rows an amount was computed from
+
+Every edge and every sink member of a dataset FLOW answer carries `row_count` (the dataset rows under
+it, counted from the one frame the amounts were reduced from; under `per_path: once` still rows, not
+groups) and, when the read's receipt has an as-of, an opaque `drill` value. The answer carries
+`limits.max_rows` (`FIN_DRILL_MAX_ROWS`), and `drill_unavailable: "as_of_unavailable"` with no `drill`
+anywhere when the receipt has no as-of.
+
+`fin_drill_rows` (`POST /measure/fin_drill_rows`, params `drill`, `offset`, `limit` 1 to 500) pages the
+rows under one edge, or under the members of a sink, in the contract's grain order, read as the caller.
+`POST /drill_rows/download` (params `drill`, `format: csv`) serves all of them as a file; more than
+`FIN_DRILL_MAX_ROWS` is 422 `download_too_large`. The value names no column, URN or caller: the engine
+rebuilds the predicate from its own row declaration. A value it did not serve is 400 `drill_invalid`; one
+for a measure that has changed is 409 `drill_stale`. The read cannot be pinned to an as-of, so it is made
+now and refused, with no rows, as 409 `as_of_moved` when its as-of is not the one inside the value.
+Series and state-kind answers and the variance-driver ranking serve no drill.

@@ -1061,8 +1061,14 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     #
     # `absent_reason` ({column key: short phrase}): envelope-level, served so cortex draws the
     # producer's words in a null cell instead of "-". Ruled by Chris 11-19; never a 0.
+    #
+    # `data_provenance` (2026-11-25): the two fin lookups (fin:FiscalCalendarPeriods,
+    # fin:HierarchyChildren) read a declared asset as the caller, and the card must say which one
+    # (ADR-0065:133; tests/finance/test_provenance_arrives_whole.py). Verbatim, like the series
+    # archetypes'. A producer that sends none carries none.
     "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
-                                       "state_vocabulary", "group_by", "absent_reason")),
+                                       "state_vocabulary", "group_by", "absent_reason",
+                                       "data_provenance")),
 
     # ── FLOW_DECOMPOSITION (Lane 1; held from 0.4.81, opened 2026-11-23). Runbook site 2. ──
     #

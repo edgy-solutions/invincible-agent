@@ -1361,6 +1361,23 @@ services:
           read), the program's facts come from the asset, and each source carries its
           data_provenance (architect, 2026-11-05: profiles unchanged). 503 (named)
           when the image has no package directory to write to.
+      - method: POST
+        path: /drill_rows/download
+        identity: "caller authz_id (bearer first, body user_email only for a service's delegation)"
+        gate: "program visibility (_require_visible) and the flow row's cells (_require_cell) BEFORE the dataset is read; the read is a ticketed read AS THE CALLER (asset grants, 403 access_denied); transport auth (OBSERVE)"
+        exposes: dataset-rows-as-a-file
+        consumers: ["cortex-bff GET /answers/{id}/download"]
+        class: gated
+        justification: >-
+          THE ONE ROUTE THAT CARRIES FILE BYTES (the answer path cannot). It takes the opaque
+          `drill` value a flow answer served on one of its edges, accepts it only in the one
+          canonical encoding and only for a measure loaded now with the same module hash, checks
+          the caller against the program the value names (403 program_not_visible, as
+          /measure/{fn} answers) and the row's cells (403 measure_not_in_cell), reads the row's
+          dataset as the caller, and refuses (409 as_of_moved) when the read's as-of is not the
+          one the value carries, serving no row. Then the rows under that edge, as CSV with exact
+          money strings; more than FIN_DRILL_MAX_ROWS is 422 download_too_large. The value names no
+          column, URN or caller: the predicate is rebuilt from the engine's own row declaration.
 
   docs_agent:
     file: agent_fleet/docs_agent/main.py

@@ -61,14 +61,17 @@ dependencies:  # [optional]
   - {by: work_package, determines: [control_account]}  # [ev_fixture]
 
 period:  # [optional]
-  column: period  # [unread] [ev_fixture]
+  column: period  # [optional] [ev_fixture]
   # The periods come from the declared calendar this names (the `fin_calendar` overlay kind,
   # docs/contracts/finance-overlays.md section 8). A period outside it refuses `period_outside_calendar`.
   # With exactly one calendar declared, a contract may omit `calendar` and the one declared is used.
   calendar: us_federal_fy26  # [optional] [ev_fixture]
 # The period the program is reported through. Named here so a time-phased row can mark it from
 # data; never a constant in a measure row.
-status_period: status_period  # [unread] [ev_fixture]
+status_period: status_period  # [optional] [ev_fixture]
+# The breakdown's level columns, top first, below the scope: the control account, then the work
+# package. The last determines the others (the dependency on `work_package` above).
+hierarchy: [control_account, work_package]  # [optional] [ev_fixture]
 
 # `nullable: false`: a null in the column refuses `null_value` on every read, named by the row or
 # not (ruled 2026-11-16). Absent: it may be null.
@@ -81,7 +84,7 @@ status_period: status_period  # [unread] [ev_fixture]
 # the reader enforces is declared under `dependencies` instead.
 # `additive_over`: the axes along which summing the column is meaningful. An amount repeated on
 # a path's rows is taken once per path before it is added (a measure row's `per_path: once`).
-# Column keys: name, type [format]; required, nullable, personal_data [optional]; unit, produced_since, additive_over, constant_within [unread].
+# Column keys: name, type [format]; required, nullable, personal_data, additive_over [optional]; unit, produced_since, constant_within [unread].
 columns:  # [format]
   - {name: program_id, type: string, required: true, nullable: false, produced_since: "0.11.0"}  # [ev_fixture]
   - {name: program_name, type: string, required: true, nullable: false, produced_since: "0.11.0"}  # [ev_fixture]

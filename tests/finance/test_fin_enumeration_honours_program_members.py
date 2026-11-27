@@ -77,7 +77,8 @@ def _enum(client, cls, **kw):
 
 
 def test_1_member_sees_non_member_does_not_for_every_class(double, client, bearer):
-    for cls in engine._RESOLVABLE:
+    # A class with no seed collection (`None`) has members only from an asset: its own file's.
+    for cls in (c for c, spec in engine._RESOLVABLE.items() if spec is not None):
         bearer(ALICE)
         mine = _enum(client, cls, user_email=ALICE)
         assert mine["outcome"] == "members" and mine["members"], f"control empty for {cls}"
@@ -141,7 +142,11 @@ def test_5_outage_is_a_503_on_both_routes(double, client, bearer):
 
 def test_6_coverage_seal(double):
     assert set(engine._PROGRAM_OF_CLASSES) == set(engine._RESOLVABLE)
-    for cls in engine._RESOLVABLE:
+    # The seedless classes are NAMED, so a new one cannot slip out of this census unnoticed. Their
+    # members come only from the declarations; their own file seals them.
+    assert {c for c, spec in engine._RESOLVABLE.items() if spec is None} == {
+        engine.FIN + "Version", engine.FIN + "FiscalPeriod"}
+    for cls in (c for c, spec in engine._RESOLVABLE.items() if spec is not None):
         members = engine._members_of(cls)
         assert members, cls
         for m in members:

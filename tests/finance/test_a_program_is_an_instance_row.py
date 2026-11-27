@@ -297,3 +297,19 @@ def test_the_seed_is_unchanged(monkeypatch):
     monkeypatch.setattr(engine, "INSTANCES", engine._load_instances())
     assert [p.program_id for p in engine.STATE.programs] == [p.program_id for p in build_seed().programs]
     assert len(engine.STATE.programs) == 1
+
+
+# -- a declared instance may name its program (dimension members) ---------------------------------
+
+def test_a_non_program_row_may_name_its_program_and_a_program_row_may_not(tmp_path):
+    ok = _write(tmp_path, ("ok.yaml", {"instances": [_row(**{"class": "WorkPackage", "program": "PRG-ONE"})]}))
+    assert [r.program for r in _load(ok)] == ["PRG-ONE"]
+    plain = _write(tmp_path, ("plain.yaml", {"instances": [_row(**{"class": "WorkPackage"})]}), sub="p")
+    assert [r.program for r in _load(plain)] == [None]
+    for sub, bad, reason in (("e", _row(**{"class": "WorkPackage", "program": "  "}), "non-empty"),
+                             ("n", _row(**{"class": "WorkPackage", "program": 7}), "non-empty"),
+                             ("g", _row(program="PRG-ONE"), "Program")):
+        d = _write(tmp_path, ("bad.yaml", {"instances": [bad]}), sub=sub)
+        with pytest.raises(io.InstanceOverlayError) as e:
+            _load(d)
+        assert "bad.yaml" in str(e.value) and reason in str(e.value), str(e.value)

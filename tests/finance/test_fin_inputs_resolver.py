@@ -643,6 +643,8 @@ def _nullable_bcws(doc):
 
 def _wrong_scope(doc):
     doc["scope"] = "work_package"
+    doc.pop("status_period", None)  # both keys need the scope's dependency, which this mutation moves
+    doc.pop("hierarchy", None)
 
 
 def _no_name_dependency(doc):
@@ -1244,7 +1246,8 @@ def test_a_built_in_with_the_flag_set_reads_the_asset_as_the_caller(client, seam
     assert seam.urns == [URN] and {kw["originator_email"] for kw in seam.kwargs} == {ALICE}
 
 
-_BUILT_IN_PARAMS = {"fin_eac_calculation": {"method": "CPI"}}
+_BUILT_IN_PARAMS = {"fin_eac_calculation": {"method": "CPI"},
+                    "fin_hierarchy_children": {"element": frame_of()["control_account"][0]}}
 
 #: RULED 2026-11-09, the shipped row: `fin_funding_status` is the one built-in that reads a
 #: collection the contract does not carry (`state.funding`), and its row keeps it on the seed until
@@ -1255,7 +1258,7 @@ _SEED_SOURCED = {"fin_funding_status": {"kind": "seed", "reason": "contract carr
 
 def _built_ins():
     from agent_fleet.finance_agent import measures
-    return sorted(measures.OUTPUT_URI)
+    return sorted(set(measures.OUTPUT_URI) - {"fin_drill_rows"})  # a page of rows: no program, its own seals
 
 
 def test_the_shipped_source_rows_are_the_ruled_ones():
@@ -1267,7 +1270,7 @@ def test_the_shipped_source_rows_are_the_ruled_ones():
 def test_every_built_in_under_the_flag_answers_from_where_its_row_says(client, seam, fn):
     """The asset as the caller, unless the row declares the seed. A seed-sourced answer never asks
     the asset and carries the notional banner and the row's reason."""
-    seam.frame = frame_of().lazy()
+    seam.frame = frame_of().with_columns(pl.lit("FY26-06").alias("status_period")).lazy()
     r = measure(client, fn, params={"program_id": PROGRAM, **_BUILT_IN_PARAMS.get(fn, {})})
     assert r.status_code == 200, r.text
     env = r.json()

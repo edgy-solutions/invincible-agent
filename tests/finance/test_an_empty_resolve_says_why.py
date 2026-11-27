@@ -142,7 +142,7 @@ def test_a_held_class_with_no_members_says_so(double, client, bearer, caplog, mo
     # Whether FundingLine holds seed rows depends on the loaded state, so `_members_of` is
     # patched for that ONE class (the others answer as they do).
     real = engine._members_of
-    monkeypatch.setattr(engine, "_members_of", lambda u: [] if u == FUNDING else real(u))
+    monkeypatch.setattr(engine, "_members_of", lambda u, declared=None: [] if u == FUNDING else real(u, declared))
     assert FUNDING in engine._RESOLVABLE
     assert _resolve(client, IDENT, class_uri=FUNDING, user_email=ALICE)["candidates"] == []
     f = _one(caplog)

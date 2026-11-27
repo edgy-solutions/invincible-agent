@@ -28,7 +28,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_fleet.finance_agent import measures as m
+from agent_fleet.finance_agent import lookups, measures as m
 from agent_fleet.finance_agent import main as fmain
 from agent_fleet.finance_agent.main import app
 from agent_fleet.finance_agent.seed import build_seed
@@ -51,7 +51,12 @@ def _payload(client, fn):
                              "user_email": "alice@example.com"}).json()
 
 
-@pytest.mark.parametrize("fn", sorted(m.OUTPUT_URI))
+#: The two built-in lookups answer a list, no amount and no verdict (ruled 2026-11-25), are asset-only,
+#: and are no source of the brief; a "figure" is not a thing they lead with. Their own tests carry them.
+_LOOKUPS = lookups.LOOKUP_FNS | {"fin_drill_rows"}  # a page of rows beside the lookups: no figure, no verdict
+
+
+@pytest.mark.parametrize("fn", sorted(set(m.OUTPUT_URI) - _LOOKUPS))
 def test_EVERY_verb_leads_with_a_figure_and_not_with_a_pointer(client, fn):
     """DERIVED FROM `OUTPUT_URI`, so a tenth verb is covered by the commit that adds it.
 
