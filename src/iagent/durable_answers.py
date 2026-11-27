@@ -99,6 +99,9 @@ class DurableAnswers:
         out = {"__typename": "Run", "status": snap.get("status")}
         if snap.get("status") == "BUSY":
             out["busy"] = snap.get("busy") or {}
+        if snap.get("status") == "QUEUED" and isinstance(snap.get("queue"), dict):
+            # The place, from THIS snapshot, so a caller deciding "waiting or admitted" reads one.
+            out["queue"] = snap["queue"]
         return out
 
     async def get_run_events(self, answer_id: str) -> list:

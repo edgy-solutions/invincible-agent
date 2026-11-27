@@ -810,8 +810,9 @@ class Mesh:
     """Every POST of the stream, counted by tag, in order; the SupervisorAnswer handlers are the
     REAL ones over the real gate (an in-process service double, never a mock of `release`)."""
 
-    def __init__(self, *, route_status=200, route_body=None):
+    def __init__(self, *, route_status=200, route_body=None, on_post=None):
         self.route_status = route_status
+        self.on_post = on_post       # (handler, answer_id, mesh) after a SupervisorAnswer reply
         self.route_body = {"mode": "ONE_SHOT"} if route_body is None else route_body
         self.log: list = []          # ("post", tag, answer_id) and ("ev", event_name), in order
         self.launched: dict = {}
@@ -833,7 +834,10 @@ class Mesh:
                 return _Resp(200, {})
             if handler == "snapshot" and aid in self.launched:
                 return _Resp(200, {"status": "CANCELED", "events": [], "steps": [], "result": None})
-            return _Resp(200, await getattr(svc, handler)(ctx))
+            body = await getattr(svc, handler)(ctx)
+            if self.on_post is not None:
+                self.on_post(handler, aid, self)
+            return _Resp(200, body)
         if url.endswith("/route_intent"):
             self.log.append(("post", ADM_ROUTE, None))
             return _Resp(self.route_status, self.route_body)
@@ -1431,6 +1435,35 @@ async def test_a_restart_while_waiting_is_refused_and_calls_no_model(mesh_env):
     assert [b["status"] for b in mesh_env.calls["bundles"]] == ["failed"]
     assert mesh_env.calls["bundles"][0]["resolved_intent"]["failure_cause"]["cause"] == "answer_admission_lost"
     assert adm.get_gate().state()["running"] == 0 and adm.get_gate().state()["waiting"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_restart_between_two_reads_of_a_wait_is_refused(mesh_env, monkeypatch):
+    """The restart probe above passed 8 of 10 alone (2026-11-26). The wait loop took the status
+    and the place from TWO snapshot reads; when the cache expired between them and the restart
+    landed there, the second read said LOST, its "no place" was taken for an admission, and the
+    model was called. Here every read fetches (ttl 0) and the restart lands right after the
+    third snapshot read, which a two-read loop makes a status read. One read must decide."""
+    adm.reset_gate_for_tests(1, 5)
+    _gate_full(("h",))
+    reads = {"snapshot": 0}
+
+    def after(handler, aid, mesh):
+        if handler == "snapshot":
+            reads["snapshot"] += 1
+            if reads["snapshot"] == 3:
+                _restart()
+
+    m = mesh_env(on_post=after)
+    monkeypatch.setattr(gw, "_DURABLE_ANSWERS", DurableAnswers(
+        "http://ingress", client_factory=m.client, snapshot_ttl_s=0.0))
+    blob = await asyncio.wait_for(_stream(m), 10)
+    assert reads["snapshot"] >= 4, reads          # it waited, was restarted, and read again
+    assert "answer_queued" in blob
+    assert "answer_admitted" not in blob
+    assert m.n(ADM_ROUTE) == 0 and m.n("run/send") == 0       # no model call, no launch
+    errs = _events(blob, "pipeline_error")
+    assert len(errs) == 1 and errs[0]["cause"] == "answer_admission_lost", errs
 
 
 class _BusyBackend(FakeBackend):

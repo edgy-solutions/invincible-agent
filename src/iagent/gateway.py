@@ -10746,7 +10746,11 @@ async def _generate_dagster_stream_inner(
                     _wq_last = None
                     while True:
                         await asyncio.sleep(_rb.poll_s)
-                        _wst = (await _rb.status(_rid)).get("status")
+                        # ONE read decides. The place comes from the SAME snapshot as the
+                        # status: a second read may be newer (the cache expired between them)
+                        # and say LOST, or fail, and its "no place" was taken for an admission.
+                        _wsd = await _rb.status(_rid)
+                        _wst = _wsd.get("status")
                         if _wst is None:
                             continue        # the read failed: not an admission, look again
                         if _wst == "LOST":
@@ -10761,8 +10765,10 @@ async def _generate_dagster_stream_inner(
                                 {"cause": "answer_admission_lost", "where": "admission"}))
                             yield _sse("stream_end", "{}")
                             return
-                        _wq = await _rb.queue(_rid) if _wst == "QUEUED" else None
-                        if _wq is None:
+                        # QUEUED with a place: still waiting. QUEUED without one: admitted and
+                        # not yet claimed by `run`, the one admission this loop accepts.
+                        _wq = _wsd.get("queue") if _wst == "QUEUED" else None
+                        if not isinstance(_wq, dict):
                             break
                         if _wq.get("position") != _wq_last:
                             _wq_last = _wq.get("position")
