@@ -164,8 +164,10 @@ differences under `inputs` and `render`:
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
   `paths` and `other_threshold`.
-- `render.shape` is `FLOW_DECOMPOSITION` (a state row is always `MULTI_SERIES`, and a state row drawn
-  as a flow is refused); `render.series` is not required.
+- `render.shape` is `FLOW_DECOMPOSITION` or `WATERFALL` (a state row is always `MULTI_SERIES`, and a state
+  row drawn as a flow is refused); `render.series` is not required. A `WATERFALL` row takes the same flow
+  form, and is refused at load unless `inputs.dataset.value` is `{minus: [a, b]}` or a `compare`, the two
+  forms that serve a `walk` (a waterfall is drawn between the walk's start and end).
 - Each edge carries `sign`, one of `"positive"`, `"negative"` or `"zero"` (the sign of the child's
   signed net), and `value`, its absolute value. A child that nets to exactly zero IS emitted
   (`value` 0, `sign` `"zero"`, `node_kind` `"item"`) and its subtree is walked, so every level
