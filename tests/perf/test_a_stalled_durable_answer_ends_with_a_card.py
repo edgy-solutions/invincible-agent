@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 import httpx
 import pytest
@@ -65,6 +66,9 @@ def _durable(monkeypatch, snapshot, *, read_cost_s=0.0, clock=None):
             launched["body"] = json.loads(req.content or b"null")
             return httpx.Response(202, json={})
         reads["n"] += 1
+        if reads["n"] == 1:  # the run id is the answer id; its vault entry, while it runs
+            reads["rid"] = req.url.path.split("/")[-2]
+            reads["vault_while_running"] = gw.VAULT.state(reads["rid"])
         if clock is not None:
             clock["now"] += read_cost_s
         snap = snapshot(clock["now"] if clock else 0.0, reads["n"])
@@ -82,6 +86,13 @@ def _stuck(now, n):
     return {"status": "STARTED", "events": [], "steps": [PLAN, STUCK], "result": None}
 
 
+def _assert_waited(md):
+    """The stall card's own wording, not the generic failed-run card's (gov's G6)."""
+    assert "stopped making progress" in md, md
+    waited = re.search(r"[Nn]othing moved for (\d+) seconds", md)
+    assert waited and int(waited.group(1)) >= STALL_S, md
+
+
 def _assert_stall_card(blob, bundles):
     pairs = _parse(blob)
     finals = _of(pairs, "final_payload")
@@ -90,6 +101,7 @@ def _assert_stall_card(blob, bundles):
     assert len(comps) == 1 and comps[0]["archetype"] == "KNOWLEDGE_DOCUMENT"
     md = comps[0]["markdown_content"]
     assert "locate_subject" in md and TRACE in md, md
+    _assert_waited(md)
     errs = _of(pairs, "pipeline_error")
     assert len(errs) == 1, errs
     assert errs[0]["cause"] == "answer_run_stalled"
@@ -105,10 +117,14 @@ def _assert_stall_card(blob, bundles):
 async def test_a_durable_run_that_stops_moving_ends_in_the_card_naming_its_step_within_the_bound(
     base, clock, monkeypatch
 ):
-    _durable(monkeypatch, _stuck, clock=clock)
+    reads = _durable(monkeypatch, _stuck, clock=clock)
     blob = await _drive()
     _assert_stall_card(blob, base["bundles"])
     assert STALL_S <= clock["now"] <= STALL_S + 2 * POLL_S, clock["now"]
+    # the person's identity for the run is dropped when the stream stops waiting (gov's G8);
+    # the control: the same entry was live while the run was watched
+    assert reads["vault_while_running"] == "live", reads
+    assert gw.VAULT.state(reads["rid"]) is None
 
 
 @pytest.mark.asyncio
@@ -130,6 +146,7 @@ async def test_a_run_whose_every_read_is_refused_ends_in_the_card_within_the_bou
     assert len(finals) == 1, blob[-2000:]
     md = finals[0]["components"][0]["markdown_content"]
     assert "not recorded" in md and TRACE in md, md
+    _assert_waited(md)
     errs = _of(pairs, "pipeline_error")
     assert len(errs) == 1 and errs[0]["cause"] == "answer_run_stalled", errs
     assert errs[0]["trace_id"] == TRACE and "failed_step" not in errs[0], errs[0]
