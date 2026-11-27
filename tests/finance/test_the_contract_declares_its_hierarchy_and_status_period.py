@@ -70,40 +70,44 @@ def test_q4_the_wbs_depth_is_declared_zero_for_the_ev_fixture_and_four_for_progr
 
 # -- status_period -------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name,mutate", [
-    ("not_a_declared_column", lambda r: r.update(status_period="no_such_column")),
-    ("not_a_string_column", lambda r: _column(r, "status_period").update(type="integer")),
-    ("nullable", lambda r: _column(r, "status_period").pop("nullable")),
+@pytest.mark.parametrize("name,mutate,said", [
+    ("not_a_declared_column", lambda r: r.update(status_period="no_such_column"), "is not a declared column"),
+    ("not_a_string_column", lambda r: _column(r, "status_period").update(type="integer"),
+     "a status period column is a string"),
+    ("nullable", lambda r: _column(r, "status_period").pop("nullable"), "is nullable"),
     ("not_determined_by_the_scope", lambda r: r.update(dependencies=[
-        d for d in r["dependencies"] if d["by"] != "program_id"])),
-    ("scope_none", lambda r: r.update(scope="none")),
+        d for d in r["dependencies"] if d["by"] != "program_id"]), "not declared determined by the scope"),
+    ("scope_none", lambda r: r.update(scope="none"), "declared under `scope: none`"),
 ])
-def test_a_bad_status_period_is_refused_at_load_naming_key_and_column(name, mutate, tmp_path):
+def test_a_bad_status_period_is_refused_at_load_naming_key_and_column(name, mutate, said, tmp_path):
     raw = _raw()
     mutate(raw)
     with pytest.raises(ValueError) as exc:
         _load(raw, tmp_path)
     assert "status_period" in str(exc.value)
+    assert said in str(exc.value), str(exc.value)  # the case's OWN refusal, not a later check's
 
 
 # -- hierarchy -----------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name,value", [
-    ("not_a_list", "control_account"),
-    ("one_column", ["work_package"]),
-    ("a_duplicate", ["work_package", "work_package"]),
-    ("an_undeclared_column", ["control_account", "no_such_column", "work_package"]),
-    ("the_scope", ["program_id", "control_account", "work_package"]),
-    ("not_a_string_column", ["control_account", "period_number", "work_package"]),
-    ("the_last_does_not_determine_the_rest", ["work_package", "control_account"]),
+@pytest.mark.parametrize("name,value,said", [
+    ("not_a_list", "control_account", "at least 2 distinct column names"),
+    ("one_column", ["work_package"], "at least 2 distinct column names"),
+    ("a_duplicate", ["work_package", "work_package"], "at least 2 distinct column names"),
+    ("an_undeclared_column", ["control_account", "no_such_column", "work_package"], "is not a declared column"),
+    ("the_scope", ["program_id", "control_account", "work_package"], "is the scope"),
+    ("not_a_string_column", ["control_account", "period_number", "work_package"], "a level column is a string"),
+    ("the_last_does_not_determine_the_rest", ["work_package", "control_account"],
+     "the last level determines every other"),
 ])
-def test_a_bad_hierarchy_is_refused_at_load_naming_the_key(name, value, tmp_path):
+def test_a_bad_hierarchy_is_refused_at_load_naming_the_key(name, value, said, tmp_path):
     raw = _raw()
     raw["columns"].append({"name": "period_number", "type": "integer", "required": False, "nullable": False})
     raw["hierarchy"] = value
     with pytest.raises(ValueError) as exc:
         _load(raw, tmp_path)
     assert "hierarchy" in str(exc.value)
+    assert said in str(exc.value), str(exc.value)  # the case's OWN refusal, not a later check's
 
 
 def test_a_nullable_or_personal_hierarchy_column_is_refused(tmp_path):
