@@ -61,6 +61,7 @@ class JCtx(FakeCtx):
         if name not in self.JOURNALED:
             return super().run_typed(name, fn, options, *a, **kw)
         self.runs.append((name, getattr(options, "max_attempts", None)))
+        assert inspect.iscoroutinefunction(fn), f"{name} must be async: the gate belongs to the loop"
         if name in self.journal:                  # replayed: the stored result, fn not run
             fut = asyncio.get_running_loop().create_future()
             fut.set_result(self.journal[name])
@@ -1428,6 +1429,7 @@ async def test_a_restart_while_waiting_is_refused_and_calls_no_model(mesh_env):
     assert errs[0]["message"] == gw._LOST_MESSAGE and "ask it again" in errs[0]["message"]
     assert blob.index("event: pipeline_error") < blob.index("event: stream_end")
     assert [b["status"] for b in mesh_env.calls["bundles"]] == ["failed"]
+    assert mesh_env.calls["bundles"][0]["resolved_intent"]["failure_cause"]["cause"] == "answer_admission_lost"
     assert adm.get_gate().state()["running"] == 0 and adm.get_gate().state()["waiting"] == 0
 
 
@@ -1528,3 +1530,32 @@ def test_a_queued_answer_admitted_before_a_restart_keeps_running(monkeypatch):
 
     out, running = _run(go())
     assert out["id"] == "W" and starts == ["W", "W"] and running == 1
+
+
+def test_a_withdrawn_waiter_is_woken_with_admission_withdrawn():
+    async def go():
+        gate = _gate_full(("h",))
+        task = asyncio.ensure_future(gate.acquire("W", 5.0))
+        await _until(lambda: gate.position("W") == 1)
+        assert gate.withdraw("W") is True
+        with pytest.raises(AdmissionWithdrawn):
+            await asyncio.wait_for(task, 1.0)             # a hang fails here, never the suite
+
+    _run(go())
+
+
+def test_a_replayed_admitted_answer_the_gate_forgot_holds_its_slot_claimed(monkeypatch):
+    starts, fra = _blocking_run_answer(monkeypatch)
+
+    async def go():
+        fra.go = asyncio.Event()
+        journal = {"admission": {"arrived_at": 1.0, "decision": "queued"},
+                   "queue_wait": {"admission": "admitted"}}
+        t = asyncio.create_task(svc._run_impl(JCtx("W", journal), CFG, ops=fake_ops()))
+        await _until(lambda: starts == ["W"])
+        claimed = adm.get_gate()._holders["W"].claimed    # an unclaimed lease would expire
+        fra.go.set()
+        await t
+        return claimed
+
+    assert _run(go()) is True
