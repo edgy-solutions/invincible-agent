@@ -4,6 +4,8 @@
 
 **Opened at the 0.4.93 cut** (the architect's order of 2026-11-22: after every cut, open the next version as not yet cut, as a small PR). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.93 one. `Chart.yaml` stays at 0.4.93 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
 
+- **A flow row can read one fiscal period, or the program through it** (fin). No chart change. A dataset-kind flow row may list `period` and `basis` (`period` or `cumulative`) in `inputs.params`, both or neither; the cut follows the row's declared calendar, never string order, and the answer names its period and basis. The contract now reads `period.column` and `additive_over`; a cumulative row over a column not declared additive over its periods is refused at load. No shipped row lists them yet. **Upgrade note:** a deployment's own dataset contract that declares `period.column` must name a declared `string` column with `nullable: false`, and every name in a column's `additive_over` must be a declared column. Otherwise the contract file is refused, and engine-fin does not start when that file holds its `FIN_DATASET_CONTRACT`. Before the roll, load each of the deployment's contract files with `agent_fleet.utils.dataset_contracts.load_contracts`. Every contract in this repo passes.
+
 ## 0.4.93 — 2026-11-26
 
 **0.4.93 is 0.4.92 (`f7c3f5e6`) plus the 13 merges below, `f7c3f5e6..ac56bc40`, merged by sha in this order.** The architect moved it up (2026-11-26, via Chris): it is cut as soon as its three gates are merged. The gates are:
