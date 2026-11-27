@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.iagent.durable_answers import DurableAnswers  # noqa: E402
+from tests.perf import _restate_wire as wire  # noqa: E402
 
 
 def _client(handler, ttl=0.2):
@@ -21,6 +22,10 @@ def _client(handler, ttl=0.2):
 
     def h(req):
         calls.append((req.url.path, json.loads(req.content or b"null")))
+        handler_name = req.url.path.split("/SupervisorAnswer/", 1)[-1].partition("/")[2]
+        if "/SupervisorAnswer/" in req.url.path and wire.refuses(
+                handler_name, has_body=wire.request_has_body(req)):
+            return httpx.Response(400, json=wire.REFUSAL)
         return handler(req)
 
     da = DurableAnswers("http://r:8080", snapshot_ttl_s=ttl,
