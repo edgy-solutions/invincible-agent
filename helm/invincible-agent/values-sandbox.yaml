@@ -436,7 +436,7 @@ neo4j:
   enabled: true
   auth:
     username: "neo4j"
-    password: "changeme-neo4j-sandbox"  # CHANGE — must match agentFleet.secrets.NEO4J_PASSWORD
+    # password: in values-sandbox.secret.yaml (neo4j.auth.password); the chart ships no default (0.4.94 upgrade note).
   persistence:
     size: 5Gi  # sandbox — half the default
 
@@ -447,8 +447,7 @@ weaviate:
 
 fuseki:
   enabled: true
-  auth:
-    adminPassword: "changeme-fuseki-sandbox"
+  # auth.adminPassword: in values-sandbox.secret.yaml (fuseki.auth.adminPassword); the chart ships no default.
   persistence:
     size: 2Gi
 

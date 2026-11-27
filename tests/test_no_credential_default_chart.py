@@ -121,10 +121,21 @@ def test_values_yaml_carries_no_value_for_any_key():
     assert not set_, f"values.yaml still ships a default for: {set_}"
 
 
-def test_the_tracked_sandbox_values_carry_no_client_secret():
+def test_the_tracked_sandbox_values_carry_no_credential():
+    """Not a client secret, not the neo4j or fuseki password: the sandbox sets all 23 in its
+    secret file (values-sandbox.secret.yaml), which is never tracked."""
     doc = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
-    set_ = [k for k in CLIENT_KEYS if _get(doc, k) not in (None, "")]
-    assert not set_, f"values-sandbox.yaml tracks a client secret: {set_}"
+    set_ = [k for k in KEYS if _get(doc, k) not in (None, "")]
+    assert not set_, f"values-sandbox.yaml tracks a credential: {set_}"
+
+
+@pytest.mark.parametrize("key", ["neo4j.auth.password", "fuseki.auth.adminPassword"])
+def test_removing_the_sandbox_literal_leaves_the_base_map_in_place(key):
+    """A bare `auth:` (null) in a later values file DELETES the base map, and the template then
+    fails on a nil pointer rather than naming the key. The sandbox file keeps no empty parent."""
+    doc = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    parent = _get(doc, key.rsplit(".", 1)[0])
+    assert parent is None or isinstance(parent, dict), f"{key}: parent is {type(parent).__name__}"
 
 
 def test_no_template_defaults_a_key_it_requires():
