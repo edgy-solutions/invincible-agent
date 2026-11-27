@@ -176,8 +176,11 @@ _ALLOWLIST = frozenset({
     "mesh:failureTrendForThisPlatformByMonth",
     "mesh:filterByTag",
     "mesh:finBurnRate",
-    "mesh:finDrillRows",  # 2026-11-25 built-in drill read; see finCalendarPeriods
-    "mesh:finCalendarPeriods",  # 2026-11-25 built-in lookup; allowlisted like every fin verb, architect to confirm
+    # The two built-in lookups (#576) are allowlisted like every fin verb, with the architect's OK of 2026-11-27.
+    # This is not the end state: pages for the fin verbs are a later item, owed entitlement rows in
+    # policy/capability_grants.yaml (test_every_explained_verb_has_a_derived_invoker.py) and a sandbox run of each.
+    "mesh:finCalendarPeriods",  # 2026-11-25 built-in lookup
+    "mesh:finDrillRows",  # 2026-11-25 built-in drill read (#590); architect to confirm: the 2026-11-27 OK covers the two lookups only
     "mesh:finEacCalculation",
     "mesh:finEacComparison",
     "mesh:finFundingStatus",
