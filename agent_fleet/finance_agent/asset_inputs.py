@@ -597,6 +597,8 @@ def dataset_frame(read: Callable[[str], Any], urn: str, levels: tuple[str, ...],
         if not period_column:
             raise NotInModel("the row's contract declares no period column")
     named_version = (version_column,) if version_column else ()
+    # Named so a contract whose period column is not `required` still gets the `missing_column` check;
+    # `check_contract_schema` already selects every declared column the asset carries.
     named_period = (period_column,) if period is not None else ()
 
     t0 = time.perf_counter()
@@ -932,15 +934,21 @@ def read_dimension_rows(read: Callable[[str], Any], urn: str, *, contract: Any) 
                             columns=(contract.scope, *(c for c, _ in dimension_columns(contract))))
 
 
-def dimension_members(df: Any, urn: str, contract: Any, as_of: Any) -> dict[str, list[dict[str, Any]]]:
+def dimension_members(df: Any, urn: str, contract: Any, as_of: Any, *,
+                      versions: tuple[tuple[str, tuple[str, ...]], ...] = ()
+                      ) -> dict[str, list[dict[str, Any]]]:
     """The members the declarations and the asset's distinct rows give, by class URI. NO I/O.
 
     One member per (class, value, program), null and empty values skipped. A DIMENSION COLUMN's
     values come from the rows (`df`, as `read_dimension_rows` returns them). A VERSION or a PERIOD
-    never does: they are the contract's declared version list and its declared calendar's labels,
-    one member per program present in the scope column, so a caller sees one exactly when they can
-    view at least one of the dataset's programs. A value the data carries and no declaration lists
-    resolves to nothing."""
+    never does: they are the declared version lists and the declared calendar's labels, one member
+    per program present in the scope column, so a caller sees one exactly when they can view at
+    least one of the dataset's programs. A version comes from the dataset rows' declared contracts
+    (`versions`: (contract_id, labels) pairs), because the deployment contract is one row per
+    (work_package, period) and cannot hold a version column. A label two row contracts declare is
+    ONE member per program, its provenance naming the first contract in `contract_id` order: an
+    order of provenance, not a choice of figures. A value the data carries and no declaration
+    lists resolves to nothing."""
     scope = contract.scope
     programs = sorted({p for p in df[scope].to_list() if isinstance(p, str) and p})
     out: dict[str, list[dict[str, Any]]] = {}
@@ -955,9 +963,13 @@ def dimension_members(df: Any, urn: str, contract: Any, as_of: Any) -> dict[str,
                 "instance_id": ident, "label": ident, "class_uri": cls, "program": program,
                 "provenance": {"dataset": urn, "column": column, "as_of": as_of}})
     declared: list[tuple[str, tuple[str, ...], dict[str, Any]]] = []
-    if contract.versions:
-        declared.append((FIN + "Version", contract.versions,
-                         {"contract": contract.contract_id, "declaration": "version_dimension"}))
+    first: dict[str, str] = {}
+    for cid, labels in sorted(versions, key=lambda v: v[0]):
+        for label in labels:
+            first.setdefault(label, cid)
+    for cid in sorted(set(first.values())):
+        declared.append((FIN + "Version", tuple(l for l, c in first.items() if c == cid),
+                         {"contract": cid, "declaration": "version_dimension"}))
     try:
         calendar = _fiscal_calendar.calendar_for(contract.calendar)
     except _fiscal_calendar.FiscalCalendarError:

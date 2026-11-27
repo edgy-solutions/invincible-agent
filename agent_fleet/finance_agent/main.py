@@ -2898,6 +2898,14 @@ def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str
     )
 
 
+def _declared_versions() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """(contract_id, labels) for every declared dataset row whose contract declares a version
+    dimension, one per contract, by contract_id. `DECLARED` is read at call time."""
+    found = {r.contract.contract_id: tuple(r.contract.versions) for r in DECLARED.values()
+             if r.contract is not None and r.contract.versions}
+    return tuple(sorted(found.items()))
+
+
 def _declared_members(read: Callable[[str], Any], urn: str, contract: Any,
                       receipts: Optional[list[dict[str, Any]]] = None
                       ) -> dict[str, list[dict[str, Any]]]:
@@ -2921,7 +2929,7 @@ def _declared_members(read: Callable[[str], Any], urn: str, contract: Any,
                    code=type(exc).__name__)
         return {}
     as_of = (receipts[-1].get("as_of") if receipts else None)
-    return asset_inputs.dimension_members(df, urn, contract, as_of)
+    return asset_inputs.dimension_members(df, urn, contract, as_of, versions=_declared_versions())
 
 
 def _declared_for(caller: str) -> dict[str, list[dict[str, Any]]]:

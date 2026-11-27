@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 pl = pytest.importorskip("polars")
 
@@ -58,8 +59,9 @@ class _Who:
 class World:
     """One shipped contract served with a two-program asset."""
 
-    def __init__(self, contract, frame, client, gate, bearer):
+    def __init__(self, contract, frame, client, gate, bearer, tmp_path):
         self.contract, self.frame, self.client, self.gate, self._bearer = contract, frame, client, gate, bearer
+        self.tmp_path = tmp_path
         self.seed_program = engine.STATE.programs[0]
 
     def dims(self):
@@ -101,10 +103,12 @@ def _views(program, who):
 @pytest.fixture(params=["ev_fixture", "program_b"])
 def world(request, tmp_path, monkeypatch):
     if request.param == "ev_fixture":
+        contract_dir = EV_DIR
         contract, frame = dataset_contracts.load_contract("ev_fixture", EV_DIR), frame_of()
         cal_dirs = [SAMPLE_CAL]
     else:
-        contract, frame = dataset_contracts.load_contract("program_b", B_DIR / "contracts"), b_frame()
+        contract_dir = B_DIR / "contracts"
+        contract, frame = dataset_contracts.load_contract("program_b", contract_dir), b_frame()
         cal_dirs = [B_DIR / "fin_calendar"]
     frame = _two_programs(frame, contract)
     path = tmp_path / "asset.parquet"
@@ -112,11 +116,12 @@ def world(request, tmp_path, monkeypatch):
     gate = Gate(pl.scan_parquet(path))
     gate.granted = {ALICE, BOB, CAROL}  # DAN holds no grant on the asset
     monkeypatch.setattr(engine.asset_inputs, "_load_client", gate.load)
-    monkeypatch.setattr(engine.asset_inputs, "dataset_contract", lambda: contract)
     monkeypatch.setattr(engine, "can_view_program", lambda program, caller_id, **kw: _views(program, caller_id))
     monkeypatch.setenv("FIN_DATASET_URN", ROW_URN)
     monkeypatch.setenv("FIN_DATASET_BANNER", "SYNTHETIC TEST ASSET - not a real program.")
-    monkeypatch.setenv("FIN_DATASET_CONTRACT", "ev_fixture")
+    monkeypatch.setenv("FIN_DATASET_CONTRACT", request.param)
+    monkeypatch.setenv("DATASET_CONTRACT_DIR", str(contract_dir))
+    assert engine.asset_inputs.dataset_contract() == contract
     monkeypatch.setenv("CENTRAL_GATEWAY_URL", "http://gateway.test")
     monkeypatch.setenv("FIN_CALENDAR_OVERLAY_DIRS", os.pathsep.join(str(d) for d in cal_dirs))
     fiscal_calendar._cache.clear()
@@ -126,15 +131,62 @@ def world(request, tmp_path, monkeypatch):
 
     try:
         with TestClient(engine.app) as c:
-            yield World(contract, frame, c, gate, bearer)
+            yield World(contract, frame, c, gate, bearer, tmp_path)
     finally:
         fiscal_calendar._cache.clear()
 
 
-def _with_versions(world, monkeypatch):
-    contract = dataclasses.replace(world.contract, version_column="version", versions=VERSIONS)
-    monkeypatch.setattr(engine.asset_inputs, "dataset_contract", lambda: contract)
-    return contract
+ROW_CONTRACT = "row_versions"
+ROW_FN = "fin_b_versions_row"
+B_LEVELS = ["program_id", "wbs_2", "wbs_3", "wbs_4", "wbs_5", "control_account"]
+
+
+def _dataset_row():
+    """A dataset measure row, as an overlay file would declare it, read under `ROW_CONTRACT`."""
+    return {
+        "measure_id": ROW_FN, "verb": "xfinbversionsrow", "name": ROW_FN,
+        "inputs": {"params": {"program_id": {"required": True}, "version": {"required": True}},
+                   "dataset": {"urn": ROW_URN, "banner": "SYNTHETIC test fixture.", "contract": ROW_CONTRACT,
+                               "levels": B_LEVELS, "value": "amount", "per_path": "sum"},
+                   "other_threshold": "0"},
+        "computation": {"module": "agent_fleet.finance_agent.measure_modules.variance_decomposition",
+                        "function": "flow_edges", "version": "1.4.0",
+                        "derived_from": {"authority": "Test fixture, no external method",
+                                         "clause": "A signed sum split down a hierarchy",
+                                         "citation": "name-only",
+                                         "transcription": "each edge is the signed sum beneath its child"}},
+        "render": {"shape": "FLOW_DECOMPOSITION", "value_label": ROW_FN, "unit": "USD"},
+        "policy": {"status": "sample", "cells": ["PROGRAM_FINANCE"], "granted_by": "seed",
+                   "reason": "a test row over a synthetic fixture"},
+    }
+
+
+def _declare_versions(world, monkeypatch):
+    """Declare a dataset ROW whose contract declares versions, loaded the engine's own way: the
+    contract dir and the overlay dir set, then `_load_declared()` assigned to `DECLARED`. The
+    deployment contract (the world's) stays as it was: it cannot hold a version column."""
+    cdir, odir = world.tmp_path / "row_contracts", world.tmp_path / "row_overlay"
+    cdir.mkdir()
+    odir.mkdir()
+    world_dir = EV_DIR if world.contract.contract_id == "ev_fixture" else B_DIR / "contracts"
+    (cdir / f"{world.contract.contract_id}.yaml").write_bytes(
+        (world_dir / f"{world.contract.contract_id}.yaml").read_bytes())
+    doc = yaml.safe_load((B_DIR / "contracts" / "program_b_versions.yaml").read_text(encoding="utf-8"))
+    doc["contract_id"] = ROW_CONTRACT
+    doc["version_dimension"] = {"column": "version", "values": list(VERSIONS)}
+    (cdir / f"{ROW_CONTRACT}.yaml").write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    (odir / f"{ROW_FN}.yaml").write_text(yaml.safe_dump(_dataset_row(), sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("DATASET_CONTRACT_DIR", str(cdir))
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(odir))
+    monkeypatch.setenv("FIN_CALENDAR_OVERLAY_DIRS", os.pathsep.join(
+        [os.environ["FIN_CALENDAR_OVERLAY_DIRS"], str(B_DIR / "fin_calendar")]))
+    fiscal_calendar._cache.clear()
+    rows = engine._load_declared()
+    monkeypatch.setattr(engine, "DECLARED", rows)
+    assert rows[ROW_FN].contract.versions == VERSIONS
+    assert asset_inputs.contract_problems(engine.asset_inputs.dataset_contract()) == []
+    assert engine.asset_inputs.dataset_contract().versions == ()
+    return rows[ROW_FN].contract
 
 
 # -- (1) every declared dimension: a member's value resolves, a non-member's does not -------------
@@ -186,17 +238,26 @@ def _serve_versions(world, tmp_path):
 
 
 def test_3_a_declared_version_resolves_and_one_only_the_data_carries_does_not(world, monkeypatch, tmp_path):
-    _with_versions(world, monkeypatch)
+    row_contract = _declare_versions(world, monkeypatch)
     _serve_versions(world, tmp_path)
     cls = engine.FIN + "Version"
     for who, program in ((ALICE, ONE), (BOB, TWO)):
         got = world.resolve(VERSIONS[0], cls, who)
         assert [(c["instance_id"], c["score"], c["class_uri"], c["program"]) for c in got] == [
             (VERSIONS[0], 1.0, cls, program)], got
-        assert got[0]["provenance"] == {"contract": world.contract.contract_id, "declaration": "version_dimension"}
+        assert got[0]["provenance"] == {"contract": row_contract.contract_id, "declaration": "version_dimension"}
         assert world.resolve(ROGUE, cls, who) == []
         assert [m["instance_id"] for m in world.enumerate(cls, who)] == sorted(VERSIONS)
     assert world.resolve(VERSIONS[0], cls, CAROL) == [] and world.enumerate(cls, CAROL) == []
+
+
+def test_3b_with_no_dataset_row_declaring_versions_no_version_is_listed(world, monkeypatch, tmp_path):
+    monkeypatch.setattr(engine, "DECLARED", {})
+    _serve_versions(world, tmp_path)
+    cls = engine.FIN + "Version"
+    for who in (ALICE, BOB):
+        assert world.enumerate(cls, who) == []
+        assert world.resolve(VERSIONS[0], cls, who) == []
 
 
 # -- (4) a period: the declared calendar ---------------------------------------------------------
