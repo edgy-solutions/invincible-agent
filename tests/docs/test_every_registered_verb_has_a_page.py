@@ -180,7 +180,7 @@ _ALLOWLIST = frozenset({
     # This is not the end state: pages for the fin verbs are a later item, owed entitlement rows in
     # policy/capability_grants.yaml (test_every_explained_verb_has_a_derived_invoker.py) and a sandbox run of each.
     "mesh:finCalendarPeriods",  # 2026-11-25 built-in lookup
-    "mesh:finDrillRows",  # 2026-11-25 built-in drill read (#590); architect to confirm: the 2026-11-27 OK covers the two lookups only
+    "mesh:finDrillRows",  # 2026-11-25 built-in drill read (#590); the architect's OK of 2026-11-27, on the same terms
     "mesh:finEacCalculation",
     "mesh:finEacComparison",
     "mesh:finFundingStatus",
