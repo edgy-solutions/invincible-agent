@@ -8,6 +8,7 @@ nothing and names no column of any contract; the roles come from `asset_inputs.h
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Optional, Sequence
 
 try:  # flat in the image (/app), packaged in the repo
@@ -82,7 +83,9 @@ def locate(element: str, program_id: str, levels: Sequence[tuple[str, str]],
     """The index into `levels` (scope first) at which `element` stands, exactly. `rows` are the
     distinct tuples of the hierarchy columns (the scope level is the program itself). Absent
     everywhere: `NotInModel` naming the element only. At two or more levels: `element_ambiguous`,
-    naming each level's role and column, never choosing one."""
+    naming each level's role and column, never choosing one. An element below the top hierarchy level
+    that stands under more than one parent path: `element_ambiguous` too, naming every parent path
+    (sorted) and never choosing one; a name is a node only when its ancestors are one path."""
     found = []
     if element == program_id:
         found.append(0)
@@ -96,7 +99,16 @@ def locate(element: str, program_id: str, levels: Sequence[tuple[str, str]],
         raise LookupRefused(
             "element_ambiguous",
             f"the element {element!r} stands at more than one level: {where}; name one level")
-    return found[0]
+    at = found[0]
+    if at >= 2:  # below the top level: the node's ancestors must be one path
+        parents = sorted({tuple(r[:at - 1]) for r in rows if r[at - 1] == element})
+        if len(parents) > 1:
+            named = ", ".join(" / ".join(p) for p in parents)
+            raise LookupRefused(
+                "element_ambiguous",
+                f"the element {element!r} ({levels[at][1]}, column {levels[at][0]}) stands under more "
+                f"than one parent: {named}; ask for it under one of those parents")
+    return at
 
 
 def hierarchy_answer(program_id: str, element: str, depth: int, scope_column: str,
@@ -137,14 +149,22 @@ def hierarchy_answer(program_id: str, element: str, depth: int, scope_column: st
     # the table is a pre-order walk of the nested answer.
     ordered: list[dict[str, Any]] = []
 
-    def walk(nodes: list[dict[str, Any]], parent: str, d: int) -> None:
-        for n in nodes:
-            ordered.append({"name": n["name"], "level": n["level"], "role": n["role"],
-                            "parent": parent, "depth": d})
-            walk(n["children"], n["name"], d + 1)
+    # A node's identity is its path from the top hierarchy level down; `locate` guarantees the asked
+    # element's own ancestors are one path, so two nodes with one name under two parents never share it.
+    base: list[str] = []
+    if at >= 1:
+        base = [str(x) for x in (scoped[0][:at - 1] if scoped else ())] + [element]
 
-    walk(children, element, 1)
-    table = [{**r, "identity": f"{r['level']}/{r['name']}"} for r in ordered]
+    def walk(nodes: list[dict[str, Any]], parent: str, d: int, path: list[str]) -> None:
+        for n in nodes:
+            here = path + [n["name"]]
+            ordered.append({"name": n["name"], "level": n["level"], "role": n["role"],
+                            "parent": parent, "depth": d,
+                            "identity": json.dumps(here, ensure_ascii=False)})
+            walk(n["children"], n["name"], d + 1, here)
+
+    walk(children, element, 1, base)
+    table = ordered
     return {
         "element": element,
         "level": levels[at][0],

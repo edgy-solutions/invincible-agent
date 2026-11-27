@@ -33,8 +33,9 @@ marks is the engine's.
 
 HIERARCHY. `hierarchy` (optional, top level) names the breakdown's level columns, top first, below
 the scope: a list of at least two distinct string columns, each `nullable: false`, none the scope or
-personal data, and the LAST declared to determine every other (each lower level determines the
-levels above it). The reader holds the shape only. What each level IS (the roles) is the engine's.
+personal data, and the LAST declared to determine every other. Nothing more is enforced: a middle
+level's name may repeat under different parents (a work package still has one path). The reader
+holds the shape only. What each level IS (the roles) is the engine's.
 
 DIMENSIONS. `dimensions` (optional) maps a declared column to the CLASS its values are members of
 (a CURIE string such as `fin:OBSElement`), in declared order. The reader holds the shape only: a
@@ -379,13 +380,14 @@ def _parse_hierarchy(value: Any, types: dict[str, str], non_nullable: list[str],
             raise ValueError(f"hierarchy column {col!r} is nullable; a level column is declared nullable: false")
         if col == scope:
             raise ValueError(f"hierarchy column {col!r} is the scope; the levels are below the scope")
-        if col in personal:
+        if col in personal:  # cannot fire today: the reader refuses a personal column in a dependency first
+            # (test_a_nullable_or_personal_hierarchy_column_is_refused); kept as defence.
             raise ValueError(f"hierarchy column {col!r} is personal data; a level column is never personal")
     last = value[-1]
     undetermined = [c for c in value[:-1] if last not in _determined_by(dependencies, c)]
     if undetermined:
         raise ValueError(f"hierarchy column {last!r} (the last) is not declared to determine {undetermined}; "
-                         f"each lower level determines the levels above it")
+                         f"the last level determines every other; a middle level's name may repeat under different parents")
     return tuple(value)
 
 
