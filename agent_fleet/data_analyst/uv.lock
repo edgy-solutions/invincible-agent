@@ -442,7 +442,7 @@ dependencies = [
 requires-dist = [
     { name = "acryl-datahub" },
     { name = "duckdb" },
-    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.19.0" },
+    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.20.0" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
@@ -528,8 +528,8 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.19.0"
-source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.19.0#02e3db2e3eabfe32efc4af8b7d647bdde995472f" }
+version = "0.20.0"
+source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.20.0#3c245d4cb555ba05997f332a83924218c301ea8d" }
 dependencies = [
     { name = "clickhouse-connect" },
     { name = "connectorx" },
@@ -539,6 +539,7 @@ dependencies = [
     { name = "oracledb" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "pydantic" },
     { name = "pyiceberg" },
     { name = "pyodbc" },
     { name = "pyyaml" },

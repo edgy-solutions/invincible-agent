@@ -107,6 +107,10 @@ KNOWN_ARCHETYPES = frozenset({
     # The finance flow-map measure's shape (docs/plans/fin-variance-decomposition.md). Admitted
     # HERE FIRST, before cortex renders it, for the same ordering reason as MULTI_SERIES above.
     "FLOW_DECOMPOSITION",
+    # WATERFALL, the walk over a flow decomposition's level-1 edges (architect accepted the
+    # waterfall proposal, 2026-11-23). Admitted HERE FIRST, before cortex advertises it, for
+    # the same ordering reason as MULTI_SERIES and FLOW_DECOMPOSITION above.
+    "WATERFALL",
     # THE FIRST ARCHETYPE THAT IS ACTED ON RATHER THAN DRAWN, 2026-08-26. "make me a portfolio
     # canvas" answers with slot-ordered artifact ids and `canvasSeedFromArtifact` arranges them;
     # no component renders it. Added HERE FIRST, before the binding exists -- the ontology class

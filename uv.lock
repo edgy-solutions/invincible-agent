@@ -929,7 +929,7 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.19.0"
+version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "clickhouse-connect" },
@@ -940,15 +940,16 @@ dependencies = [
     { name = "oracledb" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "pydantic" },
     { name = "pyiceberg" },
     { name = "pyodbc" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/44/5c/d2eb96badd1f96626aa90de71de08ae472c821b680c09aa6ba9b7c359c89/edgy_dag_tools-0.19.0.tar.gz", hash = "sha256:337d989787fbf3619b00a0ad87e565a28ec18188206a88e0dc12f298f93bb768", size = 2649776, upload-time = "2026-11-25T16:22:05.185Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/c9/efcff0012302ee4b4f445e7465eb6faea012ee152e9ed27e0c5c88921b65/edgy_dag_tools-0.20.0.tar.gz", hash = "sha256:85f153432e2246d661f396b438e0d58ae54d9dbee9e91237efcee59c8a5a0387", size = 2684111, upload-time = "2026-11-27T04:32:57.623Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/62/1315591ea6f2f32b434e4a43197194c8cc9d7c50f1fe766f5b163e6fbc14/edgy_dag_tools-0.19.0-py3-none-any.whl", hash = "sha256:3652043a3f30a477818c69730b1827d4a69a3a71b0962c76ddf4a6e139d373b3", size = 865241, upload-time = "2026-11-25T16:22:03.64Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/b3/47d833d56ec72107c4421684e147407a34c0650754479f3c79d266926fde/edgy_dag_tools-0.20.0-py3-none-any.whl", hash = "sha256:4a0418be63cbae47ad957777ca679663aaab2b5b53fe38d4e876ebdcd774fad2", size = 870479, upload-time = "2026-11-27T04:32:55.446Z" },
 ]
 
 [[package]]
@@ -1435,7 +1436,7 @@ requires-dist = [
     { name = "dagster", specifier = ">=1.12.20" },
     { name = "dagster-postgres" },
     { name = "duckdb", marker = "extra == 'agent-fleet'", specifier = "==1.5.2" },
-    { name = "edgy-dag-tools", specifier = "==0.19.0" },
+    { name = "edgy-dag-tools", specifier = "==0.20.0" },
     { name = "fastapi" },
     { name = "fastapi", marker = "extra == 'agent-fleet'" },
     { name = "h2", marker = "extra == 'agent-fleet'" },

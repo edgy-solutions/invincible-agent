@@ -200,7 +200,7 @@ spec:
     {{- include "invincible-agent.selectorLabels" (dict "component" $name "root" $) | nindent 4 }}
 {{- end }}{{/* end $codeLocationEnabled */}}
 {{- if $brokerEnabled }}
-{{- /* The source types the PINNED broker image registers an as-of reader for. At v0.19.0,
+{{- /* The source types the PINNED broker image registers an as-of reader for. At v0.20.0,
      `dag_tools.domain_broker.ticket_identity.AVAILABLE_AS_OF_READERS` is built from
      `as_of_readers.SHIPPED_AS_OF_READERS`: postgres and s3_parquet.
      It moves only in the commit that moves the broker image pin, copied from the set dag-tools

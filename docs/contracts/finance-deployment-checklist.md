@@ -81,10 +81,11 @@ The contract's `tags.required` is empty for the sample asset.
 ## 6. The as-of source
 
 There is **no deployment key** for this. What engine-fin cites is whatever the routing ticket carries:
-- **As of dag-tools 0.19.0, the broker ships as-of readers for `postgres` and `s3_parquet`, and
+- **As of dag-tools 0.20.0, the broker ships as-of readers for `postgres` and `s3_parquet`, and
   selects none by default** (`userDeployments.dag-tools.broker.asOf.readers: []`, so
   `DAG_TOOLS_AS_OF_READERS` is unset). Until a deployment names a type there, nothing reads an
   as-of when the read is authorized.
+- **dag-tools is now 0.20.0, and an unknown key in a dlt asset-group config is refused.** A dlt asset-group config (`DltAssetGroupConfig`) with an unknown key is refused at load rather than ignored, so a config with a stale or misspelt key fails where it used to pass silently. Check a deployment's dlt config keys before moving to this pin.
 - **When the ticket carries one, it was advertised when the asset was published.** That is, the
   ticket has a top-level `as_of`, `snapshot_id` or `version`, put there by the IO manager's
   `mesh_extra()`. No shipped IO manager adds one.
