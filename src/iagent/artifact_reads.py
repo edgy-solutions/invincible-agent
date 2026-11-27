@@ -75,6 +75,18 @@ ORDER BY id
 """
 
 
+# How long the caller's own answers took, newest first: the source of the time an answer is
+# expected to take. Scoped to the caller by the PRODUCED_FOR edge, the writer's key, so a row the
+# caller cannot open is never read. `duration_ms` is stamped only on a complete answer.
+RECENT_DURATIONS_CYPHER = """
+MATCH (a:AnswerArtifact)-[:PRODUCED_FOR]->(:Actor {actor_id: $user_id})
+WHERE a.status = 'complete' AND a.duration_ms IS NOT NULL
+RETURN a.duration_ms AS duration_ms
+ORDER BY a.valid_as_of DESC
+LIMIT $limit
+"""
+
+
 def _as_dict(rec: Any) -> dict:
     return rec.data() if hasattr(rec, "data") else dict(rec)
 
