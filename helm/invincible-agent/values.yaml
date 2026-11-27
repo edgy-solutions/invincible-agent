@@ -215,7 +215,22 @@ global:
     # altered both answer 404; the same read for be1d177 returns d02e6481 (the control).
     # be1d177..1660b84 changes src/ only: no Dockerfile, package.json, entrypoint or workflow change,
     # and no import.meta.env read added.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:cf64568d8b59cce54861967072ac3db54072068b9bd37817599e007e578d0766"
+    # RE-PINNED FOR 0.4.93 (architect via Chris, 2026-11-26: "0.4.93's cortex pin moves to cortex-ui
+    # 0.4.2, not 0.4.1"): 1660b84 -> cortex-ui-0.4.2 at e65409b08e79f8bd5db2fa8dbc801dcaf2d722be, index
+    # digest 9e1d6573. 1660b84 is its ancestor, so every 1660b84 line above still holds. It adds:
+    # - a truncated ranking draws the tail the producer declares (29661a0), the move 0.4.93 owed;
+    # - the askable list follows the active persona, and a pick sends `askable_pick` (lane 74's
+    #   #545 terms, in 0.4.92);
+    # - the menu blocks (`GET /menu_blocks`) are merged over the hand menu;
+    # - five finance cards draw the served source sentence (#528);
+    # - the Waterfall card, chosen only for a served `render.shape: WATERFALL`; no engine serves
+    #   that shape yet, so no card changes.
+    # Measured before pinning: cortex's build run at e65409b pushed this digest and its retag run
+    # used it; the release record names the same index (amd64 000a39a7, arm64 fbfdf8be). Cortex
+    # read `0.4.2` and the full sha to this digest and the 0.4.1 control to 84dead33.
+    # 1660b84..e65409b changes no Dockerfile or package.json and adds no import.meta.env read. Its
+    # only workflow changes are cortex's own build, retag and chart-release jobs.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:9e1d65738fa75eb71c7c1578b15185cb02be0eec1466be6cf3d5fdb011a3c459"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
