@@ -1017,3 +1017,75 @@ role cannot be given different passwords. Override the name to use a pre-made Se
 {{- define "invincible-agent.electricDbSecretKey" -}}
 {{- default "password" .Values.electric.db.secret.key -}}
 {{- end }}
+
+{{/*
+ELECTRIC'S pg_hba (postgresql.electricHba.enabled, default off). Prints "true" when on, nothing when off. REFUSES to render
+unless:
+- postgresql.enabled: the chart renders no pg_hba for an external Postgres;
+- electric.enabled and electric.db.enabled: a rule keyed on Electric's role does nothing while Electric logs in as the main
+  user (templates/electric.yaml, the else branch);
+- postgresql.imageStyle is "postgres" or "bitnami";
+- for bitnami, postgresql.electricHba.bitnamiDefaultsConfirmed is true: the Bitnami default lines are INFERRED from what
+  its scripts are documented to generate, not readable from the chart, so the live `pg_hba_file_rules` read is the gate
+  (set the flag after it, and put any differing rows in postgresql.electricHba.defaultLines);
+- the role is a plain identifier and the auth method is one the default image uses.
+*/}}
+{{- define "invincible-agent.electricHba" -}}
+{{- if .Values.postgresql.electricHba.enabled -}}
+{{- $style := default "postgres" .Values.postgresql.imageStyle -}}
+{{- if not .Values.postgresql.enabled -}}{{- fail "postgresql.electricHba.enabled requires postgresql.enabled: the chart renders no pg_hba for an external Postgres" -}}{{- end -}}
+{{- if not (and .Values.electric.enabled .Values.electric.db.enabled) -}}{{- fail "postgresql.electricHba.enabled requires electric.enabled and electric.db.enabled: a rule keyed on Electric's role does nothing while Electric logs in as the main user" -}}{{- end -}}
+{{- if not (has $style (list "postgres" "bitnami")) -}}{{- fail (printf "postgresql.electricHba.enabled supports postgresql.imageStyle postgres or bitnami (got %q)" $style) -}}{{- end -}}
+{{- if and (eq $style "bitnami") (not .Values.postgresql.electricHba.bitnamiDefaultsConfirmed) -}}{{- fail "postgresql.electricHba.enabled with postgresql.imageStyle=bitnami requires postgresql.electricHba.bitnamiDefaultsConfirmed=true: the Bitnami default pg_hba lines are inferred, not readable from the chart; read pg_hba_file_rules on the live server first, put any differing rows in postgresql.electricHba.defaultLines, then confirm" -}}{{- end -}}
+{{- if not (regexMatch "^[a-z_][a-z0-9_]*$" .Values.electric.db.role) -}}{{- fail (printf "electric.db.role: %q is not a plain lower-case SQL identifier" .Values.electric.db.role) -}}{{- end -}}
+{{- if not (has .Values.postgresql.electricHba.authMethod (list "scram-sha-256" "md5")) -}}{{- fail (printf "postgresql.electricHba.authMethod: %q is not scram-sha-256 or md5" .Values.postgresql.electricHba.authMethod) -}}{{- end -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+The pg_hba.conf text. First match wins. Electric's role FIRST (identical for both image styles): its own database over the
+network (a logical replication connection names its database, so this line also admits the slot Electric opens there),
+then every other database, the `replication` keyword (physical replication) and the local socket are rejected for it.
+Then the image's default lines, ASSUMED (not readable from the chart), unless postgresql.electricHba.defaultLines gives
+the rows read from the live server:
+- postgres (library image): initdb's trust lines for the local socket and loopback, for databases and for replication, and
+  the entrypoint's final `host all all all <method>` line.
+- bitnami: INFERRED from its scripts' documented behaviour: initdb's lines with trust replaced by the password method (the
+  local socket, loopback, and the replication lines), then `host all all 0.0.0.0/0` and `host all all ::/0` with the method.
+*/}}
+{{- define "invincible-agent.electricHbaConf" -}}
+{{- $role := .Values.electric.db.role -}}
+{{- $db := include "invincible-agent.pgDatabase" . -}}
+{{- $m := .Values.postgresql.electricHba.authMethod -}}
+{{- $style := default "postgres" .Values.postgresql.imageStyle -}}
+# Rendered by the chart (postgresql.electricHba). First match wins.
+host    {{ $db }}    {{ $role }}    all    {{ $m }}
+host    all    {{ $role }}    all    reject
+host    replication    {{ $role }}    all    reject
+local   all    {{ $role }}    reject
+local   replication    {{ $role }}    reject
+{{- if .Values.postgresql.electricHba.defaultLines }}
+# The image's default lines, as read from the live server (postgresql.electricHba.defaultLines).
+{{ .Values.postgresql.electricHba.defaultLines | trim }}
+{{- else if eq $style "bitnami" }}
+# The image's default lines (ASSUMED, bitnami: initdb's lines with trust replaced by the method, then remote).
+local   all    all    {{ $m }}
+host    all    all    127.0.0.1/32    {{ $m }}
+host    all    all    ::1/128    {{ $m }}
+local   replication    all    {{ $m }}
+host    replication    all    127.0.0.1/32    {{ $m }}
+host    replication    all    ::1/128    {{ $m }}
+host    all    all    0.0.0.0/0    {{ $m }}
+host    all    all    ::/0    {{ $m }}
+{{- else }}
+# The image's default lines (ASSUMED, library postgres: initdb defaults plus the entrypoint's last line).
+local   all    all    trust
+host    all    all    127.0.0.1/32    trust
+host    all    all    ::1/128    trust
+local   replication    all    trust
+host    replication    all    127.0.0.1/32    trust
+host    replication    all    ::1/128    trust
+host    all    all    all    {{ $m }}
+{{- end }}
+{{- end }}

@@ -18,11 +18,22 @@ spec:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "postgresql" "root" .) | nindent 8 }}
         {{- include "invincible-agent.statefulSpreadLabel" . | nindent 8 }}
+      {{- if include "invincible-agent.electricHba" . }}
+      annotations:
+        # A changed pg_hba restarts Postgres: the file is read at start, and a mounted change must not sit unloaded.
+        checksum/pg-hba: {{ include "invincible-agent.electricHbaConf" . | sha256sum }}
+      {{- end }}
     spec:
       {{- include "invincible-agent.statefulSpreadAffinity" . | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if include "invincible-agent.electricHba" . }}
+      volumes:
+        - name: pg-hba
+          configMap:
+            name: {{ .Release.Name }}-postgresql-hba
       {{- end }}
       containers:
         - name: postgresql
@@ -56,6 +67,10 @@ spec:
             - "max_replication_slots=10"
             - "-c"
             - "max_wal_senders=10"
+            {{- if include "invincible-agent.electricHba" . }}
+            - "-c"
+            - "hba_file=/etc/iagent-pg-hba/pg_hba.conf"
+            {{- end }}
           {{- end }}
           ports:
             - name: tcp-pg
@@ -93,6 +108,12 @@ spec:
               {{- else }}
               mountPath: /var/lib/postgresql/data
               {{- end }}
+            {{- if include "invincible-agent.electricHba" . }}
+            - name: pg-hba
+              {{- /* bitnami: its scripts copy a pg_hba.conf mounted in /bitnami/postgresql/conf into their conf dir (inferred, documented behaviour); the library image reads it through -c hba_file above. */}}
+              mountPath: {{ if eq $style "bitnami" }}/bitnami/postgresql/conf{{ else }}/etc/iagent-pg-hba{{ end }}
+              readOnly: true
+            {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data

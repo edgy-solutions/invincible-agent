@@ -388,6 +388,21 @@ postgresql:
       size: 10Gi
     initdb:
       scriptsConfigMap: "{{ .Release.Name }}-initdb"
+  # Electric's role confined to the projections database in pg_hba (off by default). Renders a ConfigMap; ONE POSTGRES
+  # RESTART at the roll (pg_hba is read at start). Normal AND `replication` lines: Electric's role matches only the
+  # projections database (a logical replication connection names its database, so that line admits the slot Electric
+  # opens there); every other database, physical replication and the local socket are rejected for it. The image's other
+  # lines are ASSUMED defaults (not readable from the chart; see templates/_helpers.tpl). Library image: `-c hba_file=`.
+  # Bitnami: the ConfigMap is mounted in /bitnami/postgresql/conf, which its scripts copy (inferred); it REFUSES without
+  # bitnamiDefaultsConfirmed. Always refuses unless postgresql.enabled, electric.enabled and electric.db.enabled (a rule
+  # keyed on Electric's role does nothing while Electric logs in as the main user).
+  electricHba:
+    enabled: false
+    authMethod: scram-sha-256
+    # bitnami only: set true AFTER reading pg_hba_file_rules on the live server (the default lines for that image are inferred).
+    bitnamiDefaultsConfirmed: false
+    # Optional: the default rows as read from the live server, replacing the assumed ones. Empty = the assumed defaults.
+    defaultLines: ""
 
 # Use this when postgresql.enabled=false (bring your own Postgres)
 externalPostgresql:

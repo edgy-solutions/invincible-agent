@@ -1,0 +1,12 @@
+{{- /* Electric's pg_hba (postgresql.electricHba.enabled; off by default). See the helpers for the refusals and the rule order. */ -}}
+{{- if include "invincible-agent.electricHba" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-postgresql-hba
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+data:
+  pg_hba.conf: |
+    {{- include "invincible-agent.electricHbaConf" . | nindent 4 }}
+{{- end }}

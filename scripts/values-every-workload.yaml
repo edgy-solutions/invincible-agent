@@ -56,3 +56,12 @@ keycloak:
   nonInteractiveUsers:
     - username: platform-registrar
       email: platform-registrar@example.com
+# Electric's pg_hba on the Bitnami image sandbox runs (adds a ConfigMap and a mount, no pod; the Electric role needs the
+# database login on, and the Bitnami default lines are confirmed as read).
+electric:
+  db:
+    enabled: true
+postgresql:
+  electricHba:
+    enabled: true
+    bitnamiDefaultsConfirmed: true
