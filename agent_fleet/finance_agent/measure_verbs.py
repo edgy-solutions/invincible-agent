@@ -155,13 +155,13 @@ _LISTING_KEYS = ("example_ask", "group_label")
 #: The render shapes this engine's runner fills: one declared series per period. A MECHANISM list,
 #: not a vocabulary: the archetype vocabulary is `capability_admission.KNOWN_ARCHETYPES`, which the
 #: flattened image cannot import, so a test ties this set to it (this set must be a subset).
-COMPUTED_SHAPES = frozenset({"MULTI_SERIES", "FLOW_DECOMPOSITION"})
+COMPUTED_SHAPES = frozenset({"MULTI_SERIES", "FLOW_DECOMPOSITION", "WATERFALL"})
 #: The two kinds of row, told apart by `inputs.dataset`, and the shapes each kind draws as. A
 #: dataset row's shape selects its `inputs.dataset` form: levels and a value for a flow
 #: (`_check_dataset`), a period column and named columns for a series (`_check_dataset_series`).
 KIND_STATE, KIND_DATASET = "state", "dataset"
 _SHAPES_OF_KIND = {KIND_STATE: frozenset({"MULTI_SERIES"}),
-                   KIND_DATASET: frozenset({"FLOW_DECOMPOSITION", "MULTI_SERIES"})}
+                   KIND_DATASET: frozenset({"FLOW_DECOMPOSITION", "MULTI_SERIES", "WATERFALL"})}
 # `window` is refused: a read is the whole program, or (a flow row listing `period` and `basis`) one period of it.
 _DATASET_PARAMS = frozenset({"program_id", "version", "version_a", "version_b", "period", "basis"})
 _VERSION_PARAMS = ("version", "version_a", "version_b")
@@ -817,6 +817,12 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         raise ValueError(
             f"render.shape {rnd['shape']!r} does not match a {kind} row, which draws as one of "
             f"{sorted(_SHAPES_OF_KIND[kind])}")
+    if rnd["shape"] == "WATERFALL" and dataset.get("value_op", "column") not in ("minus", "compare"):
+        raise ValueError(
+            f"measure {mid!r} declares render.shape WATERFALL, but a waterfall is drawn between the "
+            f"walk's start and end and this row serves no walk; a flow row serves a walk only when "
+            f"inputs.dataset.value is {{minus: [a, b]}} or {{compare: {{column, by}}}} (a row taking "
+            f"version_a and version_b)")
     if rnd["shape"] == "MULTI_SERIES":
         _need(raw, "render.series")
         series, reference = _check_series(rnd, single=kind == KIND_STATE)
