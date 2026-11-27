@@ -7876,6 +7876,11 @@ def _sse(event: str, data: str) -> str:
 #   pipeline_error cause answer_admission_lost → the answer was WAITING when the answer service
 #                     restarted (retryable): not admitted, no model call, the person is asked to
 #                     ask again (ruled 2026-11-24). The queue is never rebuilt. A cause, not a new event.
+#   pipeline_error cause answer_admission_unreadable → the answer was WAITING and its place could
+#                     not be read for IAGENT_ANSWER_WAITER_IDLE_S (retryable): not admitted, no model
+#                     call; then the failure card (final_payload, step `admission`) and stream_end, and
+#                     the place is withdrawn. Only consecutive FAILED reads count; a readable wait has no
+#                     ceiling (ADR-0072 5). A cause, not a new event.
 
 
 def _stage(
@@ -10240,6 +10245,7 @@ def _answer_backend():
     Every dagster-side helper is looked up when it is CALLED (the lambdas), never bound here:
     the seam's tests monkeypatch the module-level names."""
     global _DURABLE_ANSWERS
+    from src.iagent.answer_admission import waiter_idle_from_env
     if _answer_path() == "durable":
         if _DURABLE_ANSWERS is None:
             from src.iagent.durable_answers import DurableAnswers
@@ -10266,6 +10272,7 @@ def _answer_backend():
             failed_cause="answer_run_failed",
             payload=client.get_ui_payload_output,
             poll_s=client.poll_interval_s,
+            unreadable_s=waiter_idle_from_env(),
             max_ticks=int(round(900 / client.poll_interval_s)),
             queue=client.get_queue,
             withdraw=client.withdraw,
@@ -10296,6 +10303,7 @@ def _answer_backend():
         failed_cause="dagster_run_failed",
         payload=lambda rid: _get_ui_payload_output(rid),
         poll_s=1.0,
+        unreadable_s=waiter_idle_from_env(),
         max_ticks=900,
     )
 
@@ -10352,6 +10360,19 @@ def _lost_error() -> str:
     admission, and the queue is not rebuilt."""
     return _perror(_LOST_MESSAGE, kind="understanding", retryable=True,
                    cause="answer_admission_lost")
+
+
+_UNREADABLE_MESSAGE = ("Your question was waiting for its turn, and its place in the queue could "
+                       "not be read, so it was not started. Please ask it again.")
+
+
+def _unreadable_error(trace_id: str | None) -> str:
+    """The refusal for a queued answer whose place could not be read for the gate's waiter-idle
+    time (gov's finding on #422): not admitted, no model call. Its wait with GOOD reads has no
+    ceiling (ADR-0072 5); only an unreadable one ends."""
+    return _perror(_UNREADABLE_MESSAGE, kind="understanding", retryable=True,
+                   cause="answer_admission_unreadable", failed_step="admission",
+                   trace_id=trace_id or None)
 
 
 def _busy_error(queue_max) -> str:
@@ -10744,6 +10765,8 @@ async def _generate_dagster_stream_inner(
                     _res["queued"] = True
                     _wq_t0 = time.monotonic()
                     _wq_last = None
+                    _wq_ok = _wq_t0                     # the last GOOD read; the wait's start before the first
+                    _wq_bound = float(_rb.unreadable_s)
                     while True:
                         await asyncio.sleep(_rb.poll_s)
                         # ONE read decides. The place comes from the SAME snapshot as the
@@ -10752,7 +10775,21 @@ async def _generate_dagster_stream_inner(
                         _wsd = await _rb.status(_rid)
                         _wst = _wsd.get("status")
                         if _wst is None:
-                            continue        # the read failed: not an admission, look again
+                            # The read failed: not an admission. Look again, but not for ever (gov, #422): past the
+                            # gate's waiter-idle time an unread waiter is gone from the gate anyway. A GOOD read
+                            # resets this; a queued wait whose reads succeed has no ceiling (ADR-0072 5).
+                            if time.monotonic() - _wq_ok < _wq_bound:
+                                continue
+                            logger.warning("admission wait for %s: no readable status for %.1fs; ended with the "
+                                           "failure card", _rid, time.monotonic() - _wq_ok)
+                            yield _unreadable_error(trace_id)
+                            yield _sse("final_payload", json.dumps(_failure_card("admission", trace_id or None)))
+                            await _dispatch_answer_artifact(_boundary_failure_bundle(
+                                request, user_id, user_persona, entitled_domains, entitlement_source,
+                                {"cause": "answer_admission_unreadable", "where": "admission"}))
+                            yield _sse("stream_end", "{}")
+                            return      # _res stays queued: the boundary's finally WITHDRAWS the place
+                        _wq_ok = time.monotonic()
                         if _wst == "LOST":
                             # The gate no longer knows this answer (a restart while it waited):
                             # refused, never admitted, no model call (ruled 2026-11-24).
