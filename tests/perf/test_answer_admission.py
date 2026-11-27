@@ -27,6 +27,7 @@ from src.iagent import supervisor_service as svc  # noqa: E402
 from src.iagent.answer_admission import AdmissionGate, AdmissionWithdrawn  # noqa: E402
 from src.iagent.durable_answers import DurableAnswers  # noqa: E402
 
+from tests.perf import _restate_wire as wire  # noqa: E402
 from tests.perf.test_runless_adapter import fake_ops  # noqa: E402
 from tests.perf.test_supervisor_service import CFG, FakeCtx, _Shared  # noqa: E402
 from tests.perf.test_trace_spans import (  # noqa: E402,F401
@@ -829,6 +830,8 @@ class Mesh:
             _, _, rest = url.partition("/SupervisorAnswer/")
             aid, _, handler = rest.partition("/")
             self.log.append(("post", handler, aid))
+            if wire.refuses(handler, has_body=json is not None or "content" in kw or "data" in kw):
+                return _Resp(400, dict(wire.REFUSAL))
             ctx = _Shared(FakeCtx(aid))
             if handler == "run/send":
                 self.launched[aid] = json

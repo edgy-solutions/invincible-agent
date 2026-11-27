@@ -32,8 +32,10 @@ class DurableAnswers:
         The decision dict, or None on any error."""
         try:
             async with self._client_factory() as client:
+                # Restate's ingress refuses any body (400) to a handler that declares no input;
+                # send none.
                 resp = await client.post(
-                    f"{self._ingress}/SupervisorAnswer/{answer_id}/reserve", json={})
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/reserve")
                 resp.raise_for_status()
                 body = resp.json()
             return body if isinstance(body, dict) and "decision" in body else None
@@ -46,7 +48,7 @@ class DurableAnswers:
         try:
             async with self._client_factory() as client:
                 resp = await client.post(
-                    f"{self._ingress}/SupervisorAnswer/{answer_id}/release", json={})
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/release")
                 resp.raise_for_status()
                 body = resp.json()
             return bool(isinstance(body, dict) and body.get("released"))
@@ -72,7 +74,7 @@ class DurableAnswers:
         try:
             async with self._client_factory() as client:
                 resp = await client.post(
-                    f"{self._ingress}/SupervisorAnswer/{answer_id}/snapshot", json={})
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/snapshot")
                 resp.raise_for_status()
                 snap = resp.json()
             return snap if isinstance(snap, dict) else None
@@ -143,7 +145,7 @@ class DurableAnswers:
         try:
             async with self._client_factory() as client:
                 resp = await client.post(
-                    f"{self._ingress}/SupervisorAnswer/{answer_id}/withdraw", json={})
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/withdraw")
                 resp.raise_for_status()
                 body = resp.json()
             return bool(isinstance(body, dict) and body.get("withdrawn"))
