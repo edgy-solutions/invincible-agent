@@ -26,5 +26,6 @@ type: application
 # 0.4.90 = 029166db..e6d0224a (11 merges: #415, #421, #423, #424, #429, then the train #416 to #431; the list is in CHANGELOG.md), cut 2026-11-18.
 # 0.4.91 = 36393237..bee9cbb6 (64 merges, #430 to #499; the list is in CHANGELOG.md), cut 2026-11-21.
 # 0.4.92 = 950b3eb9..cad87001 (59 merges, #410 to #567; the list is in CHANGELOG.md), cut 2026-11-25.
-version: 0.4.92
+# 0.4.93 = f7c3f5e6..ac56bc40 (13 merges, #572 to #585; the list is in CHANGELOG.md), cut 2026-11-26.
+version: 0.4.93
 appVersion: "2026.07.02"

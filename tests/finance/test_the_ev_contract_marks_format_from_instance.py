@@ -191,15 +191,15 @@ def test_a_key_under_an_unread_parent_is_unread():
             assert "unread" in tags_of(line), f"line {i + 1}: {line[:70]}"
 
 
-def test_under_period_only_the_calendar_is_read():
-    """The parser reads `period.calendar` and nothing else under `period` (ruled 2026-11-23)."""
+def test_under_period_only_the_calendar_and_the_column_are_read():
+    """The parser reads `period.calendar` and `period.column` and nothing else under `period`."""
     seen = set()
     for i, line in enumerate(LINES):
         m = re.match(r"^  ([\w/]+):", line)
         if m and _section_of(i) == "period":
             seen.add(m.group(1))
             read = "unread" not in tags_of(line)
-            assert read == (m.group(1) == "calendar"), f"line {i + 1}: {line[:70]}"
+            assert read == (m.group(1) in {"calendar", "column"}), f"line {i + 1}: {line[:70]}"
     assert "calendar" in seen
 
 
