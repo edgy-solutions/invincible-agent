@@ -25,12 +25,14 @@ the first symptom three layers away. Prose names and component names are differe
 """
 from __future__ import annotations
 
+import collections
 import copy
 import hashlib
 import importlib
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager, contextmanager
 import threading
 from datetime import datetime, timezone
@@ -77,19 +79,69 @@ except ImportError:
 try:  # same three-shape idiom; `utils` is a sibling top-level module in the flattened image
     from utils.subject_coverage import dead_end_classes as _dead_end
     from utils.subject_coverage import unroutable_classes as _unroutable
-    from utils.program_membership import can_view_program
+    from utils.program_membership import can_view_program, directory_configured
     from utils.entitled_domains import entitled_domains
     from utils.recipient_readers import can_read_recipient
     from utils.export_capability import can_export
 except ImportError:
     from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
     from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
-    from agent_fleet.utils.program_membership import can_view_program
+    from agent_fleet.utils.program_membership import can_view_program, directory_configured
     from agent_fleet.utils.entitled_domains import entitled_domains
     from agent_fleet.utils.recipient_readers import can_read_recipient
     from agent_fleet.utils.export_capability import can_export
 
 log = logging.getLogger(__name__)
+
+# The reason lines (`fin.resolve_empty`, `fin.enumerate_empty`) go through their own logger, so the
+# engine can make THEM visible at INFO without touching root or `log`.
+_reason_log = logging.getLogger(f"{__name__}.reasons")
+_REASON_MARK = "_fin_reason_handler"
+
+
+def _emits_info(lg: logging.Logger) -> bool:
+    """Would an INFO record on `lg` reach a handler? Both the effective level and a handler on
+    the propagation chain must allow it (otherwise it falls to `logging.lastResort`, WARNING)."""
+    if lg.getEffectiveLevel() > logging.INFO:
+        return False
+    cur: Optional[logging.Logger] = lg
+    while cur:
+        if cur.handlers:
+            return True
+        cur = cur.parent if cur.propagate else None
+    return False
+
+
+def _ensure_reasons_visible() -> bool:
+    """Make the reason lines visible at INFO IF AND ONLY IF they would otherwise vanish.
+
+    Additive and deferential, as `iagent_mesh.transport_auth.ensure_gauge_visible` is: if the
+    records already emit, do nothing; if only the level filters them, lower the level on
+    `_reason_log` alone; only with no handler anywhere on the chain attach one stdout handler
+    to `_reason_log`, never to root. Idempotent. `FIN_REASON_LOG_AUTOCONFIG=0` disables it.
+    Returns True if this call changed anything.
+    """
+    if os.getenv("FIN_REASON_LOG_AUTOCONFIG", "1").lower() in ("0", "false", "no"):
+        return False
+    if _emits_info(_reason_log):
+        return False
+    changed = False
+    if _reason_log.getEffectiveLevel() > logging.INFO:
+        _reason_log.setLevel(logging.INFO)
+        changed = True
+    if _emits_info(_reason_log):
+        return changed
+    if not any(getattr(h, _REASON_MARK, False) for h in _reason_log.handlers):
+        h = logging.StreamHandler(sys.stdout)
+        h.setLevel(logging.INFO)
+        h.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+        setattr(h, _REASON_MARK, True)
+        _reason_log.addHandler(h)
+        changed = True
+    return changed
+
+
+_ensure_reasons_visible()
 
 # This engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml): who may
 # download a package for one of ITS recipient scopes (`export.RECIPIENT_SCOPES`). Identity, not a
@@ -875,6 +927,35 @@ def list_verbs() -> dict[str, Any]:
     ]}
 
 
+def _answer_sources(urn: Optional[str], receipt: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The `sources` of an answer: the one dataset it was computed over, with its as-of (ruled
+    2026-11-23). Empty when the answer read no asset (the seed). Built from the receipt the answer's
+    `data_provenance` cites, never from a second read. The label is the name part of a
+    `urn:li:dataset:(<platform>,<name>,<env>)` URN, else the whole URN."""
+    if not urn or receipt is None:
+        return []
+    label = urn
+    if urn.startswith("urn:li:dataset:(") and urn.endswith(")"):
+        parts = urn[len("urn:li:dataset:("):-1].split(",")
+        if len(parts) == 3 and parts[1]:
+            label = parts[1]
+    as_of = export_dates.data_as_of(receipt)
+    return [{
+        "type": "catalog_asset",
+        "label": label,
+        "uri": urn,
+        "snippet": f"Data as of: {as_of}. {asset_inputs.ticket_clause(receipt)}",
+        "data_as_of": as_of,
+    }]
+
+
+def _source_sources(source: Optional[dict[str, str]], receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`_answer_sources` for the state builders, whose `source` is None, a seed or an asset."""
+    if source and source["kind"] == "asset":
+        return _answer_sources(source["urn"], _the_receipt(receipts, source["urn"]))
+    return []
+
+
 def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[str, Any]:
     """Execute one verb and build the envelope `/measure/{fn}` serves.
 
@@ -970,6 +1051,7 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
         # into a deck, and a docstring is not visible from a screenshot.
         "data_provenance": _source_provenance(source, receipts),
         **({} if source is None else {"data_source": source}),
+        **({"sources": _src} if (_src := _source_sources(source, receipts)) else {}),
         # COMPUTED FROM THE ROWS, so it is emitted here rather than declared in a table — and
         # ABSENT WHEN THERE IS NOTHING TO SAY. A verdict key holding None would make the card
         # render an empty caption slot; omission is the honest-absence rule this envelope
@@ -1034,6 +1116,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
         **({"reference": dict(row.reference)} if row.reference else {}),
         "data_provenance": _source_provenance(source, receipts),
         **({} if source is None else {"data_source": source}),
+        **({"sources": _src} if (_src := _source_sources(source, receipts)) else {}),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.declared_verdict(row, rows)) is not None else {}),
@@ -1074,8 +1157,9 @@ def _asset_state(urn: str, params: dict[str, Any], receipts: list[dict[str, Any]
     window = params.get("window")
     periods = periods_in(window) if window is not None else None  # an unknown period: no read
     with _asset_read_errors(urn):
-        df = asset_inputs.read_rows(_ticketed_reader(receipts), urn, program_id, periods)
-        return asset_inputs.state_from_rows(df, program_id)
+        contract = asset_inputs.dataset_contract()
+        df = asset_inputs.read_rows(_ticketed_reader(receipts), urn, program_id, periods, contract)
+        return asset_inputs.state_from_rows(df, program_id, contract)
 
 
 @contextmanager
@@ -1116,6 +1200,14 @@ def _asset_read_errors(urn: str):
         }) from exc
 
 
+def _walk(start_label: str, start: Decimal, end_label: str, end: Decimal) -> dict[str, Any]:
+    """The walk's two ends: the float is cent-quantized as `_emit_money` makes it, and
+    `value_exact` is the exact plain decimal (never exponent form, never quantized)."""
+    def end_of(label: str, total: Decimal) -> dict[str, Any]:
+        return {"label": label, "value": float(measures._money(total)), "value_exact": format(total, "f")}
+    return {"start": end_of(start_label, start), "end": end_of(end_label, end)}
+
+
 def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
     """The envelope of a DATASET-kind measure: a governed read of the ROW'S URN as the caller
     (never `FIN_DATASET_URN`, never the seed), the module run once, and the edge table as `rows`.
@@ -1129,12 +1221,26 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
                 row.per_path, program_id, row.contract,
                 **{n: params.get(n) for n in measure_verbs._VERSION_PARAMS if n in row.params},
                 version_column=row.contract.version_column, versions=row.contract.versions)
-            compare = None
+            compare = walk = None
             if isinstance(read, asset_inputs.CompareRead):
                 paths = read.paths
+                walk = _walk(params["version_b"], read.total_b, params["version_a"], read.total_a)
+                difference = read.total_a - read.total_b
                 compare = {"version_a": params["version_a"], "version_b": params["version_b"],
                            "total_a_exact": format(read.total_a, "f"), "total_b_exact": format(read.total_b, "f"),
+                           "difference_exact": format(difference, "f"),
+                           # A FRACTION (0.25 is 25%), over abs(b) so its sign is the difference's;
+                           # None where b's total is zero, never 0 or 1 (measures._ratio's rule).
+                           # format "f", never str(): a cent on a billion is "1E-11" under str().
+                           "difference_percent_of_b": (
+                               format(difference / abs(read.total_b), "f")
+                               if read.total_b != 0 else None),
                            "paths_only_in_a": read.only_in_a, "paths_only_in_b": read.only_in_b}
+            elif isinstance(read, asset_inputs.MinusRead):
+                paths = read.paths
+                labels = row.render.get("walk_labels") or {}
+                walk = _walk(labels.get("start", row.value_columns[1]), read.total_b,
+                             labels.get("end", row.value_columns[0]), read.total_a)
             else:
                 paths = read
             try:
@@ -1158,11 +1264,13 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
                    "other_label": importlib.import_module(row.resolved_module).OTHER_LABEL},
         "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
         "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows, compare=compare)) is not None else {}),
         **({"version": params["version"]} if "version" in row.params else {}),
         **({"compare": compare} if compare is not None else {}),
+        **({"walk": walk} if walk is not None else {}),
         "rows": rows,
     }
     return envelope
@@ -1204,6 +1312,7 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
         **({"status_period": read.status} if row.status_column else {}),
         "data_provenance": asset_inputs.dataset_provenance(row.banner, urn, _the_receipt(receipts, urn)),
         "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, _the_receipt(receipts, urn)),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.dataset_series_verdict(row, rows, read.status))
@@ -2084,6 +2193,72 @@ def _verb_caller(body_user_email: str) -> str:
     return body_user_email or ""
 
 
+def _listing_session_expired(c: Any) -> bool:
+    """True when the caller's bearer is expired: the SDK names an expired signature, or the
+    claims carry an `exp` at or before now (no leeway). Mirrors engine-o's check."""
+    if "ExpiredSignatureError" in str(getattr(c, "reason", "") or ""):
+        return True
+    raw = getattr(c, "raw", None)
+    if isinstance(raw, dict) and raw.get("exp") is not None:
+        try:
+            return float(raw["exp"]) <= datetime.now(timezone.utc).timestamp()
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def _log_listing_refused(route: str, code: str) -> None:
+    """One WARNING line per listing refusal. The route and the code only: no email, no authz
+    id, no token or reason text."""
+    _reason_log.warning("fin.listing_refused route=%s reason=%s", route, code)
+
+
+_LISTING_NOT_VERIFIED = ("a finance listing reads the caller from a verified bearer; "
+                         "this one is not verified")
+
+
+def _listing_caller(body_user_email: str, route: str = "") -> str:
+    """The person a listing (`/resolve_instance`, `/enumerate_instances`) decides for: the
+    VERIFIED BEARER's subject (ruled 2026-11-25). A body email alone names nobody.
+
+      * no bearer (`c` is None, or reason `absent`)  -> "" (body never used; `_visible_to`
+        then withholds everything as `no_identity`);
+      * a bearer present but not verified            -> 401 `session_expired` |
+        `bearer_not_verified`, before any lookup;
+      * verified `svc:` subject                      -> the id unchanged (`_can_view` refuses
+        it, tallied `service_caller`); never the body;
+      * verified person, body empty or the same after strip+casefold -> the subject;
+      * verified person, body names someone else     -> 403 `caller_mismatch`.
+
+    "Present but unverified" is `c is not None and not c.verified and c.reason != "absent"`:
+    the SDK reports `absent` only when no token came in, and an unverified decoded token may
+    still carry an `authz_id`, which is neither a person nor absence.
+    """
+    c = _current_caller()
+    if c is None or str(getattr(c, "reason", "") or "") == "absent":
+        return ""
+    if not getattr(c, "verified", False):
+        if _listing_session_expired(c):
+            _log_listing_refused(route, "session_expired")
+            raise HTTPException(401, {"error": "session_expired",
+                                      "message": _LISTING_NOT_VERIFIED})
+        _log_listing_refused(route, "bearer_not_verified")
+        raise HTTPException(401, {"error": "bearer_not_verified",
+                                  "message": _LISTING_NOT_VERIFIED})
+    subject = (getattr(c, "authz_id", None) or "").strip()
+    if not subject:
+        return ""
+    if subject.startswith("svc:"):
+        return subject
+    body = (body_user_email or "").strip().casefold()
+    if body and body != subject.casefold():
+        _log_listing_refused(route, "caller_mismatch")
+        raise HTTPException(403, {
+            "error": "caller_mismatch",
+            "message": "the request body names a different person than the verified bearer"})
+    return subject
+
+
 def _require_visible(program_id: Any, caller: str) -> None:
     """403 with the refusal envelope unless the caller may view the program; 503 on an outage.
 
@@ -2156,22 +2331,43 @@ def _require_cell(fn: str, caller: str) -> None:
     )
 
 
-def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _why_refused(caller: str) -> str:
+    """Why `_can_view` said no, named AFTER it said so. Never decides anything."""
+    who = (caller or "").strip()
+    if not who:
+        return "no_identity"
+    if who.startswith("svc:"):
+        return "service_caller"
+    if not directory_configured():
+        return "directory_unconfigured"
+    return "not_a_member"
+
+
+def _visible_to(caller: str, members: list[dict[str, Any]],
+                why: Optional[collections.Counter] = None) -> list[dict[str, Any]]:
     """The members whose program the caller may view. Withheld is unknown: no marker is added.
 
     One check per distinct program, through `_can_view` (which holds the svc/empty rules).
-    `httpx.HTTPError` propagates.
+    `httpx.HTTPError` propagates. `why`, when given, counts one reason per WITHHELD member; it
+    is filled only after the predicate has answered, and changes no decision.
     """
     verdict: dict[str, bool] = {}
+    refusal: dict[str, str] = {}
     out: list[dict[str, Any]] = []
     for m in members:
         prog = _program_of(m["class_uri"], m["instance_id"])
         if prog is None:
+            if why is not None:
+                why["program_undecidable"] += 1
             continue
         if prog not in verdict:
             verdict[prog] = _can_view(prog, caller)
+            if not verdict[prog] and why is not None:
+                refusal[prog] = _why_refused(caller)
         if verdict[prog]:
             out.append(m)
+        elif why is not None:
+            why[refusal[prog]] += 1
     return out
 
 
@@ -2274,15 +2470,108 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
 _RESOLVE_FLOOR = 0.5
 
 
+def _local_name(uri: Optional[str]) -> str:
+    """The class's local name, for the log. The URI is the CALLER'S text, so anything outside a
+    name's characters becomes `?`: a newline or a space in it must not forge a line or a field."""
+    name = (uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or "-") if uri else "-"
+    return "".join(ch if ch.isascii() and (ch.isalnum() or ch in "_.-") else "?" for ch in name[:64])
+
+
+def _empty_reason(*, identifier: Optional[str], class_uri: Optional[str], seen: int,
+                  withheld: "collections.Counter") -> str:
+    """The first cause, in pipeline order, that explains an empty answer."""
+    if identifier is not None:
+        needle = identifier.strip()
+        if not needle:
+            return "empty_identifier"
+        if class_uri is None and needle.isdigit():
+            return "bare_number_unscoped"
+    if class_uri is not None:
+        if class_uri not in _RESOLVABLE:
+            return "class_not_held"
+        if not _members_of(class_uri):
+            return "class_has_no_members"
+    if seen == 0:
+        return "no_match"
+    if len(withheld) == 1:
+        return next(iter(withheld))
+    return "withheld_mixed" if withheld else "no_match"
+
+
+# The architect's ruling, 2026-11-25: a name that is not finance's, or a member not visible to
+# this person, is the NORMAL case (INFO); WARNING is for faults: no identity on a call that needs
+# one, and the directory unset or unreachable. `service_caller` is "no person identity on a call
+# that needs one": the body names a service and no person.
+_EMPTY_FAULTS = frozenset({"no_identity", "service_caller", "directory_unconfigured",
+                           "directory_unreachable"})
+
+
+def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str], seen: int,
+               withheld: "collections.Counter", user_email: str,
+               reason: Optional[str] = None) -> None:
+    """One line saying why an answer came back empty (an empty answer says why, in the
+    log; the architect, 2026-11-24).
+
+    The engine's empty answer looks the same for every cause, and a verified person whose body
+    `user_email` arrives empty is told the same thing as a person with no grant. The line names
+    the cause and the bearer next to the body. It carries no identifier, query text, email,
+    authz id, program id, instance id or dataset URN.
+
+    The level follows the reason: WARNING when the reason is in `_EMPTY_FAULTS` (for
+    `withheld_mixed`, when any withheld code is), INFO otherwise. `reason`, when given (a
+    directory outage), is used instead of the derived one.
+    """
+    if reason is None:
+        reason = _empty_reason(identifier=identifier, class_uri=class_uri, seen=seen,
+                               withheld=withheld)
+    fault = reason in _EMPTY_FAULTS or (
+        reason == "withheld_mixed" and any(k in _EMPTY_FAULTS for k in withheld))
+    level = logging.WARNING if fault else logging.INFO
+    caller = _current_caller()
+    bearer_id = ((getattr(caller, "authz_id", None) or "") if caller is not None else "").strip()
+    if not bearer_id:
+        bearer, verified = "none", "-"
+    else:
+        bearer = "svc" if bearer_id.startswith("svc:") else "user"
+        verified = "true" if getattr(caller, "verified", False) else "false"
+    body = (user_email or "").strip().casefold()
+    if not body:
+        body_caller = "empty"
+    elif not bearer_id:
+        body_caller = "no_bearer"
+    else:
+        body_caller = "matches_bearer" if body == bearer_id.casefold() else "differs_from_bearer"
+    classes = [class_uri] if class_uri in _RESOLVABLE else ([] if class_uri else list(_RESOLVABLE))
+    declared = sum(1 for r in INSTANCES if r.class_uri in classes)
+    tally = ",".join(f"{k}:{withheld[k]}" for k in sorted(withheld)) or "-"
+    count_name = "matched" if event == "fin.resolve_empty" else "members"
+    _reason_log.log(
+        level,
+        "%s reason=%s class=%s %s=%d withheld=%s bearer=%s verified=%s body_caller=%s "
+        "dataset_urn_set=%s declared_instances=%d",
+        event, reason, _local_name(class_uri), count_name, seen, tally, bearer, verified,
+        body_caller, "true" if asset_inputs.dataset_urn() else "false", declared,
+    )
+
+
 @app.post("/resolve_instance")
 def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
     """Resolve a spoken finance name to an identifier in this model."""
+    caller = _listing_caller(req.user_email, "resolve")
     cands = [c for c in _candidates(req.identifier, req.class_uri)
              if c["score"] >= _RESOLVE_FLOOR]
+    seen = len(cands)
+    withheld: collections.Counter = collections.Counter()
     try:
-        cands = _visible_to(req.user_email, cands)
+        cands = _visible_to(caller, cands, withheld)
     except httpx.HTTPError as e:
+        _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
+                   seen=seen, withheld=withheld, user_email=req.user_email,
+                   reason="directory_unreachable")
         raise HTTPException(503, f"program membership check failed: {e}") from e
+    if not cands:
+        _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
+                   seen=seen, withheld=withheld, user_email=req.user_email)
     return {
         "output_uri": MESH + "InstanceResolution",
         "query": req.identifier,
@@ -2318,7 +2607,10 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
                         falling back because nobody attempted enumeration, which is the case
                         the distinction exists to refuse.
     """
+    caller = _listing_caller(req.user_email, "enumerate")
     if req.class_uri not in _RESOLVABLE:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri, seen=0,
+                   withheld=collections.Counter(), user_email=req.user_email)
         return {
             "output_uri": MESH + "InstanceEnumeration",
             "class_uri": req.class_uri,
@@ -2332,10 +2624,19 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
             "members": [],
             "provider": "engine_fin_finance",
         }
+    held: list[dict[str, Any]] = []
+    withheld: collections.Counter = collections.Counter()
     try:
-        members = _visible_to(req.user_email, _members_of(req.class_uri))
+        held = _members_of(req.class_uri)
+        members = _visible_to(caller, held, withheld)
     except httpx.HTTPError as e:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
+                   seen=len(held), withheld=withheld, user_email=req.user_email,
+                   reason="directory_unreachable")
         raise HTTPException(503, f"program membership check failed: {e}") from e
+    if not members:
+        _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
+                   seen=len(held), withheld=withheld, user_email=req.user_email)
     if len(members) > req.limit:
         return {
             "output_uri": MESH + "InstanceEnumeration",

@@ -98,6 +98,15 @@ try:
     from inflight import CoalescingClient  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.ontology_service.inflight import CoalescingClient
+# EACH MODEL CALL IS RECORDED AS A LANGFUSE GENERATION (architect ruling 2026-11-24): model and
+# version, parameters, tokens, a hash of the rendered prompt and of the reply; the TEXT only where
+# a deployment setting turns it on (model_generations.TEXT_SETTING). INSIDE the coalescer, so a
+# call that joins a running call makes no model call and records nothing.
+try:
+    from model_generations import GenerationRecordingClient  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service.model_generations import GenerationRecordingClient
+b = GenerationRecordingClient(b)
 b = CoalescingClient(b, log=logging.getLogger(__name__))
 
 # Shared embedding helper (agent_fleet/utils/embed.py). Container flat-layout
@@ -1365,7 +1374,7 @@ class RouteIntentResponse(BaseModel):
 class PlanRequest(BaseModel):
     """Incoming request to the /plan endpoint."""
     query: str
-    domain: str = "MAINTENANCE"
+    domain: str | None = None
 
 
 class ResolveRequest(BaseModel):
@@ -1386,7 +1395,7 @@ class ResolveRequest(BaseModel):
     # that hit this with a SINGLE domain, and it was picking
     # `entitled_domains[0]` — the routing_domain lock bug confirmed
     # 2026-06-28. New callers should populate `domains` instead.
-    domain: str = "MAINTENANCE"
+    domain: str | None = None
     # NEW (2026-06-28): list of entitled domains to scope the
     # candidate pool. When provided (non-empty), supersedes `domain`.
     # The Weaviate hybrid search filters candidates by
@@ -1549,7 +1558,7 @@ class SearchPredicatesRequest(BaseModel):
     # distinguish synthetic traffic from real (default user_request).
     # All three are optional so existing callers don't have to migrate.
     request_id: str | None = Field(default=None, description="Trace correlation ID")
-    user_id: str | None = Field(default=None, description="Caller user_id for slicing the audit log; null for canary")
+    user_id: str | None = Field(default=None, description="Optional caller label; not written to the routing row, which records the verified caller")
     audit_source: str | None = Field(
         default=None,
         description="ADR-0015 audit source label: 'user_request' | 'canary' | 'registration_validation'. Defaults to user_request when unset.",
@@ -3684,7 +3693,15 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
     A provider that fails or times out CANNOT make the answer `empty`. `empty` is a claim that
     nothing of that kind exists, and an unreachable provider has not made a claim. That is why
     the two are counted apart below.
+
+    THE PERSON TRAVELS AS THEMSELVES: each provider post carries the person's own verified bearer,
+    as `/resolve`'s fan-out does (ruling 2026-11-19 Q2); a provider's 401/403 on it ends the call.
     """
+    if _caller_session_expired():
+        # REFUSED BEFORE THE BIND, as `/resolve_instance` is (ruled 2026-11-19, Q2): the SDK leaves an
+        # expired token unverified, so `_bound` would read it as no person and answer 422
+        # `no_person`. An expired session is reported as one, never as an absent caller.
+        return _session_expired_response()
     request, _ = await _bound(request, route="enumerate_instances")
     # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
     # restate_analyst send a real test persona or get refused -- a domains list is never an
@@ -3701,6 +3718,12 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
             "error": "no_person",
             "message": "this verb answers for a person; the caller carries none",
             "fn": "enumerate_instances"})
+    # THE PERSON TRAVELS AS THEMSELVES on this fan-out too, exactly as in `/resolve`
+    # (`_call_resolver`, ruling 2026-11-19 Q2): their own verified bearer, only to a registered
+    # provider endpoint, for this request. An expired session makes no registry read and no call.
+    relay_mode, relay_headers = _relay_authorization()
+    if relay_mode == "expired":
+        return _session_expired_response()
     discovery = _discover_enumerate_providers()
     if discovery.outcome in ("failed", "unreachable"):
         # **AN OUTAGE IS NOT AN EMPTY REGISTRY**, and this function already knows the difference —
@@ -3748,7 +3771,16 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
                           "bound_slots": dict(request.bound_slots or {}),
                           "user_email": request.user_email or "",
                           "entitled_domains": list(request.entitled_domains or [])},
+                    headers=relay_headers,
                 )
+                # A PROVIDER REFUSING THE PERSON'S OWN TOKEN (ruling 2026-11-19 Q2): the whole
+                # call is refused as 401, as `/fill_slots` does. It is never folded into
+                # `declined`/`empty`/`no_provider` and never answered from the other providers.
+                # The body is read for the reason only and is neither logged nor kept.
+                if relay_mode == "relay" and resp.status_code in (401, 403):
+                    reason = _relayed_refusal_reason(resp.status_code, resp.text)
+                    return JSONResponse(status_code=401, content={
+                        "reason": reason, "message": _PERSON_TOKEN_REFUSAL_DETAIL[reason]})
                 body = resp.json() if resp.status_code == 200 else {}
         except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
             # NARROWED ON PURPOSE. `except Exception` here swallows NameError,
@@ -4386,7 +4418,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             identifier=identifier,
             query=request.query,
             asked_domains=request.domains or ([request.domain] if request.domain else []),
-            # The grant is `domains` ONLY. The legacy single `domain` defaults to MAINTENANCE
+            # The grant is `domains` ONLY. The legacy single `domain` defaults to None
             # and ranks; forwarding it as an entitlement would grant what nobody granted.
             user_email=request.user_email, entitled_domains=list(request.domains or []),
         )
@@ -4735,7 +4767,7 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
         _emit_routing_decision(
             source=(request.audit_source or "user_request"),
             request_id=_request_id,
-            user_id=request.user_id,
+            user_id=request.user_email,
             sub_query=request.query,
             entitled_domains=entitled,
             candidates_raw=[],
@@ -4789,7 +4821,7 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
     _emit_routing_decision(
         source=(request.audit_source or "user_request"),
         request_id=_request_id,
-        user_id=request.user_id,
+        user_id=request.user_email,
         sub_query=request.query,
         entitled_domains=entitled,
         candidates_raw=_routing_candidates_raw(hits),
@@ -7137,7 +7169,7 @@ class ClassifyPredicateRequest(BaseModel):
     user_email: str = ""
     # Primary domain used as the BAML domain field. Match what /resolve
     # was called with for consistency.
-    domain: str = "MAINTENANCE"
+    domain: str | None = None
     # How many Weaviate candidates to put in front of the LLM. Higher =
     # better recall, more tokens. 10 mirrors /resolve's default.
     candidate_limit: int = 10

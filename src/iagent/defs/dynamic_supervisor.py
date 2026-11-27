@@ -104,7 +104,7 @@ class SupervisorQueryConfig(Config):
     user_query: str
     thread_id: str
     persona: str = "MECHANIC"  # legacy, prefer user_persona
-    domain: str = "MAINTENANCE"  # legacy, no longer routes
+    domain: str | None = None  # legacy, no longer routes; None = no domain named
     task_plan_json: str = ""  # Optional pre-computed plan from BFF
     user_id: str = "default_testing_user"
     # ADR-0025 hop 2: caller's entitlement key (email — what the seeded
@@ -161,6 +161,10 @@ class SupervisorQueryConfig(Config):
     #: from the request body: the moment a named ask steers routing it becomes an
     #: authorization surface, and a client that could post a verb could route anywhere.
     pre_resolved: Dict[str, Any] = {}
+    #: THE QUERY IS A LABEL, NOT A QUESTION: a measure the person picked from the askable list.
+    #: The slot filler must not run on it (it would extract "slots" from a name the system
+    #: itself offered). False for every other turn; set only by the gateway for an askable pick.
+    message_is_label: bool = False
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
     # ADR-0008 fallback policy (ADR-0018 simplified: single threshold
@@ -202,12 +206,12 @@ def create_task_plan(context, config: SupervisorQueryConfig):
         # The person's own token for this call, or "" when no person is behind the run. A vault
         # refusal raises and fails the op: there is no fallback to the service here.
         _plan_token = _caller_token_for(context, config, "plan")
+        _plan_body = {"query": config.user_query}
+        if config.domain:
+            _plan_body["domain"] = config.domain
         response = requests.post(
             f"{ONTOLOGY_SVC_URL}/plan",
-            json={
-                "query": config.user_query,
-                "domain": config.domain
-            },
+            json=_plan_body,
             timeout=300,
             headers=_telemetry_headers(config, _plan_token),
         )
@@ -228,13 +232,12 @@ def create_task_plan(context, config: SupervisorQueryConfig):
     )
 
     # 3. Fan-out: yield each task dynamically
-    detected_domain = plan.get("domain") or config.domain
-    logger.info(f"Fanning out tasks for domain: {detected_domain}")
+    # Nothing downstream reads a task's `domain` (execute_subtask routes by
+    # `config.entitled_domains`), so none is stamped and the log names what routing reads.
+    logger.info("Fanning out %d task(s) for entitled domains: %s", len(tasks), list(config.entitled_domains or []))
 
     for idx, task in enumerate(tasks):
-        # Inject the domain context so execute_subtask routes correctly
-        task["domain"] = detected_domain
-        logger.info(f"Yielding task {idx} ({task.get('target_persona')}) for domain {detected_domain}")
+        logger.info("Yielding task %d (%s) for entitled domains: %s", idx, task.get("target_persona"), list(config.entitled_domains or []))
         
         # We must provide a valid mapping_key for each dynamic output
         yield DynamicOutput(
@@ -387,10 +390,13 @@ def _resolve_serialized(context):
 def _resolve_subject(
     context,
     user_query: str,
-    domain: str,
+    domain: str | None,
     entity_refs: List[str] | None = None,
     domains: List[str] | None = None,
     user_email: str = "",
+    *,
+    trace_id: str = "",
+    session_id: str = "",
 ) -> tuple[str, float, str, str, list, str | None, str]:
     """Ask Engine O's /resolve for the subject ontology class.
 
@@ -446,8 +452,9 @@ def _resolve_subject(
             # entitled_domains[0]. See
             # [[failure-mode-pluralism-in-fixes]] for the
             # diagnose-each-mechanism rationale.
-            "domain": domain or "MAINTENANCE",
         }
+        if domain:
+            payload["domain"] = domain
         if domains:
             payload["domains"] = list(domains)
         if entity_refs:
@@ -465,7 +472,7 @@ def _resolve_subject(
             resp = requests.post(
                 f"{ONTOLOGY_SVC_URL}/resolve",
                 json=payload,
-                **_bearer_kwargs(_tok),
+                **_leg_headers(_tok, trace_id, session_id),
             # 15s was too tight under realistic engine-o load: BAML's
             # ClassifyDomainIntent runs ~5-10s, Recipe v2's
             # instance-resolution fan-out adds 3-5s for engine_d's
@@ -708,10 +715,13 @@ def _classify_route(
     context,
     user_query: str,
     entitled_domains: List[str],
-    routing_domain: str,
+    routing_domain: str | None,
     entity_refs: List[str] | None = None,
     user_email: str = "",
     pre_resolved: Dict[str, Any] | None = None,
+    *,
+    trace_id: str = "",
+    session_id: str = "",
 ) -> tuple[str, Dict[str, Any] | None, dict]:
     """Three-stage SPO routing per ADR-0018 + ADR-0019: /resolve →
     /find_compatible_verbs → /classify_predicate.
@@ -927,6 +937,8 @@ def _classify_route(
         entity_refs=entity_refs,
         domains=list(entitled_domains) if entitled_domains else None,
         user_email=user_email,
+        trace_id=trace_id,
+        session_id=session_id,
     )
 
     # ADR-0019 Contract B — UNKNOWN-subject short-circuit. No
@@ -1208,7 +1220,8 @@ def _classify_route(
                 "subject_uri": subject_uri,
                 "subject_reasoning": subject_reason,
                 "entitled_domains": entitled_domains,
-                "domain": routing_domain or "MAINTENANCE",
+                # No routing domain is no key: the legacy hint is never a literal.
+                **({"domain": routing_domain} if routing_domain else {}),
                 # ADR-0018 addendum: constrain the LLM to graph-
                 # compatible verbs. Empty = unconstrained (Weaviate
                 # hybrid as before).
@@ -1230,7 +1243,7 @@ def _classify_route(
                 "audit_source": "user_request",
             },
             timeout=CLASSIFY_PREDICATE_TIMEOUT_S,  # LLM call inside; see the constant.
-            **_bearer_kwargs(_tok),
+            **_leg_headers(_tok, trace_id, session_id),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -1726,6 +1739,10 @@ _CALLER_IDENTITY_MESSAGES = {
         "The service that fetches your identity was refused, so nothing was attempted. "
         "This needs an operator rather than a retry."
     ),
+    "session_expired": (
+        "Your sign-in expired while this answer was being prepared, so the rest of it was "
+        "not attempted. Sign in again if you are asked to, then ask the question again."
+    ),
 }
 
 _CALLER_IDENTITY_DEFAULT_MESSAGE = (
@@ -1770,7 +1787,8 @@ def _redeem_caller_token(context, who, leg: str = "call") -> str:
 
     ``awaiting_reauth`` is a pause, not a failure: ask again after
     ``IDENTITY_REAUTH_POLL_SECONDS`` with a fresh call id. There is no timer here; the
-    bound is the reference's own life, after which the vault answers ``not_found``.
+    wait is bounded by the BFF's ``IDENTITY_REAUTH_WAIT_SECONDS``, after which the vault
+    answers ``session_expired`` and the call fails at once. ``not_found`` fails at once too.
     """
     run_id = str(getattr(context, "run_id", "") or "")
     if not run_id:
@@ -1867,6 +1885,29 @@ def _bearer_kwargs(token: str) -> Dict[str, Any]:
     return {"headers": {"Authorization": f"Bearer {token}"}} if token else {}
 
 
+def _trace_join_headers(trace_id: str = "", session_id: str = "") -> Dict[str, str]:
+    """The trace and session names ONLY, for a leg that must join the run's trace.
+
+    NEVER A CREDENTIAL. `_telemetry_headers` mints a service token when no caller token is
+    given; the subject, verb and slots legs send a bearer only for a person's run, and acting
+    as the service when no person is behind the run is what the 2026-11-19 delegation ruling
+    forbids. So these legs take the NAMES from here and the Authorization from `_bearer_kwargs`.
+    """
+    h: Dict[str, str] = {}
+    if trace_id:
+        h["X-Trace-Id"] = trace_id
+    if session_id:
+        h["X-Session-Id"] = session_id
+    return h
+
+
+def _leg_headers(token: str, trace_id: str = "", session_id: str = "") -> Dict[str, Any]:
+    """``headers=`` for the subject / verb / slots legs: the bearer exactly as `_bearer_kwargs`
+    sends it, plus the trace names when known; no ``headers`` at all when both are empty."""
+    h = {**_bearer_kwargs(token).get("headers", {}), **_trace_join_headers(trace_id, session_id)}
+    return {"headers": h} if h else {}
+
+
 def _call_engine_a_fallback(
     context,
     sub_query: str,
@@ -1945,7 +1986,7 @@ def _call_engine_a_fallback(
     # `idp#Portfolio` at 0.96, `/classify_predicate` honestly returned UNKNOWN (no portfolio
     # verb answers "make a canvas"), and this fallback dropped the subject. Engine A then
     # re-resolved from the raw phrase — and `_resolve_ontology` posts no `domain`, so
-    # `ResolveRequest.domain` defaults to "MAINTENANCE" with `domains=[]`, meaning the
+    # `ResolveRequest.domain` defaults to None with `domains=[]`, meaning the
     # entitlement filter is a no-op too. A PORTFOLIO_LEAD's question was classified against
     # the maintenance ontology and answered `SellingBusinessProcess` at 0.62.
     #
@@ -2410,6 +2451,8 @@ def _fill_slots_from_query(
     acting_domains: "List[str] | None" = None,
     subject_uri: str = "",
     user_email: str = "",
+    trace_id: str = "",
+    session_id: str = "",
 ) -> "_FillResult":
     """Ask Engine O which parameters the speaker named, for the verb already routed.
 
@@ -2464,7 +2507,7 @@ def _fill_slots_from_query(
                 "user_email": user_email,
             },
             timeout=_fill_slots_budget(declarations),
-            **_bearer_kwargs(_tok),
+            **_leg_headers(_tok, trace_id, session_id),
         )
         if resp.status_code == 422:
             # A REFUSED PERSON IS NAMED, THEN DEGRADED. engine-o refuses `/fill_slots` with 422
@@ -2769,6 +2812,120 @@ def _log_no_verb_decision(
         context.log.warning("subtask_slots_decision (no verb) materialization failed: %s", exc)
 
 
+def decide_subtask_disposition(context, config, predicate, accepted_params, declared, resolution):
+    """ADR-0033's route | ask | abstain for one routed subtask, decided after `accept_slots`.
+
+    Public (no underscore) because it is the entry point a routing-only harness calls after
+    `accept_slots`, the way it calls `_classify_route` and `_fill_slots_from_query`.
+    """
+    _disp_enum = _make_enumerator(
+        context, user_email=config.user_email,
+        entitled_domains=list(config.entitled_domains or []),
+    )
+    disposition = decide_disposition(
+        accepted=accepted_params,
+        declared=declared,
+        resolution=resolution,
+        enumerate_class=_disp_enum,
+    )
+    _raise_if_identity_failed(_disp_enum)
+
+    # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
+    #
+    # The arity gate now FLAGS a single-asset verb on a set-shaped question rather than
+    # excluding it, so the disposition can offer a menu instead of the answer being lost.
+    # That is right for planning's verbs, where `arity_for` DERIVES "single" from a slot
+    # that is both required and a referent — the very slot `decide_disposition` asks about.
+    #
+    # IT IS NOT SAFE ON ITS OWN, AND THE GATE'S ORIGINAL DEFECT IS THE PROOF. `arity` is a
+    # DECLARED string on a mesh registration for every other engine, carrying no promise
+    # that the verb has an askable slot. `describeAsset` is exactly that: declared single,
+    # and the case the gate was built for — `show me data about customers` resolved to the
+    # class Dataset, routed to a single-asset profiler, and honestly returned `assets: []`.
+    # With no spoken-mandatory declaration, `decide_disposition` walks nothing, returns
+    # ROUTE, and that zero-asset answer comes straight back.
+    #
+    # So the flag is a DISPATCH PRECONDITION, not a hint. Asked-and-answered binds the
+    # instance and this never fires; nothing-to-ask abstains instead of dispatching. This is
+    # the half of the old gate that must survive its own removal — a set-shaped question
+    # still may not route to a single-asset verb SILENTLY.
+    # `needs_instance` is only ever set when the question named NO instance -- the gate
+    # flags on `query_is_set` -- so the remaining condition is whether the disposition had
+    # anything to ask about. A verb with a spoken-mandatory declaration is already handled:
+    # it either asked, or it routed because the slot got filled (a BIND answer arrives here
+    # as an accepted param, and abstaining on THAT would refuse a question the user just
+    # answered). A verb with no such declaration is the unaskable case.
+    _askable = any(
+        isinstance(d, dict) and d.get("kind") in _MUST_BE_SPOKEN_KINDS
+        for d in (decode_declarations(declared) or [])
+    )
+    if (
+        disposition.action == ROUTE
+        and (predicate or {}).get("needs_instance")
+        and not _askable
+    ):
+        context.log.info(
+            "arity_precondition verb_iri=%s ABSTAIN — declared single-asset, the question "
+            "named no instance, and the verb declares no spoken-mandatory slot, so there "
+            "was nothing to ask about. Dispatching would answer a set question with a "
+            "single-asset verb — the assets:[] defect the arity gate was built for.",
+            (predicate or {}).get("verb_iri"),
+        )
+        disposition = disposition._replace(
+            action=ABSTAIN, reason="needs_instance_no_ask",
+        )
+    return disposition
+
+
+def _unverified_expiry(token: str) -> Optional[float]:
+    """The ``exp`` of a JWT, read WITHOUT verifying it (mirrors
+    ``iagent.identity_vault._expiry_of``; mirrored so the supervisor process does not import
+    the vault). It only decides how to NAME an engine's 401; it is never trusted as identity."""
+    import base64
+    try:
+        payload = token.split(".")[1]
+        exp = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["exp"]
+        return float(exp) if isinstance(exp, (int, float)) else None
+    except Exception:  # noqa: BLE001 -- an unreadable token has no exp bound
+        return None
+
+
+def _caller_identity_result(config, predicate, sub_query, answerer_persona,
+                            icause: str) -> Dict[str, Any]:
+    """The subtask result for a call that was not made because the caller's identity is
+    unavailable. One body for the redemption refusal and for an engine's 401 on an expired
+    token, so the two cannot drift."""
+    return {
+        "persona": answerer_persona,
+        "user_persona": config.user_persona,
+        "answerer_persona": answerer_persona,
+        "predicate_verb_iri": predicate.get("verb_iri"),
+        "sub_query": sub_query,
+        # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
+        # does. routed to a specialist; the caller identity failed, not the routing
+        "route_status": "matched",
+        "expert_response": {
+            # A DISTINCT status, never `engine_unreachable`: the engine is fine.
+            # This is an identity fault, and naming it as one is what keeps the
+            # next diagnosis from starting at the wrong pod.
+            "status": "caller_identity_unavailable",
+            # THE REASON NAMES WHICH STEP FAILED. "vault_redemption_failed" was
+            # wrong for the most common case: when the supervisor cannot
+            # authenticate itself, the vault is never contacted at all.
+            "reason": icause,
+            "message": _CALLER_IDENTITY_MESSAGES.get(
+                icause, _CALLER_IDENTITY_DEFAULT_MESSAGE
+            ),
+            "data": "",
+            "sources": [],
+            # NO RAW EXCEPTION ON THE CARD. The detail is in the log and in the
+            # op metadata, which is where an operator looks; a person who
+            # asked a planning question is not that audience.
+            "error": icause,
+        },
+    }
+
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 @step_spanned("supervisor.execute_subtask")
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
@@ -2820,7 +2977,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # the diagnosis surfaces it as material).
     routing_domain = (
         list(config.entitled_domains)[0]
-        if config.entitled_domains else "MAINTENANCE"
+        if config.entitled_domains else None
     )
 
     status, predicate, telemetry = _classify_route(
@@ -2831,6 +2988,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         entity_refs=list(config.entity_refs) if config.entity_refs else None,
         user_email=config.user_email,
         pre_resolved=dict(config.pre_resolved or {}),
+        trace_id=getattr(config, "trace_id", "") or "",
+        session_id=getattr(config, "session_id", "") or "",
     )
 
     # ------------------------------------------------------------------
@@ -2900,6 +3059,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
             # does. the subtask could not run
             "route_status": "infra_error",
+            "disposition": "infra_error",
             "expert_response": {
                 "status": "INFRA_ERROR",
                 "summary": (
@@ -2962,6 +3122,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 # NOT `no_match`: the card must be able to tell "nothing covers this" from
                 # "something might, and the system would not guess which".
                 "route_status": "abstained",
+                "disposition": ABSTAIN,
                 "expert_response": {
                     "status": "no_verb_classified",
                     "reason": "no_verb_classified",
@@ -2987,7 +3148,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             context, disposition="fallback", no_verb_reason="no_predicate_matched",
             telemetry=telemetry,
         )
-        return _call_engine_a_fallback(
+        return {**_call_engine_a_fallback(
             context,
             sub_query=sub_query,
             config=config,
@@ -2995,7 +3156,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             fallback_score=None,
             rejected_predicate=None,
             telemetry=telemetry,
-        )
+        ), "disposition": "fallback"}
 
     # status == _ROUTING_MATCHED — apply the threshold against the LLM's
     # confidence (replaces the BM25 + yellow-zone gate machinery).
@@ -3019,7 +3180,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             telemetry=telemetry,
             rejected_verb_iri=str(predicate.get("verb_iri") or ""),
         )
-        return _call_engine_a_fallback(
+        return {**_call_engine_a_fallback(
             context,
             sub_query=sub_query,
             config=config,
@@ -3027,7 +3188,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             fallback_score=score,
             rejected_predicate=predicate,
             telemetry=telemetry,
-        )
+        ), "disposition": "fallback"}
 
     if not (predicate.get("endpoint") or "").strip():
         # A renderer (a `mesh:rendersAs` row) has no endpoint: it is a display format, not a
@@ -3047,6 +3208,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             "fallback_score": None,
             "sub_query": sub_query,
             "route_status": "abstained",
+            "disposition": ABSTAIN,
             "expert_response": {
                 "status": "no_endpoint",
                 "reason": "no_endpoint",
@@ -3067,7 +3229,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # entry if multi-domain) so engines that still segregate data by domain
     # (Engine W, Engine E label filters) keep working.
     predicate_domains = predicate.get("domains") or []
-    routing_domain = predicate_domains[0] if predicate_domains else "MAINTENANCE"
+    routing_domain = predicate_domains[0] if predicate_domains else None
 
     # Engine DA needs a DataHub schema map injected; we ship it for any
     # data-engineering-scoped predicate so the engine doesn't have to
@@ -3174,7 +3336,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             resolution = {**resolution, **bound_resolution}
 
     _fill_slots_outcome = ""
-    if not spoken and declared:
+    if getattr(config, "message_is_label", False):
+        # THE QUERY IS A LABEL (a measure picked from the askable list): never slot-filled.
+        # An unbound mandatory parameter becomes the ask at the disposition point below.
+        pass
+    elif not spoken and declared:
         filled = _fill_slots_from_query(
             context,
             query=sub_query,
@@ -3186,6 +3352,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # nothing (subject_uri == "UNKNOWN" reads as absent to engine-o's gate too).
             subject_uri=str(telemetry.get("subject_uri") or ""),
             user_email=config.user_email,
+            trace_id=getattr(config, "trace_id", "") or "",
+            session_id=getattr(config, "session_id", "") or "",
         )
         spoken, resolution = filled.slots, filled.resolution
         _fill_slots_outcome = filled.fill_slots
@@ -3222,62 +3390,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # information the user supplied, and both MUST still route. ADR-0033 #4: a system that
     # asks when it knows is worse than one that guesses when it doesn't.
     # -----------------------------------------------------------------------------------
-    _disp_enum = _make_enumerator(
-        context, user_email=config.user_email,
-        entitled_domains=list(config.entitled_domains or []),
+    disposition = decide_subtask_disposition(
+        context, config, predicate, accepted.params, declared, resolution,
     )
-    disposition = decide_disposition(
-        accepted=accepted.params,
-        declared=declared,
-        resolution=resolution,
-        enumerate_class=_disp_enum,
-    )
-    _raise_if_identity_failed(_disp_enum)
-
-    # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
-    #
-    # The arity gate now FLAGS a single-asset verb on a set-shaped question rather than
-    # excluding it, so the disposition can offer a menu instead of the answer being lost.
-    # That is right for planning's verbs, where `arity_for` DERIVES "single" from a slot
-    # that is both required and a referent — the very slot `decide_disposition` asks about.
-    #
-    # IT IS NOT SAFE ON ITS OWN, AND THE GATE'S ORIGINAL DEFECT IS THE PROOF. `arity` is a
-    # DECLARED string on a mesh registration for every other engine, carrying no promise
-    # that the verb has an askable slot. `describeAsset` is exactly that: declared single,
-    # and the case the gate was built for — `show me data about customers` resolved to the
-    # class Dataset, routed to a single-asset profiler, and honestly returned `assets: []`.
-    # With no spoken-mandatory declaration, `decide_disposition` walks nothing, returns
-    # ROUTE, and that zero-asset answer comes straight back.
-    #
-    # So the flag is a DISPATCH PRECONDITION, not a hint. Asked-and-answered binds the
-    # instance and this never fires; nothing-to-ask abstains instead of dispatching. This is
-    # the half of the old gate that must survive its own removal — a set-shaped question
-    # still may not route to a single-asset verb SILENTLY.
-    # `needs_instance` is only ever set when the question named NO instance -- the gate
-    # flags on `query_is_set` -- so the remaining condition is whether the disposition had
-    # anything to ask about. A verb with a spoken-mandatory declaration is already handled:
-    # it either asked, or it routed because the slot got filled (a BIND answer arrives here
-    # as an accepted param, and abstaining on THAT would refuse a question the user just
-    # answered). A verb with no such declaration is the unaskable case.
-    _askable = any(
-        isinstance(d, dict) and d.get("kind") in _MUST_BE_SPOKEN_KINDS
-        for d in (decode_declarations(declared) or [])
-    )
-    if (
-        disposition.action == ROUTE
-        and (predicate or {}).get("needs_instance")
-        and not _askable
-    ):
-        context.log.info(
-            "arity_precondition verb_iri=%s ABSTAIN — declared single-asset, the question "
-            "named no instance, and the verb declares no spoken-mandatory slot, so there "
-            "was nothing to ask about. Dispatching would answer a set question with a "
-            "single-asset verb — the assets:[] defect the arity gate was built for.",
-            (predicate or {}).get("verb_iri"),
-        )
-        disposition = disposition._replace(
-            action=ABSTAIN, reason="needs_instance_no_ask",
-        )
     # ── subtask_slots_decision — THE HOP THAT WAS NEVER THERE ────────────────────────
     #
     # `resolved_intent` on the AnswerArtifact has always been populated from
@@ -3422,6 +3537,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
             # does. an ask IS the answer for a matched route
             "route_status": "matched",
+            "disposition": disposition.action,
             "expert_response": ask_card(
                 disposition,
                 verb_iri=predicate.get("verb_iri") or "",
@@ -3439,7 +3555,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # point to answerer_persona, which is what the old `persona` field
         # was driving (response shape) in practice.
         "persona": answerer_persona,
-        "domain": routing_domain,
+        # `domain` is set below the literal, and only when there is one.
         # 2026-07-03 SECURITY-CORRECTNESS: thread the caller's REAL
         # entitled_domains on the SPECIALIST dispatch too. The stopgap
         # (2026-07-02) added this to _call_engine_a_fallback but MISSED
@@ -3576,6 +3692,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # a separate ledger item, deliberately not entangled with this one).
         "trace_id": config.trace_id or "",
     }
+    if routing_domain:
+        # No routing domain is no key: the legacy hint is never a literal. Set here, not
+        # spread into the literal, so the payload's keys stay one-to-one with its values.
+        payload["domain"] = routing_domain
 
     context.log.info(
         f"Routing subtask via predicate {predicate.get('verb_iri')!r} "
@@ -3668,35 +3788,8 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 })
             except Exception:  # pragma: no cover
                 pass
-            return {
-                "persona": answerer_persona,
-                "user_persona": config.user_persona,
-                "answerer_persona": answerer_persona,
-                "predicate_verb_iri": predicate.get("verb_iri"),
-                "sub_query": sub_query,
-                # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
-                # does. routed to a specialist; the caller identity failed, not the routing
-                "route_status": "matched",
-                "expert_response": {
-                    # A DISTINCT status, never `engine_unreachable`: the engine is fine.
-                    # This is an identity fault, and naming it as one is what keeps the
-                    # next diagnosis from starting at the wrong pod.
-                    "status": "caller_identity_unavailable",
-                    # THE REASON NAMES WHICH STEP FAILED. "vault_redemption_failed" was
-                    # wrong for the most common case: when the supervisor cannot
-                    # authenticate itself, the vault is never contacted at all.
-                    "reason": _icause,
-                    "message": _CALLER_IDENTITY_MESSAGES.get(
-                        _icause, _CALLER_IDENTITY_DEFAULT_MESSAGE
-                    ),
-                    "data": "",
-                    "sources": [],
-                    # NO RAW EXCEPTION ON THE CARD. `_idetail` is in the log and in the
-                    # op metadata above, which is where an operator looks; a person who
-                    # asked a planning question is not that audience.
-                    "error": _icause,
-                },
-            }
+            return {**_caller_identity_result(
+                config, predicate, sub_query, answerer_persona, _icause), "disposition": ROUTE}
 
     try:
         response = requests.post(
@@ -3714,6 +3807,29 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             response.raise_for_status()
             data = response.json()
     except (requests.exceptions.RequestException, ValueError) as exc:
+        # AN ENGINE'S 401 FOR AN EXPIRED TOKEN IS THE SESSION, NOT AN OUTAGE (ruling
+        # 2026-11-24). The engine answered; the caller's token had lapsed in flight. Only when
+        # the token this call carried is itself past its `exp` (within 5 s): a 401 with a live
+        # token, or with no caller token, is not this and takes the path below.
+        _r401 = getattr(exc, "response", None)
+        if (isinstance(exc, requests.exceptions.HTTPError)
+                and getattr(_r401, "status_code", None) == 401 and _caller_token):
+            _exp = _unverified_expiry(_caller_token)
+            if _exp is not None and _exp <= time.time() + 5:
+                context.log.warning(
+                    "execute_subtask: engine at %s answered 401 and the caller's token has "
+                    "expired; naming it as the session, not an outage.", endpoint)
+                try:
+                    context.add_output_metadata({
+                        "caller_identity_unavailable": True,
+                        "endpoint": str(endpoint),
+                        "cause": "session_expired",
+                    })
+                except Exception:  # pragma: no cover
+                    pass
+                return {**_caller_identity_result(
+                    config, predicate, sub_query, answerer_persona, "session_expired"),
+                        "disposition": ROUTE}
         # ValueError covers a 200 with an unparseable body — the engine answered with
         # something that is not JSON, which is a failure to answer, not a successful answer.
         # THE REFUSAL'S OWN BODY, because it names the fix and this route discarded it.
@@ -3758,6 +3874,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
             # does. routed to a specialist that was unreachable -- an honest failure beats a fabrication
             "route_status": "matched",
+            "disposition": ROUTE,
             "expert_response": {
                 # Same vocabulary discipline as Engine DA's envelope: a distinct status, never
                 # `success` carrying an explanation. `ungrounded` would be WRONG here — nothing
@@ -3864,6 +3981,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
         # does. `matched` unless the specialist said it abstained — see above the return.
         "route_status": route_status,
+        "disposition": ROUTE,
         "expert_response": data,
     }
 

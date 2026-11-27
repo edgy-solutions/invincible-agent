@@ -294,7 +294,9 @@ def seam_unset(monkeypatch):
 
 
 def _near_expiry_vault(token):
-    v = IdentityVault(wall_clock=lambda: _NOW, refresh_margin_seconds=60)
+    # The intent here is the refresh path, which only a configured exchange has (2026-11-24).
+    v = IdentityVault(wall_clock=lambda: _NOW, refresh_margin_seconds=60,
+                      refreshable=lambda: True)
     gateway.VAULT = v
     v.stash(RUN, token, subject=ALICE)
     return v

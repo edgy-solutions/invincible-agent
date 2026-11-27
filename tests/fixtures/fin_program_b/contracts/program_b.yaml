@@ -1,0 +1,45 @@
+# Synthetic program B's contract for the flow rows: a test fixture only, not wired into any chart.
+# Modelled on contracts/ev_fixture.yaml (same format, same parser). Program B's work breakdown is
+# four WBS levels above the control account, it carries a two-level integrated product team (IPT)
+# breakdown beside it, and its periods are the 4-4-5 calendar `program_b_445`
+# (tests/fixtures/fin_program_b/fin_calendar). Period amounts, never cumulative.
+contract_id: program_b
+version: "1.0.0"
+status: sample
+ratified_by: owner
+
+grain: [work_package, period]
+scope: program_id
+
+# A work package sits in one place of each breakdown.
+dependencies:
+  - {by: work_package, determines: [wbs_1, wbs_2, wbs_3, wbs_4, control_account, ipt_1, ipt_2]}
+
+period:
+  column: period
+  calendar: program_b_445
+
+columns:
+  - {name: program_id, type: string, required: true, nullable: false}
+  - {name: wbs_1, type: string, required: true, nullable: false}
+  - {name: wbs_2, type: string, required: true, nullable: false}
+  - {name: wbs_3, type: string, required: true, nullable: false}
+  - {name: wbs_4, type: string, required: true, nullable: false}
+  - {name: control_account, type: string, required: true, nullable: false}
+  - {name: work_package, type: string, required: true, nullable: false}
+  - {name: ipt_1, type: string, required: true, nullable: false}
+  - {name: ipt_2, type: string, required: true, nullable: false}
+  - {name: period, type: string, required: true, nullable: false}
+  - {name: bcws, type: numeric, unit: USD, required: true, nullable: false, additive_over: [work_package, period]}
+  - {name: bcwp, type: numeric, unit: USD, required: true, nullable: false, additive_over: [work_package, period]}
+  - {name: acwp, type: numeric, unit: USD, required: true, nullable: false, additive_over: [work_package, period]}
+
+rules:
+  missing_column: "a required column, or a column a measure row names, is absent"
+  wrong_type: "a column is not of the type the contract declares"
+  null_value: "a null in a column that is read"
+  non_finite: "a NaN or infinity in a numeric column that is read"
+  period_outside_calendar: "a period outside the vocabulary"
+  varies_within_path: "under `per_path: once`, a path's rows carry different amounts"
+  duplicate_key: "more than one row for one grain tuple"
+  not_determined_by: "one value of a dependency's `by` column carries two values of a column it determines"

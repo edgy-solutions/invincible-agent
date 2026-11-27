@@ -215,7 +215,22 @@ global:
     # altered both answer 404; the same read for be1d177 returns d02e6481 (the control).
     # be1d177..1660b84 changes src/ only: no Dockerfile, package.json, entrypoint or workflow change,
     # and no import.meta.env read added.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:cf64568d8b59cce54861967072ac3db54072068b9bd37817599e007e578d0766"
+    # RE-PINNED FOR 0.4.93 (architect via Chris, 2026-11-26: "0.4.93's cortex pin moves to cortex-ui
+    # 0.4.2, not 0.4.1"): 1660b84 -> cortex-ui-0.4.2 at e65409b08e79f8bd5db2fa8dbc801dcaf2d722be, index
+    # digest 9e1d6573. 1660b84 is its ancestor, so every 1660b84 line above still holds. It adds:
+    # - a truncated ranking draws the tail the producer declares (29661a0), the move 0.4.93 owed;
+    # - the askable list follows the active persona, and a pick sends `askable_pick` (lane 74's
+    #   #545 terms, in 0.4.92);
+    # - the menu blocks (`GET /menu_blocks`) are merged over the hand menu;
+    # - five finance cards draw the served source sentence (#528);
+    # - the Waterfall card, chosen only for a served `render.shape: WATERFALL`; no engine serves
+    #   that shape yet, so no card changes.
+    # Measured before pinning: cortex's build run at e65409b pushed this digest and its retag run
+    # used it; the release record names the same index (amd64 000a39a7, arm64 fbfdf8be). Cortex
+    # read `0.4.2` and the full sha to this digest and the 0.4.1 control to 84dead33.
+    # 1660b84..e65409b changes no Dockerfile or package.json and adds no import.meta.env read. Its
+    # only workflow changes are cortex's own build, retag and chart-release jobs.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:9e1d65738fa75eb71c7c1578b15185cb02be0eec1466be6cf3d5fdb011a3c459"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -1911,6 +1926,40 @@ cortexUi:
             pathType: ImplementationSpecific
     tls: []
 
+# The durable answer service (invincible-agent ADR-0072 §3): `src/iagent/supervisor_service.py`,
+# the `SupervisorAnswer` Restate workflow, served by uvicorn on the cortex-bff image. It runs
+# with dagster user-code's env (the same ConfigMap, Secret, Postgres env and instance file),
+# and the restate-init hook registers `<release>-supervisor:<port>/restate` with the Restate
+# admin. The BFF reaches it only through Restate ingress, and only when
+# `IAGENT_ANSWER_PATH=durable`. Off by default; enabling it changes no answer path by itself.
+#
+# ONE REPLICA, and not as a sizing default. The admission limit (§5) is a semaphore held in
+# the process, so it counts once per replica: two replicas admit twice the limit. The
+# template hard-codes `replicas: 1`; there is no value to raise.
+supervisorService:
+  enabled: false
+  # No image key: the template renders `cortexBff.image`, so the service always runs the
+  # image the BFF runs. That image is built from the repo root, so it carries src/iagent and
+  # the root dependencies (dagster, restate-sdk).
+  port: 8091
+  # IAGENT_ANSWER_LIMIT: K, the answers the service runs at once (§5's FIFO semaphore).
+  # §5 rules that K starts at 2, the `iagent` row of Dagster's run limits. An overlay sets
+  # its own K from a measurement of its model server.
+  answerLimit: 2
+  # IAGENT_ANSWER_QUEUE_MAX: a COUNT, the answers that may wait for a slot. A request that
+  # arrives at a full queue is refused "busy" at once; there is no wait ceiling (§5 as
+  # amended). No default is ruled, so the render FAILS when the service is enabled
+  # without one. Each overlay sets it from its model-server measurement.
+  queueMax: null
+  # The same as dagster user-code's: the service runs the answer's ops in its own process.
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 2Gi
+
 cortexBff:
   enabled: true
   # SINGLE REPLICA IS LOAD-BEARING, not a sizing default.
@@ -1935,6 +1984,10 @@ cortexBff:
     name: cortex-bff
     tag: ""
   port: 8090
+  # The answer path (ADR-0072 §4): unset (the default) answers on Dagster. "dagster" or "durable" only;
+  # the chart refuses any other value, and refuses "durable" unless supervisorService.enabled.
+  # Set only by a measurement window's overlay, never in a shipped values file.
+  answerPath: null
   resources:
     requests:
       cpu: 100m
@@ -2103,6 +2156,38 @@ electric:
   apiSecret:
     name: ""
     key: secret
+  # Electric's OWN database role (step 3 of the sync-service exposure plan). OFF by default: turning it on is a
+  # database write (a hook Job as `postgres`), moves Electric's slot and publication (shape handles reset, clients
+  # refetch once), and waits on the step-0 reads (does 1.0.13 have manual publishing; what else holds REPLICATION).
+  # When on: the Electric pod carries no envFrom (none of the main user's credentials), connects as `role`, and the
+  # Job grants that role SELECT on exactly the tables policy/electric_shapes.yaml names, and REVOKES every table
+  # privilege it holds on any other table (all in one transaction), so the grant set follows the list DOWN as well as up.
+  # THE REACH IS WIDER THAN THE SELECT GRANTS: the role holds REPLICATION, PostgreSQL has no privileges on publications,
+  # so it can stream ANY publication in the database, and a physical stream of the cluster wherever pg_hba has a
+  # matching `replication` line. The Job therefore FAILS if any publication other than `publication` exists (step-0 item
+  # 3 a); the pg_hba lines (item 3 b) are a roll blocker. The Job needs psql 15+ (utilImages.postgresClient.tag; the
+  # render fails below that) so the password is read from the environment, never argv, and its session sets
+  # log_statement=none and log_min_error_statement=panic. Its pod carries component `electric-role`: with
+  # networkPolicy.enabled the roll needs a networkPolicy.directCallers row `electric-role: [{store: postgresql, via: ...}]`
+  # (no default row; db-init has the same gap, untouched here). The table list is read from
+  # the chart's copy of that file (files/policy/electric_shapes.yaml, kept byte-equal by a seal), never typed here.
+  db:
+    enabled: false
+    role: electric_reader
+    # The role's password lives in a Secret, generated on first install and kept on upgrade (same `lookup` caveats
+    # and same `electric.apiSecret.name`-style escape as the API secret above: name a pre-made Secret for GitOps).
+    # The generated Secret carries `helm.sh/resource-policy: keep`. The password is alphanumeric when generated; a
+    # pre-made one must be URL-safe because it is placed in Electric's DATABASE_URL.
+    secret:
+      name: ""
+      key: password
+    # `CREATE PUBLICATION` over the allowed tables and `REPLICA IDENTITY FULL`, done by the Job. Electric 1.0.13 may
+    # still create/alter its own publication: whether it has a manual-publishing mode is step-0 item 2, UNANSWERED,
+    # so nothing here sets Electric's manual-publishing switch.
+    publication: electric_publication_default
+    schema: public
+    # Revoke REPLICATION from the main user. OFF: step-0 item 3 (what else relies on it) is unanswered.
+    revokeReplicationFromMainUser: false
   resources:
     requests:
       cpu: 100m

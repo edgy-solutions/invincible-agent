@@ -132,7 +132,7 @@ def _plain_raw():
 def _ev_versioned_raw():
     """The EV fixture's contract plus a version column: the sample-shaped control."""
     raw = yaml.safe_load(EV_CONTRACT.read_text(encoding="utf-8"))
-    raw["columns"].append({"name": "version", "type": "string", "required": True})
+    raw["columns"].append({"name": "version", "type": "string", "required": True, "nullable": False})
     raw["grain"] = [*raw["grain"], "version"]
     raw["version_dimension"] = {"column": "version", "values": [PMB, CTR, GOV]}
     return raw
@@ -146,7 +146,7 @@ def row_of(fn, contract, urn, levels, value, params, *, shape="FLOW_DECOMPOSITIO
                                "levels": levels, "value": value, "per_path": "sum"},
                    "other_threshold": "0"},
         "computation": {"module": "agent_fleet.finance_agent.measure_modules.variance_decomposition",
-                        "function": "flow_edges", "version": "1.3.0",
+                        "function": "flow_edges", "version": "1.4.0",
                         "derived_from": {"authority": "Test fixture, no external method",
                                          "clause": "A signed sum split down a hierarchy",
                                          "citation": "name-only", "transcription": "each edge is the signed sum beneath its child"}},
@@ -292,6 +292,20 @@ def test_a_version_param_on_an_unversioned_contract_is_refused(tmp_path, monkeyp
     row = row_of(FN_FILTER, "program_b_plain", URN_B, B_LEVELS, "amount", ["program_id", "version"])
     with pytest.raises(ValueError, match="declares no version"):
         load(tmp_path, monkeypatch, {FN_FILTER: row}, contracts={"program_b_plain": _plain_raw()})
+
+
+@pytest.mark.parametrize("row", [B_COMPARE, B_FILTER], ids=["compare", "filter"])
+def test_a_version_column_the_contract_leaves_nullable_is_refused_at_load(tmp_path, monkeypatch, row):
+    # every row over a versioned contract reads the version column, so it is held to nullable: false
+    # as the row's own columns are; else a null version falls out of the version filter unseen
+    raw = _b_raw()
+    for col in raw["columns"]:
+        if col["name"] == "version":
+            del col["nullable"]
+    fn = row["name"]
+    with pytest.raises(ValueError, match=r"version column 'version' without nullable: false"):
+        load(tmp_path, monkeypatch, {fn: row}, contracts={"program_b_versions": raw})
+    assert load(tmp_path, monkeypatch, {fn: row}, contracts={"program_b_versions": _b_raw()})[fn]  # control
 
 
 def test_a_multi_series_row_over_a_versioned_contract_is_refused(tmp_path, monkeypatch):
@@ -467,6 +481,8 @@ def test_a_version_outside_the_list_is_a_422_naming_the_declared_versions(post):
 def test_a_equal_to_b_is_a_422(post):
     status, body = post(version_a=PMB, version_b=PMB)
     assert status == 422 and "not_in_model" in body["detail"]
+    assert "same version" in body["detail"]["not_in_model"]
+    assert "compare" not in body and "rows" not in body
 
 
 def test_a_missing_version_is_asked_for_by_its_declared_list(post):
@@ -534,7 +550,94 @@ def test_the_artifact_id_follows_the_versions_chosen(post):
     assert post(version_a=GOV, version_b=PMB)[1]["artifact_id"] == ids[(GOV, PMB)]
 
 
-# -- 7. the totals are plain decimals ----------------------------------------------------------------
+# -- 10. the difference and its percent of b ---------------------------------------------------------
+
+def tiny(world, a, b):
+    """Program B holding ONE path whose version totals are exactly `a` (EAC-GOV) and `b` (PMB)."""
+    path = ("1", "1.1", "1.1.1", "1.1.1.1", "CA-01")
+    rows = [{"program_id": PROG_B, "wbs_2": path[0], "wbs_3": path[1], "wbs_4": path[2], "wbs_5": path[3],
+             "control_account": path[4], "period": "P1", "version": v, "amount": amt}
+            for v, amt in ((GOV, a), (PMB, b))]
+    world.frames[URN_B] = pl.DataFrame(rows, schema_overrides={"amount": pl.Float64})
+
+
+def test_the_difference_is_exact_and_equals_the_root_edge(post):
+    status, env = post(version_a=GOV, version_b=PMB)
+    block = env["compare"]
+    diff = Decimal(block["total_a_exact"]) - Decimal(block["total_b_exact"])
+    assert isinstance(block["difference_exact"], str) and block["difference_exact"] == format(diff, "f")
+    (root,) = [e for e in env["rows"] if e["source"] is None]
+    assert SIGN[root["sign"]] * Decimal(root["value_exact"]) == Decimal(block["difference_exact"])
+    assert block["difference_percent_of_b"] == format(diff / abs(Decimal(block["total_b_exact"])), "f")
+
+
+def test_the_percent_is_a_fraction_of_b(post, world):
+    tiny(world, 250.0, 200.0)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    assert Decimal(env["compare"]["difference_percent_of_b"]) == Decimal("0.25")
+    assert Decimal(env["compare"]["difference_exact"]) == Decimal(50)
+    assert env["compare"]["difference_percent_of_b"] == format(Decimal(50) / Decimal(200), "f")
+
+
+def test_a_cent_on_a_billion_is_served_without_an_exponent(post, world):
+    """str(Decimal) writes a quotient this small as "1E-11"; the wire holds plain decimals only."""
+    tiny(world, 1_000_000_000.01, 1_000_000_000.00)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    block = env["compare"]
+    assert block["difference_exact"] == "0.01"
+    assert block["difference_percent_of_b"] == "0.00000000001"
+    assert "E" not in env["verdict"].split(" less ", 1)[1]
+
+
+def test_a_very_small_difference_is_served_as_a_plain_decimal(post, world):
+    """Gov's mutant P5: str(difference) serves "1E-8". The cent-on-a-billion difference (0.01) prints alike either way."""
+    assert str(Decimal("0.00000003") - Decimal("0.00000002")) == "1E-8"  # control: str() would serve an exponent
+    tiny(world, 3e-8, 2e-8)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    served = env["compare"]["difference_exact"]
+    assert served == "0.00000001"
+    assert "E" not in served and "e" not in served
+
+
+def test_a_zero_b_total_leaves_the_percent_null_and_the_verdict_says_undefined(post, world):
+    tiny(world, 250.0, 0.0)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    assert env["compare"]["difference_percent_of_b"] is None
+    assert Decimal(env["compare"]["difference_exact"]) == Decimal(250)
+    assert "undefined" in env["verdict"] and f"{PMB}'s total is zero" in env["verdict"]
+
+
+def test_a_negative_b_total_gives_a_percent_of_the_differences_sign(post, world):
+    tiny(world, -100.0, -200.0)
+    status, env = post(version_a=GOV, version_b=PMB)
+    assert status == 200, env
+    diff = Decimal(env["compare"]["difference_exact"])
+    pct = Decimal(env["compare"]["difference_percent_of_b"])
+    assert diff == Decimal(100) and pct == Decimal("0.5")
+    assert (pct > 0) == (diff > 0)
+    tiny(world, -300.0, -200.0)
+    _s, fall = post(version_a=GOV, version_b=PMB)
+    assert Decimal(fall["compare"]["difference_exact"]) < 0 and Decimal(fall["compare"]["difference_percent_of_b"]) < 0
+
+
+def test_swapping_a_and_b_negates_the_difference(post):
+    _s, fwd = post(version_a=GOV, version_b=PMB)
+    _s, rev = post(version_a=PMB, version_b=GOV)
+    assert Decimal(rev["compare"]["difference_exact"]) == -Decimal(fwd["compare"]["difference_exact"])
+    assert fwd["compare"]["difference_exact"] != "0"
+
+
+def test_the_verdict_names_the_difference_and_percent_as_served(post):
+    _s, env = post(version_a=GOV, version_b=PMB)
+    block = env["compare"]
+    assert f"{GOV} less {PMB} is {block['difference_exact']}, {block['difference_percent_of_b']} of {PMB}" in env["verdict"]
+
+
+# -- 11. the totals are plain decimals ----------------------------------------------------------------
 
 def test_the_two_totals_are_plain_decimals_never_in_exponent_form(post, world):
     """`str(Decimal('1E-8'))` is exponent form; the block serves `format(x, 'f')`."""
@@ -560,7 +663,7 @@ def test_a_version_column_outside_grain_is_refused_and_inside_grain_loads():
     assert dataset_contracts._parse(raw).version_column == "version"
 
 
-# -- 8. uneven counts: a swap of the two counts must not survive -------------------------------------
+# -- 12. uneven counts: a swap of the two counts must not survive -------------------------------------
 
 def test_uneven_only_in_counts_are_read_to_the_right_side(post, world):
     """Two paths only in A (CA-09, CA-11) and one only in B (CA-10): (2, 1) forward, (1, 2) swapped."""
