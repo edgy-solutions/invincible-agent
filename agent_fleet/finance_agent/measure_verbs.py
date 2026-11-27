@@ -90,9 +90,9 @@ try:  # the declared fiscal calendars, with the same two-way import
 except ImportError:
     from agent_fleet.finance_agent import fiscal_calendar as _fiscal_calendar
 try:  # engine-fin's own rule ids, with the same two-way import
-    from asset_inputs import RULES as _FIN_RULES
+    from asset_inputs import RULES as _FIN_RULES, period_phrase as _period_phrase
 except ImportError:
-    from agent_fleet.finance_agent.asset_inputs import RULES as _FIN_RULES
+    from agent_fleet.finance_agent.asset_inputs import RULES as _FIN_RULES, period_phrase as _period_phrase
 
 def _default_seed_dir() -> Path:
     """`<repo>/policy/measure_verbs`, found by walking up rather than counting levels: in the
@@ -162,8 +162,10 @@ COMPUTED_SHAPES = frozenset({"MULTI_SERIES", "FLOW_DECOMPOSITION", "WATERFALL"})
 KIND_STATE, KIND_DATASET = "state", "dataset"
 _SHAPES_OF_KIND = {KIND_STATE: frozenset({"MULTI_SERIES"}),
                    KIND_DATASET: frozenset({"FLOW_DECOMPOSITION", "MULTI_SERIES", "WATERFALL"})}
-_DATASET_PARAMS = frozenset({"program_id", "version", "version_a", "version_b"})   # `window` is refused: a read is the whole program
+# `window` is refused: a read is the whole program, or (a flow row listing `period` and `basis`) one period of it.
+_DATASET_PARAMS = frozenset({"program_id", "version", "version_a", "version_b", "period", "basis"})
 _VERSION_PARAMS = ("version", "version_a", "version_b")
+_PERIOD_PARAMS = ("period", "basis")      # a flow row lists both or neither
 _URN_PREFIX = "urn:li:dataset:"               # `asset_inputs.URN_PREFIX`; the flat image cannot import it
 _DATASET_FN_KEYWORDS = frozenset({"root", "paths", "other_threshold"})
 _SERIES_FN_KEYWORDS = frozenset({"periods"})  # a dataset row drawn as MULTI_SERIES
@@ -596,6 +598,33 @@ def _check_versions(ds: dict, params: tuple[str, ...], series_kind: bool) -> Non
         raise ValueError(f"inputs.params lists {listed}; contract {cid!r} declares no version")
 
 
+def _check_period(ds: dict, params: tuple[str, ...]) -> None:
+    """A flow row's `period` and `basis` params held to what its contract declares. ValueError.
+
+    Both or neither: a period with no basis would not say whether it is the one period or the
+    program through it, and a basis with no period has nothing to read through. The contract must
+    name its period column. Under `per_path: sum` a cumulative read adds a column across periods,
+    so every value column must be declared additive over the period column; `per_path: once` takes
+    a path's amount once and is exempt."""
+    listed = [p for p in _PERIOD_PARAMS if p in params]
+    if not listed:
+        return
+    contract = ds["contract"]
+    cid, column = contract.contract_id, contract.period_column
+    if len(listed) != len(_PERIOD_PARAMS):
+        raise ValueError(f"inputs.params lists {listed}; a flow row lists `period` and `basis` together, "
+                         f"or neither")
+    if not column:
+        raise ValueError(f"inputs.params lists `period` and `basis`; contract {cid!r} declares no period "
+                         f"column (`period.column`), so a read has no column to cut by")
+    if ds["per_path"] == "sum":
+        short = sorted(c for c in ds["value_columns"] if column not in contract.additive_over.get(c, ()))
+        if short:
+            raise ValueError(f"inputs.params lists `period` and `basis`, and a cumulative read would sum "
+                             f"{short}, which contract {cid!r} does not declare additive over its periods "
+                             f"({column!r} is not in their `additive_over`)")
+
+
 def _check_series(rnd: dict, *, single: bool) -> tuple[tuple[dict[str, Any], ...], Optional[dict[str, Any]]]:
     """`render.series` and `render.target` of a MULTI_SERIES row, validated on the SDK's shared
     models (Fork A1, ruled 2026-11-05): each series a `MeasureSeries`, the target a
@@ -749,11 +778,16 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
     if unknown_params:
         raise ValueError(f"inputs.params names {unknown_params}; this engine fills only {sorted(allowed_params)}"
                          + (" for a dataset row (a read is the whole program)" if kind == KIND_DATASET else ""))
+    if series_kind and [p for p in _PERIOD_PARAMS if p in params]:
+        raise ValueError(f"inputs.params lists {[p for p in _PERIOD_PARAMS if p in params]}; a series row draws "
+                         f"every period of the program, so `period` and `basis` are a flow row's only")
     dataset: dict = {}
     if kind == KIND_DATASET:
         dataset = _check_dataset_series(inputs) if series_kind else _check_dataset(inputs)
         dataset["contract"] = _join_contract(dataset, series_kind)
         _check_versions(dataset, params, series_kind)
+        if not series_kind:
+            _check_period(dataset, params)
         state: dict = {}
     else:
         state = dict(inputs["state"])
@@ -895,7 +929,8 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         value_op=dataset.get("value_op", "column"), per_path=dataset.get("per_path", "sum"),
         depth=dataset.get("depth"),
         other_threshold=dataset.get("other_threshold"),
-        scope_column=dataset.get("scope_column", ""), period_column=dataset.get("period_column", ""),
+        scope_column=dataset.get("scope_column", ""),
+        period_column=dataset.get("period_column") or getattr(dataset.get("contract"), "period_column", None) or "",
         status_column=dataset.get("status_column", ""), per_period=dataset.get("per_period", {}),
         per_program=dataset.get("per_program", {}), contract=dataset.get("contract"),
         calendar_id=dataset.get("calendar_id", ""),
@@ -1076,12 +1111,15 @@ def run_dataset(paths, row: MeasureVerbRow, *, program_id: str) -> list[dict[str
 
 
 def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]], *,
-                    compare: Optional[dict[str, Any]] = None) -> Optional[str]:
+                    compare: Optional[dict[str, Any]] = None,
+                    period: Optional[tuple[str, str]] = None) -> Optional[str]:
     """A MECHANICAL restatement of the edge table: the root's net signed value (read off the root
     edge), how many edges below the root, over how many levels, and how many sinks the collapse
     made. It states where the figure stands, never whether that is acceptable. ABSENT (None) when
     there are no edges. A comparison row's `compare` (the envelope's block, counted by the read, never
-    recomputed here) adds how many paths only one of the two versions holds."""
+    recomputed here) adds how many paths only one of the two versions holds. A row that read one
+    period, or the program through it, names which (`period` is `(period, basis)`), so the figure is
+    never read as the whole program's."""
     if not rows:
         return None
     sign = {"positive": 1, "negative": -1, "zero": 0}
@@ -1093,7 +1131,8 @@ def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]], *,
     label = row.render.get("value_label", row.name)
     n = len(row.levels) - 1
     depth_text = f"{n}" if row.depth is None else f"{row.depth} of {n}"
-    text = (f"{label}: net {net:.2f} across {len(below)} edges over {depth_text} levels, "
+    read = f" ({_period_phrase(*period)})" if period else ""
+    text = (f"{label}{read}: net {net:.2f} across {len(below)} edges over {depth_text} levels, "
             f"{sinks} 'All other' sink(s) from the collapse, "
             f"{zeros} edge(s) at zero")
     if compare is not None:
