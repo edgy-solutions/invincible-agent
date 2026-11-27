@@ -10366,6 +10366,11 @@ _UNREADABLE_MESSAGE = ("Your question was waiting for its turn, and its place in
                        "not be read, so it was not started. Please ask it again.")
 
 
+# The queued admission wait's clock (gov, #422). A seam only: tests drive it, the way #594's
+# `_stall_clock` is driven, so the bound's seals do not depend on a runner's speed.
+_admission_clock = time.monotonic
+
+
 def _unreadable_error(trace_id: str | None) -> str:
     """The refusal for a queued answer whose place could not be read for the gate's waiter-idle
     time (gov's finding on #422): not admitted, no model call. Its wait with GOOD reads has no
@@ -10763,7 +10768,7 @@ async def _generate_dagster_stream_inner(
                     return
                 if _decision == "queued":
                     _res["queued"] = True
-                    _wq_t0 = time.monotonic()
+                    _wq_t0 = _admission_clock()
                     _wq_last = None
                     _wq_ok = _wq_t0                     # the last GOOD read; the wait's start before the first
                     _wq_bound = float(_rb.unreadable_s)
@@ -10778,10 +10783,10 @@ async def _generate_dagster_stream_inner(
                             # The read failed: not an admission. Look again, but not for ever (gov, #422): past the
                             # gate's waiter-idle time an unread waiter is gone from the gate anyway. A GOOD read
                             # resets this; a queued wait whose reads succeed has no ceiling (ADR-0072 5).
-                            if time.monotonic() - _wq_ok < _wq_bound:
+                            if _admission_clock() - _wq_ok < _wq_bound:
                                 continue
                             logger.warning("admission wait for %s: no readable status for %.1fs; ended with the "
-                                           "failure card", _rid, time.monotonic() - _wq_ok)
+                                           "failure card", _rid, _admission_clock() - _wq_ok)
                             yield _unreadable_error(trace_id)
                             yield _sse("final_payload", json.dumps(_failure_card("admission", trace_id or None)))
                             await _dispatch_answer_artifact(_boundary_failure_bundle(
@@ -10789,7 +10794,7 @@ async def _generate_dagster_stream_inner(
                                 {"cause": "answer_admission_unreadable", "where": "admission"}))
                             yield _sse("stream_end", "{}")
                             return      # _res stays queued: the boundary's finally WITHDRAWS the place
-                        _wq_ok = time.monotonic()
+                        _wq_ok = _admission_clock()
                         if _wst == "LOST":
                             # The gate no longer knows this answer (a restart while it waited):
                             # refused, never admitted, no model call (ruled 2026-11-24).
@@ -10815,7 +10820,7 @@ async def _generate_dagster_stream_inner(
                     _res["queued"] = False
                     yield _sse("answer_admitted", json.dumps({
                         "run_id": _rid,
-                        "waited_ms": int((time.monotonic() - _wq_t0) * 1000)}))
+                        "waited_ms": int((_admission_clock() - _wq_t0) * 1000)}))
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(

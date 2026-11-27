@@ -896,10 +896,10 @@ def _plain_req():
     return gw.InterviewRequest(message="how is the pump doing", session_id="s-adm-2")
 
 
-async def _stream(mesh, *, stop=None):
+async def _stream(mesh, *, stop=None, trace_id=""):
     """Drive the boundary; log every event beside the posts. `stop(ev, mesh)` closes the stream."""
     out = []
-    agen = gw.generate_dagster_stream(_plain_req(), user_email="alice@example.com")
+    agen = gw.generate_dagster_stream(_plain_req(), user_email="alice@example.com", trace_id=trace_id)
     try:
         async for ev in agen:
             out.append(ev)
@@ -1480,25 +1480,40 @@ async def test_a_restart_between_two_reads_of_a_wait_is_refused(mesh_env, monkey
 # last GOOD read (IAGENT_ANSWER_WAITER_IDLE_S); a wait with good reads has no ceiling (ADR-0072 5).
 
 
-async def _real_wait(seconds):
-    """mesh_env patches asyncio.sleep to sleep(0); real time passes by looping on it."""
-    t0 = time.monotonic()
-    while time.monotonic() - t0 < seconds:
-        await asyncio.sleep(0)
+_BOUND_S = 30.0      # the bound: IAGENT_ANSWER_WAITER_IDLE_S, on the wait's own clock
+_READ_S = 1.0        # what one status read costs on that clock
+TRACE_UNREAD = "trace-unread-7c2e"
+
+
+def _adm_clock(monkeypatch):
+    """The queued wait's clock, driven by the test (gov's ask on de0ca5bc; #594's `_stall_clock`
+    form). Each seal advances it per status read, so a bound is a count of reads, not a runner's
+    speed. The env value also sets the gate's waiter-idle, which runs on the real clock: at 30 s it
+    cannot drop a waiter in a test that takes well under a second, so a pause cannot end the
+    place either."""
+    t = {"now": 0.0}
+    monkeypatch.setenv(adm.WAITER_IDLE_ENV, str(_BOUND_S))
+    # raising=False: at code with no seam the seals fail on what the stream does, not here
+    monkeypatch.setattr(gw, "_admission_clock", lambda: t["now"], raising=False)
+    return t
 
 
 @pytest.mark.asyncio
 async def test_a_queued_answer_whose_place_cannot_be_read_ends_with_the_card_and_gives_back_its_place(
         mesh_env, monkeypatch):
     """gov's finding on #422. Its control is the next test (good reads never end the wait). The
-    mutant that removes the bound turns this red through wait_for's TimeoutError, not a hang."""
-    monkeypatch.setenv(adm.WAITER_IDLE_ENV, "0.3")
+    mutant that removes the bound turns this red through wait_for's TimeoutError, not a hang.
+    Each read costs one second of the wait's own clock, so the bound ends it on the 30th failed
+    read exactly, however fast the runner is. The card and the error name the trace id
+    (ADR-0072 8.1, ruled 2026-11-15)."""
+    clk = _adm_clock(monkeypatch)
     adm.reset_gate_for_tests(1, 5)
     gate = _gate_full(("h",))
     failed = []
 
     def after(handler, aid, mesh):
         if handler == "snapshot":
+            clk["now"] += _READ_S
             failed.append(1)
             return _Resp(500, {})
         return None
@@ -1506,18 +1521,19 @@ async def test_a_queued_answer_whose_place_cannot_be_read_ends_with_the_card_and
     m = mesh_env(on_post=after)
     monkeypatch.setattr(gw, "_DURABLE_ANSWERS", DurableAnswers(
         "http://ingress", client_factory=m.client, snapshot_ttl_s=0.0))
-    t0 = time.monotonic()
-    blob = await asyncio.wait_for(_stream(m), 10)
-    assert time.monotonic() - t0 >= 0.3           # it waited the bound, it did not end at once
-    assert len(failed) > 1, failed
+    blob = await asyncio.wait_for(_stream(m, trace_id=TRACE_UNREAD), 10)
+    assert len(failed) == int(_BOUND_S / _READ_S), len(failed)   # it waited the bound, not less or more
     assert "answer_admitted" not in blob
     assert m.n(ADM_ROUTE) == 0 and m.n("run/send") == 0       # no model call, no launch
     errs = _events(blob, "pipeline_error")
     assert len(errs) == 1 and errs[0]["cause"] == "answer_admission_unreadable", errs
     assert errs[0]["retryable"] is True
     assert errs[0]["message"] == gw._UNREADABLE_MESSAGE
+    assert errs[0]["trace_id"] == TRACE_UNREAD, errs
     cards = _events(blob, "final_payload")
-    assert len(cards) == 1 and "`admission`" in cards[0]["components"][0]["markdown_content"], cards
+    assert len(cards) == 1, cards
+    md = cards[0]["components"][0]["markdown_content"]
+    assert "`admission`" in md and TRACE_UNREAD in md, md
     assert (blob.index("event: pipeline_error") < blob.index("event: final_payload")
             < blob.index("event: stream_end"))
     assert [b["status"] for b in mesh_env.calls["bundles"]] == ["failed"]
@@ -1529,15 +1545,24 @@ async def test_a_queued_answer_whose_place_cannot_be_read_ends_with_the_card_and
 @pytest.mark.asyncio
 async def test_control_a_queued_answer_whose_reads_succeed_is_never_ended_by_the_bound(
         mesh_env, monkeypatch):
-    """The control of the test above: the same bound and gate, but every read succeeds. The wait
-    outlasts three times the bound and is then admitted (ADR-0072 5: no ceiling)."""
-    monkeypatch.setenv(adm.WAITER_IDLE_ENV, "0.3")
+    """The control of the test above: the same bound, clock and gate, but every read succeeds.
+    The wait outlasts three times the bound on its own clock and is then admitted (ADR-0072 5:
+    no ceiling)."""
+    clk = _adm_clock(monkeypatch)
     adm.reset_gate_for_tests(1, 5)
     gate = _gate_full(("h",))
-    m = mesh_env()
+
+    def after(handler, aid, mesh):
+        if handler == "snapshot":
+            clk["now"] += _READ_S
+        return None
+
+    m = mesh_env(on_post=after)
+    monkeypatch.setattr(gw, "_DURABLE_ANSWERS", DurableAnswers(
+        "http://ingress", client_factory=m.client, snapshot_ttl_s=0.0))
     task = asyncio.ensure_future(_stream(m))
     await _until(lambda: ("ev", "answer_queued") in m.log)
-    await _real_wait(0.9)
+    await _until(lambda: clk["now"] >= 3 * _BOUND_S)
     gate.release("h")
     blob = await asyncio.wait_for(task, 10)
     assert "answer_admitted" in blob
@@ -1550,33 +1575,38 @@ async def test_control_a_queued_answer_whose_reads_succeed_is_never_ended_by_the
 @pytest.mark.asyncio
 async def test_failed_reads_that_recover_inside_the_bound_keep_the_place(mesh_env, monkeypatch):
     """Defends the reset rule against the rejected rule "total failed time". Two failing runs of
-    0.6 s with a good read between them: 1.2 s failing in all, over the 1.0 s bound, but no run
-    reaches it, so the place is kept and the answer is admitted."""
-    monkeypatch.setenv(adm.WAITER_IDLE_ENV, "1.0")
+    21 reads (0.7 of the bound each) with a good read between them: 42 s failing in all, over the
+    30 s bound, but no run reaches it, so the place is kept and the answer is admitted. Without
+    the reset the wait ends at the 30th second; with a ceiling on the whole wait it ends there too.
+
+    The clock is the wait's own, advanced one second per read by the stub that answers it, so the
+    runs are exact on any runner. (The real-clock form flaked in CI, 2026-11-27: a pause let the
+    first run reach 1.4 s of a 1.0 s bound before the test switched to good reads.)"""
+    clk = _adm_clock(monkeypatch)
     adm.reset_gate_for_tests(1, 5)
     gate = _gate_full(("h",))
-    st = {"fail": True, "good": 0}
+    run = int(0.7 * _BOUND_S / _READ_S)      # 21 failed reads in a run
+    st = {"n": 0, "good": 0}
 
     def after(handler, aid, mesh):
-        if handler == "snapshot":
-            if st["fail"]:
-                return _Resp(500, {})
-            st["good"] += 1
+        if handler != "snapshot":
+            return None
+        clk["now"] += _READ_S
+        st["n"] += 1
+        if st["n"] <= run or run + 1 < st["n"] <= 2 * run + 1:
+            return _Resp(500, {})
+        st["good"] += 1
         return None
 
     m = mesh_env(on_post=after)
     monkeypatch.setattr(gw, "_DURABLE_ANSWERS", DurableAnswers(
         "http://ingress", client_factory=m.client, snapshot_ttl_s=0.0))
     task = asyncio.ensure_future(_stream(m))
-    await _real_wait(0.6)
-    st["fail"] = False
-    await _until(lambda: st["good"] >= 1)
-    st["fail"] = True
-    await _real_wait(0.6)
-    st["fail"] = False
+    await _until(lambda: st["n"] > 2 * run + 1)       # both runs failed and the reads recovered
     await _until(lambda: ("ev", "answer_queued") in m.log)
     gate.release("h")
     blob = await asyncio.wait_for(task, 10)
+    assert 2 * run * _READ_S > _BOUND_S               # the failed time in all is over the bound
     assert "answer_admitted" in blob
     assert "answer_admission_unreadable" not in blob
     assert m.n(ADM_ROUTE) == 1
