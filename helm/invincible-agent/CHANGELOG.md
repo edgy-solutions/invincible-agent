@@ -1,8 +1,96 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.93 — not yet cut
+## 0.4.94 — not yet cut
 
-**Opened at the 0.4.92 cut** (the architect's order of 2026-11-22: after every cut, open the next version as not yet cut, as a small PR). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.92 one. `Chart.yaml` stays at 0.4.92 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
+**Opened at the 0.4.93 cut** (the architect's order of 2026-11-22: after every cut, open the next version as not yet cut, as a small PR). Any PR that changes `helm/**` after the cut puts its bullet in this section, never in the dated 0.4.93 one. `Chart.yaml` stays at 0.4.93 until the cut: the chart seal reads this heading as the bump that is owed (`pending`).
+
+- **A flow row can read one fiscal period, or the program through it** (fin). No chart change. A dataset-kind flow row may list `period` and `basis` (`period` or `cumulative`) in `inputs.params`, both or neither; the cut follows the row's declared calendar, never string order, and the answer names its period and basis. The contract now reads `period.column` and `additive_over`; a cumulative row over a column not declared additive over its periods is refused at load. No shipped row lists them yet. **Upgrade note:** a deployment's own dataset contract that declares `period.column` must name a declared `string` column with `nullable: false`, and every name in a column's `additive_over` must be a declared column. Otherwise the contract file is refused, and engine-fin does not start when that file holds its `FIN_DATASET_CONTRACT`. Before the roll, load each of the deployment's contract files with `agent_fleet.utils.dataset_contracts.load_contracts`. Every contract in this repo passes.
+- **Two built-in lookups: the fiscal calendar's periods and a work element's children** (fin). No chart change. `fin_calendar_periods` (`mesh:finCalendarPeriods`) lists the declared calendar's periods in the calendar's own order and marks the one the data reports through; `fin_hierarchy_children` (`mesh:finHierarchyChildren`) lists an element's children down `depth` levels (default 1). Both are asset-only: with no dataset configured they refuse, never answering from the seed, and they read as the caller. They carry no amount, unit or verdict. The dataset contract may now declare `status_period` (a declared non-null string column determined by the scope) and `hierarchy` (two or more declared non-null string columns, outermost first, the last determining the rest); the shipped `ev_fixture` declares both. Control account and work package are the shipped levels, and any WBS depth above them is declared by the contract. **Upgrade note:** a deployment contract with neither key loads as before; a lookup that needs a missing key refuses by name (`hierarchy_not_declared`). A name that stands under more than one parent is refused `element_ambiguous`, naming every parent, and never answered as one node; the table's identity is the node's path from the outermost level, so no two nodes share it.
+
+## 0.4.93 — 2026-11-26
+
+**0.4.93 is 0.4.92 (`f7c3f5e6`) plus the 13 merges below, `f7c3f5e6..ac56bc40`, merged by sha in this order.** The architect moved it up (2026-11-26, via Chris): it is cut as soon as its three gates are merged. The gates are:
+- the supervisor fix, #574;
+- #580;
+- the cortex 0.4.2 pin, #585, the last of the three, merged at 22:43Z on 2026-11-26.
+
+Everything else approved by then rides along, and nothing else holds the cut. At the cut, no other PR was both approved and mergeable: #565 is approved, but its head does not contain master.
+
+| order | PR | merge | lane | what |
+| --- | --- | --- | --- | --- |
+| 1 | #572 | `b6ce5dfc` | Lane 1 | CHANGELOG: open 0.4.93 as not yet cut |
+| 2 | #570 | `0c0e8765` | 74 | Seal the action record's wire shape for every option, strictly |
+| 3 | #573 | `de1de61c` | Lane 1 | 0.4.93 notes: the cortex pin is owed a move to a release containing 29661a0 |
+| 4 | #574 | `2442bada` | Lane 1 | The supervisor registers with Restate over HTTP/1.1 |
+| 5 | #561 | `0a8f270d` | fin | engine-fin says why an empty resolve or listing came back empty |
+| 6 | #575 | `cd6d0314` | fin | The bare-digit seal puts finance's import state back after loading it |
+| 7 | #578 | `28900bfb` | Lane 1 | Docs name the deployment's overlay folder, not the folder's name |
+| 8 | #568 | `89890f49` | fin | A finance listing is the verified bearer's person; a body email alone lists nothing |
+| 9 | #564 | `f1c5fb67` | 74 | Engine O's program listing carries the person, as /resolve does |
+| 10 | #553 | `c77b6ecc` | Lane 1 | Admit WATERFALL and declare mesh:Waterfall; fin's walk line follows #552 |
+| 11 | #579 | `575660ff` | Lane 1 | The seed CronJob applies program_members.yaml, before the grant sync |
+| 12 | #580 | `73fe3393` | 74 | Engine O's generation records name the model and its parameters (#544's body is a bytearray) |
+| 13 | #585 | `ac56bc40` | Lane 1 | The cortex pin moves to cortex-ui 0.4.2 (e65409b, sha256:9e1d6573) |
+
+**Cortex in 0.4.93:** the chart pins cortex-ui `e65409b`, which is cortex release `cortex-ui-0.4.2` (index digest `9e1d6573`). It moves from `1660b84` (`cortex-ui-0.4.0`, `cf64568d`). It adds these:
+- `29661a0`, a truncated ranking draws the tail the producer declares;
+- the askable list follows the active persona, with `askable_pick` on a pick;
+- the served menu blocks are merged over the hand menu;
+- five finance cards draw the served source sentence.
+
+**Not in 0.4.93** (open at the cut; each goes in a later release once it is approved and current):
+- **Approved, but its head does not contain master:**
+  - #565 (saf), Dagster and checkpoints in their own databases (`databaseSplit`, default off).
+- **Lane 1, in gov's review:**
+  - #584, the WATERFALL projector row;
+  - #587, the ANALYST persona's retirement;
+  - #503, the mirror never copies `:latest`.
+- **fin:**
+  - #562, the advisory's log names every skip (its head does not contain master);
+  - #569, a flow total over one period or through it (changes requested, held);
+  - #576, the calendar and WBS lookups;
+  - #577, a declared dimension's members.
+- **74:**
+  - #506, an instance name is the whole phrase.
+- **saf:**
+  - #582, engine-lg's checkpoints database;
+  - #583, Electric's role in pg_hba.
+- **Lane 1:**
+  - #581, dag-tools 0.19.0.
+- **perf:**
+  - #422, the admission limit (changes requested).
+- **Drafts:** #491, #492, #493, #514, #515, #524, #586.
+
+**Before the roll:**
+- **The values diff.** Chris sees the diff against the live release, re-run on this cut's tree with the release's digests, and approves it.
+  - Measured before the cut, at `73fe3393` with the sandbox overlay: no non-digest key changes. The 37 differing keys are all image digests, which come from the release file.
+  - The cortex digest moves `cf64568d` → `9e1d6573`.
+- **Every pod restarts.** The chart version moves, so every pod template changes, including the stateful pods on the node that holds the stateful volumes. List STARTED Dagster runs first: a dead worker holds a slot.
+- **A prime window.** #553 declares `mesh:Waterfall`, and a new class reaches the graph only at a prime. Prime, then roll, then read the edges.
+- **The finance listing pair rolls together.** Engine O relays the person's bearer on `/enumerate_instances` (#564), and engine-fin takes the listing's person from the verified bearer (#568). Both images come from this one release, so one roll carries both.
+- **The supervisor.** The `restate-init` hook registers `SupervisorAnswer` over HTTP/1.1 (#574). `cortexBff.answerPath` stays unset at this roll. Perf's window sets it afterwards, in its own one-key roll.
+- **Engine O does not roll during a perf run.**
+
+**Known issues at 0.4.93:**
+- **Questions asking which tables an asset uses are still misrouted.** A fix was measured and did not help (carried from 0.4.92).
+- **Short-lived tokens.** Two things are still open:
+  - the UI's full-page sign-in drops a typed question when the identity provider issues the UI's client no refresh token. That is cortex's fix, and it has not been re-measured on cortex-ui 0.4.2;
+  - whether the issuer exchanges a held token that has already expired (not measured).
+- **No engine serves `render.shape: WATERFALL` yet.** The card and its archetype ship, but a waterfall draws only once fin's `COMPUTED_SHAPES` entry declares the shape.
+
+Two of 0.4.92's known issues are fixed here:
+- the seed CronJob now applies `program_members.yaml` (#579);
+- the finance listing now takes the person from the verified bearer (#564, #568).
+
+**After the roll:**
+- **The supervisor is registered.** Restate's log names no `META0014` for the supervisor. Restate's deployment list shows `SupervisorAnswer` over HTTP/1.1, read with Chris's approval, as every Restate read needs.
+- **The cortex image.** The frontend pod's image digest is `9e1d6573`.
+- **The seed CronJob.** The next scheduled run's log shows `PROGRAM MEMBER SYNC` before `GRANT SYNC`, and ends with `eight syncs applied` (#579).
+- **Program membership.** One member of one program resolves `can_view_program`, and a non-member doesn't (the 0.4.92 read, unchanged).
+- **The finance listing.** A verified person's program list comes back non-empty. Its `fin.enumerate_empty` line, if there is one, names a reason.
+- **Then perf's window opens.** It runs the two one-key `cortexBff.answerPath` rolls (durable, then unset), each on Chris's approval.
+
+**The changes:**
 
 - **The cortex pin moves to cortex-ui 0.4.2** (the architect's orders, 2026-11-25 and 2026-11-26: "0.4.93's cortex pin moves to cortex-ui 0.4.2, not 0.4.1"). **Chart values change:** `global.imageDigests["ghcr.io/edgy-solutions/cortex-ui/frontend"]` moves from `cf64568d` (`1660b84`, `cortex-ui-0.4.0`) to `9e1d6573` (`cortex-ui-0.4.2`, `e65409b`). It carries `29661a0`, "a truncated ranking draws the tail the producer declares", which 0.4.93 owed. It also brings the askable list that follows the active persona, `askable_pick` on a pick, the menu blocks merged over the hand menu, and the served source sentence on five finance cards. **Upgrade note:** cortex's contract snapshots were taken at 0.4.92, so this frontend needs the BFF to serve `GET /askable_measures` (with `persona`, `domains` and `cell_source`), `GET /menu_blocks`, and `askable_pick` on `InterviewRequest`. If any of these changes shape in 0.4.93, cortex re-checks before the cut. In 0.4.2 only the export dialog has the sign-in sentence; another card may show "Refused (401)" briefly before the sign-in redirect.
 - **The supervisor registers with Restate over HTTP/1.1** (Lane 1; a defect found on the 0.4.92 roll). **Chart change:** the `restate-init` hook's `SupervisorAnswer` registration adds `"use_http_11": true`. The supervisor runs under uvicorn, which serves HTTP/1.1 only, while the engines run hypercorn. On the 0.4.92 roll, Restate's discovery spoke HTTP/2 to it and failed (`META0014`), and the hook's curl, having no `-f`, still exited 0. **So on 0.4.92, `SupervisorAnswer` is not registered,** although the 0.4.92 notes say the roll registers it. No answer used the durable path, because `cortexBff.answerPath` is unset. A deployment that enables `supervisorService` and sets `answerPath` before this fix gets Restate's 404 on every durable answer. **After the roll:** Restate's log names no `META0014` for the supervisor.
@@ -12,8 +100,6 @@
 - **Engine O's program listing carries the person, as `/resolve` does** (74; the architect, 11-25: "Engine O passes the person's bearer to finance on the listing call, and a provider's 401 or 403 comes back as a refusal with its reason, never as an empty answer"). `/enumerate_instances` now sends each registered provider the person's own verified bearer, as `/resolve`'s fan-out does under ruling 2026-11-19 Q2. Until now it sent the body's email and no token, so a provider could not tell who was asking. A service caller relays nothing. An expired session makes no provider call and answers 401 `session_expired`. A provider's 401 or 403 to the relayed token halts the listing and answers 401 `session_expired` or `caller_refused`, never `no_provider` or `empty`. The BFF is unchanged, so the create-canvas dialog still shows that 401 as its free-text ask. This is half of a pair: fin's bearer-first read lands after it, in the same roll. **No chart change**: engine O's image.
 - **The flow card can draw a waterfall** (Lane 1; the architect accepted the waterfall proposal on 2026-11-23, and R3 was ruled on 2026-11-24). **Code and ontology, no chart values change.** engine-p admits the `WATERFALL` archetype (`capability_admission.KNOWN_ARCHETYPES`), and `setup/ontologies/mesh_system.ttl` declares `mesh:Waterfall` under `mesh:Archetype`. The `FLOW_DECOMPOSITION` card now carries `walk`, a minus or compare row's `{start, end}` totals, when the producer supplies one; a column card is unchanged. A ratchet in `tests/test_archetypes_are_declared.py` now runs both ways: an admitted name has its class, and a declared archetype class has its admitted name (one class, mesh:AskCard, is pinned as an exception). **Upgrade note:** the new class reaches the graph only at a prime, so the roll that ships it needs a prime window ("Prime, then roll, then read the edges"). Cortex adds its `mesh:Waterfall` capability row only after this is in a deployed release. The `WATERFALL` projector tuple ships with fin's `COMPUTED_SHAPES` entry, not here, because no row can declare the shape before that.
 - **The seed CronJob applies `program_members.yaml`** (Lane 1; closes the 0.4.92 known issue "The seed CronJob does not apply `program_members.yaml`"). **Chart change:** the hourly `topaz-seed` run now applies eight syncs, not six. After the asset sync and before the reader-grant sync, it runs `program_member_sync`, then `recipient_reader_sync`, with the same invocation as the `taskGrantSync` hook. So a membership change in the policy repo reaches Topaz at the next scheduled run, not at the next `helm upgrade`. `recipient_readers.yaml` is optional, as in the hook: when the overlay has none, the leg is skipped with a WARN, and every recipient check denies. The hook is unchanged. Both read the same full file, and each prunes only its own relation (`program` `member`, `recipient_scope` `reader`). **Precondition:** the `program` type must exist in Topaz. The run's own manifest load provides it (`topazSeed.loadManifest`, default `true`). A deployment that turns that off must load the manifest another way, or the run fails at the program-member leg. **After the roll:** the next scheduled run's log shows `PROGRAM MEMBER SYNC` before `GRANT SYNC`, and ends with `eight syncs applied`.
-- **Two built-in lookups: the fiscal calendar's periods and a work element's children** (fin). No chart change. `fin_calendar_periods` (`mesh:finCalendarPeriods`) lists the declared calendar's periods in the calendar's own order and marks the one the data reports through; `fin_hierarchy_children` (`mesh:finHierarchyChildren`) lists an element's children down `depth` levels (default 1). Both are asset-only: with no dataset configured they refuse, never answering from the seed, and they read as the caller. They carry no amount, unit or verdict. The dataset contract may now declare `status_period` (a declared non-null string column determined by the scope) and `hierarchy` (two or more declared non-null string columns, outermost first, the last determining the rest); the shipped `ev_fixture` declares both. Control account and work package are the shipped levels, and any WBS depth above them is declared by the contract. **Upgrade note:** a deployment contract with neither key loads as before; a lookup that needs a missing key refuses by name (`hierarchy_not_declared`). A name that stands under more than one parent is refused `element_ambiguous`, naming every parent, and never answered as one node; the table's identity is the node's path from the outermost level, so no two nodes share it.
-- **A flow row can read one fiscal period, or the program through it** (fin). No chart change. A dataset-kind flow row may list `period` and `basis` (`period` or `cumulative`) in `inputs.params`, both or neither; the cut follows the row's declared calendar, never string order, and the answer names its period and basis. The contract now reads `period.column` and `additive_over`; a cumulative row over a column not declared additive over its periods is refused at load. No shipped row lists them yet. **Upgrade note:** a deployment's own dataset contract that declares `period.column` must name a declared `string` column with `nullable: false`, and every name in a column's `additive_over` must be a declared column. Otherwise the contract file is refused, and engine-fin does not start when that file holds its `FIN_DATASET_CONTRACT`. Before the roll, load each of the deployment's contract files with `agent_fleet.utils.dataset_contracts.load_contracts`. Every contract in this repo passes.
 
 - **Engine O's generation records name the model and its parameters again** (Lane 74; the architect, 2026-11-26: "#544 records no model name or parameters … Find why from the code and fix it"). baml_py 0.219.0's request body `raw()` returns a `bytearray` (its stub says `bytes`). `_body_bytes` accepted only `bytes`, so it parsed the text `bytearray(b'...')`, which yields nothing: every record had no `model` and empty `model_parameters`, and `prompt_sha256` hashed that text. Token counts and `model_version` were unaffected. The reader now takes the bytes; the coalescer's key reads them the same way. A new seal drives one real baml_py call against a loopback stub and was red (5 failed) on the old reader. **Every `prompt_sha256` value changes** from the roll that carries this: hashes from before and after are not comparable. No chart change; the roll is Chris's.
 
