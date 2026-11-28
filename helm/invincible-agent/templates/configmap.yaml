@@ -107,6 +107,29 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "IAGENT_TRACE_MODEL_TEXT") }}
   IAGENT_TRACE_MODEL_TEXT: "off"
   {{- end }}
+  {{- /* ROUTE_INTENT_TIMEOUT_S and ROUTE_INTENT_MODEL_TIMEOUT_S -- the two limits on routing an ask,
+  and their ORDER. ROUTE_INTENT_TIMEOUT_S (180 s) is the OUTER one: how long cortex-bff waits for
+  engine O's /route_intent before it fails the ask with route_intent_failed.
+  ROUTE_INTENT_MODEL_TIMEOUT_S (150 s) is the INNER one: how long engine O lets the routing model
+  call run before it stops the request. The inner must be shorter, so a model call cannot finish
+  after its caller has gone (perf measured one at 204 s against the 180 s limit; BAML's own
+  default would let it run 300 s). The 30 s between them covers the rest of the route. The chart
+  refuses to render a pair in the wrong order, or a value that is not a positive number. Either
+  key is overridden in agentFleet.env. */}}
+  {{- $routeEnv := .Values.agentFleet.env | default dict }}
+  {{- $routeOuter := "180" }}
+  {{- if hasKey $routeEnv "ROUTE_INTENT_TIMEOUT_S" }}{{ $routeOuter = get $routeEnv "ROUTE_INTENT_TIMEOUT_S" }}{{ end }}
+  {{- $routeInner := "150" }}
+  {{- if hasKey $routeEnv "ROUTE_INTENT_MODEL_TIMEOUT_S" }}{{ $routeInner = get $routeEnv "ROUTE_INTENT_MODEL_TIMEOUT_S" }}{{ end }}
+  {{- if not (and (gt (float64 $routeOuter) 0.0) (gt (float64 $routeInner) 0.0) (lt (float64 $routeInner) (float64 $routeOuter))) }}
+  {{- fail (printf "ROUTE_INTENT_MODEL_TIMEOUT_S (%v) must be a positive number of seconds shorter than ROUTE_INTENT_TIMEOUT_S (%v): engine O's routing model call has to stop before cortex-bff stops waiting for it" $routeInner $routeOuter) }}
+  {{- end }}
+  {{- if not (hasKey $routeEnv "ROUTE_INTENT_TIMEOUT_S") }}
+  ROUTE_INTENT_TIMEOUT_S: "180"
+  {{- end }}
+  {{- if not (hasKey $routeEnv "ROUTE_INTENT_MODEL_TIMEOUT_S") }}
+  ROUTE_INTENT_MODEL_TIMEOUT_S: "150"
+  {{- end }}
   {{- /* CONTENT_KIND_OVERLAY_DIRS -- exactly parallel to TASK_KIND_OVERLAY_DIRS above, but
   for `src/iagent/content_kinds.py` (ingest/origin seam, ADR-0021/0041, SDK 0.9.7). Unlike
   that gate, an unreadable content-kind registry FAILS CLOSED (content_kinds.registrations()

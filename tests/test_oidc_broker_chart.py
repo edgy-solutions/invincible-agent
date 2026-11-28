@@ -258,6 +258,9 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     # remote cost-map fetch, DataHub's usage upload and Hugging Face's telemetry for every engine. Also not OIDC lines; the comment is a template comment.
     # #542 (the prompt-capture setting): the same ConfigMap says model text stays out of traces unless
     # a deployment turns it on. Not an OIDC line.
+    # The two routing limits (the architect, 2026-11-28): the same ConfigMap writes cortex-bff's wait
+    # for /route_intent and engine O's shorter limit on the routing model call. Not OIDC lines;
+    # tests/perf/test_the_routing_limits_are_ordered_chart.py seals them.
     assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == [
         '+  MEM0_TELEMETRY: "False"',
         '+  LITELLM_LOCAL_MODEL_COST_MAP: "True"',
@@ -265,6 +268,8 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
         '+  HF_HUB_DISABLE_TELEMETRY: "1"',
         '+  MENU_BLOCK_OVERLAY_DIRS: "/app/policy/overlays/sample/menu_blocks"',
         '+  IAGENT_TRACE_MODEL_TEXT: "off"',
+        '+  ROUTE_INTENT_TIMEOUT_S: "180"',
+        '+  ROUTE_INTENT_MODEL_TIMEOUT_S: "150"',
         '+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may

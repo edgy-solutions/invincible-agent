@@ -1151,6 +1151,24 @@ _RESTATE_INGRESS_URL = os.getenv("RESTATE_INGRESS_URL", "http://restate:8080")
 #: (Chris, 2026-11-07, saf: `task_id` is the runner's, not ours). Never a wait for the human.
 _ACCEPTANCE_TASK_WAIT_S = float(os.getenv("ACCEPTANCE_TASK_WAIT_S", "15.0"))
 
+
+def _route_intent_timeout_s(env=os.environ) -> float:
+    """How long the BFF waits for engine O's `/route_intent` before it fails the ask with
+    `route_intent_failed`: ROUTE_INTENT_TIMEOUT_S, 180 s by default.
+
+    THE OUTER OF TWO LIMITS. Engine O stops its routing model call at
+    ROUTE_INTENT_MODEL_TIMEOUT_S (150 s by default), which must be SHORTER, so the model call
+    can never finish after this caller has given up; the chart refuses to render the pair in the
+    wrong order. Read at import: a value that is not a positive number stops the BFF at start."""
+    raw = env.get("ROUTE_INTENT_TIMEOUT_S") or "180"
+    value = float(raw)
+    if not value > 0:
+        raise ValueError(f"ROUTE_INTENT_TIMEOUT_S must be a positive number of seconds, not {raw!r}")
+    return value
+
+
+_ROUTE_INTENT_TIMEOUT_S = _route_intent_timeout_s()
+
 @app.get("/mesh/config")
 async def get_mesh_config(current_user: User = Depends(get_current_user)):
     """Proxy the dynamic UI configuration from the Ontology Service."""
@@ -8717,16 +8735,31 @@ def _orchestrate_audit_line(*, who: str, via: str, session_id: str, verb: str, c
 
 
 def _note_orchestrate_event(chunk, seen: dict) -> None:
-    """Read the routed verb and any case id off an SSE chunk; leave `seen` alone otherwise.
+    """Read the routed verb, any case id and any failure off an SSE chunk; leave `seen` alone
+    otherwise.
 
     verb: the `route_decision` event's `action.iri` (both the Dagster path and
     `_stream_direct_outcome` emit it); "UNKNOWN" is the router's no-verb value, recorded as "".
     case: a `case_id` key at the top of an event's data object or one level under it.
+    failed: the `cause` of the FIRST `pipeline_error` event, "unrecorded" when it names none.
+    The stream reports a failure as an event and then ends normally, so without this the
+    line said `outcome=completed` for an ask that failed.
     Honest-absent: "" when never seen."""
     if not isinstance(chunk, str) or not chunk.startswith("event: "):
         return
     head, _, rest = chunk.partition("\n")
     name = head[len("event: "):].strip()
+    if name == "pipeline_error":
+        if not seen.get("failed"):
+            cause = ""
+            try:
+                data = json.loads(rest[len("data: "):].strip()) if rest.startswith("data: ") else None
+            except ValueError:
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("cause"), str):
+                cause = data["cause"]
+            seen["failed"] = cause or "unrecorded"
+        return
     if name != "route_decision" and '"case_id"' not in rest:
         return
     try:
@@ -8770,10 +8803,12 @@ def _audit_orchestrate_refusals(fn):
 async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
     """Pass `gen` through unchanged and in order; write ONE `orchestrate_access` line when it ends.
 
-    outcome: completed | closed (GeneratorExit / CancelledError: the client went away) | error
-    (anything else, re-raised)."""
+    outcome: completed | failed:<cause> (the stream sent a `pipeline_error`: the cause of the
+    first) | closed (GeneratorExit / CancelledError: the client went away) | error (anything
+    else, re-raised). It records what happened: a failure once sent stands even if the client
+    then goes away (it may close on the error), and only a raise outranks it."""
     when = _orchestrate_now()
-    seen = {"verb": "", "case": ""}
+    seen = {"verb": "", "case": "", "failed": ""}
     outcome = "completed"
     try:
         async for chunk in gen:
@@ -8786,6 +8821,8 @@ async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
         outcome = "error"
         raise
     finally:
+        if seen["failed"] and outcome != "error":
+            outcome = f"failed:{seen['failed']}"
         _orchestrate_audit_line(
             who=who, via=via, session_id=session_id, verb=seen["verb"], case=seen["case"],
             when=when, outcome=outcome,
@@ -10897,7 +10934,8 @@ async def _generate_dagster_stream_inner(
                         "run_id": _rid,
                         "waited_ms": int((_admission_clock() - _wq_t0) * 1000)}))
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
+            # The OUTER limit: engine O's model call stops sooner (see `_route_intent_timeout_s`).
+            async with httpx.AsyncClient(timeout=_ROUTE_INTENT_TIMEOUT_S) as client:
                 resp = await client.post(
                     f"{_DAGSONTOLOGY_SVC_URL}/route_intent",
                     json={
