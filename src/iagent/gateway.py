@@ -35,6 +35,7 @@ import logging
 import os
 import re
 import secrets
+import statistics
 import time
 import uuid
 import weakref
@@ -7889,6 +7890,24 @@ def _sse(event: str, data: str) -> str:
 #                     NEW event name on purpose: cortex's switch ignores unknown events, so an
 #                     old cortex stays intact. cortex renders it (a separate packet).
 #   answer_admitted → {run_id, waited_ms}: the queued answer started; once, after answer_queued.
+#   answer_timing   → {run_id, elapsed_ms, expected_ms, deadline_ms}: how long the answer has taken,
+#                     how long answers of this caller usually take, and when the server stops
+#                     waiting. All three are milliseconds from the answer's birth (the instant its
+#                     `valid_as_of` is stamped), so the client's remaining time is deadline_ms -
+#                     elapsed_ms. `expected_ms` is the 90th percentile of the caller's own recorded complete
+#                     answers, null when too few are recorded. `deadline_ms` is when the stream stops
+#                     waiting on a run that keeps moving (900 s of counted wall time: queued and
+#                     paused time do not count), null when the backend has no ceiling; the stall
+#                     bound may end the stream sooner and is not in it. Sent once after the launch,
+#                     and again each time counting resumes after queued or paused time, because the
+#                     deadline moved then. Not sent on the direct path. A NEW event name on
+#                     purpose: an old cortex ignores it.
+#   pipeline_stage kind "waiting" → the answer is waiting for its run to start: queued for
+#                     admission, or launched and with no step showing yet. It starts before the
+#                     launch (and, on a queued answer, when the queue is entered) and completes when
+#                     the first step shows, and only then does "locating" start on the run path.
+#                     It fails when the run fails or stalls before any step. The direct path has
+#                     no run and starts "locating" at once, as before.
 #   pipeline_error cause answer_busy_queue_full → the admission queue was FULL at entry (retryable);
 #                     refused at once, nobody waited (ruled 2026-11-16). A cause, not a new event.
 #   pipeline_error cause answer_admission_lost → the answer was WAITING when the answer service
@@ -7909,7 +7928,7 @@ def _stage(
 ) -> str:
     """Emit a typed `pipeline_stage` event.
 
-    kind   : one of "understanding", "locating", "choosing_action",
+    kind   : one of "understanding", "waiting", "locating", "choosing_action",
              "retrieving", "composing"
     status : "started" | "completed" | "failed"
     detail : optional projection of real pipeline data
@@ -9226,6 +9245,7 @@ def _accumulated_slots(artifact_id: str, user_id: str) -> dict:
 # `seeded_by` (ADR-0041 §8.1). `_resolve_export_answers` still reads it owner-only: an export is a
 # disclosure act, and ADR-0047 §5.1's seeding-delegate rule is a READ rule, not an export one.
 from .artifact_reads import ARTIFACT_BY_ID_CYPHER as _ARTIFACT_BY_ID_CYPHER  # noqa: E402
+from . import artifact_reads  # noqa: E402
 
 # ── Origin entitlement (architect ruling, 2026-10-02) ──────────────────────────────
 #
@@ -10282,6 +10302,8 @@ def _answer_path(environ=None) -> str:
 # it without limit, and when it does run out the stream ends in `ui_payload_timeout`, which
 # names neither. This bound is wall time since the run last moved. A tunable, not a case.
 _DURABLE_STALL_S_DEFAULT = 300.0
+# The stream's clock for both of its bounds: the stall bound above, and the counted-wall-time
+# ceiling on the run poll. One seam, so a test drives both.
 _stall_clock = time.monotonic
 
 
@@ -10296,6 +10318,60 @@ def _durable_stall_s() -> float:
                        raw, _DURABLE_STALL_S_DEFAULT)
         value = _DURABLE_STALL_S_DEFAULT
     return value
+
+
+# HOW LONG AN ANSWER IS EXPECTED TO TAKE, from the caller's own recorded answers: the 90th
+# percentile duration of the last `IAGENT_EXPECTED_SAMPLE` complete ones (ruled 2026-11-28: an
+# upper figure, "usually under"; the median would flag half of all answers as slow), or None when fewer than
+# `IAGENT_EXPECTED_MIN` are recorded. A number the person can be shown beside the time the
+# server will wait. Never read across people, and never allowed to fail the stream.
+_EXPECTED_SAMPLE_DEFAULT = 50
+_EXPECTED_MIN_DEFAULT = 5
+_EXPECTED_READ_TIMEOUT_S = 2.0
+
+
+def _positive_int_setting(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = 0
+    if value <= 0:
+        logger.warning("%s=%r is not a positive whole number; using %s", name, raw, default)
+        value = default
+    return value
+
+
+def _expected_sample() -> int:
+    return _positive_int_setting("IAGENT_EXPECTED_SAMPLE", _EXPECTED_SAMPLE_DEFAULT)
+
+
+def _expected_min() -> int:
+    return _positive_int_setting("IAGENT_EXPECTED_MIN", _EXPECTED_MIN_DEFAULT)
+
+
+async def _expected_ms(user_id: str) -> int | None:
+    """The 90th percentile duration of the caller's recent complete answers, or None. Linear
+    between the two nearest ranks (`statistics.quantiles`, inclusive)."""
+    sample, minimum = _expected_sample(), _expected_min()
+
+    def _read() -> list:
+        with neo4j_driver.session() as session:
+            return [r["duration_ms"] for r in session.run(
+                artifact_reads.RECENT_DURATIONS_CYPHER, user_id=user_id, limit=sample)]
+
+    try:
+        durations = await asyncio.wait_for(
+            asyncio.to_thread(_read), timeout=_EXPECTED_READ_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("expected answer time not read (%s); sent as null", type(exc).__name__)
+        return None
+    durations = [d for d in durations if isinstance(d, (int, float))]
+    if len(durations) < minimum:
+        return None
+    if len(durations) == 1:
+        return int(durations[0])
+    return int(statistics.quantiles(durations, n=10, method="inclusive")[8])
 
 
 class _ProgressWatch:
@@ -10470,7 +10546,7 @@ _LOST_MESSAGE = ("Your question was waiting for its turn when the answer service
 def _lost_error() -> str:
     """The refusal for an answer that lost its place in a restart (ruled 2026-11-24): never an
     admission, and the queue is not rebuilt."""
-    return _perror(_LOST_MESSAGE, kind="understanding", retryable=True,
+    return _perror(_LOST_MESSAGE, kind="waiting", retryable=True,
                    cause="answer_admission_lost")
 
 
@@ -10487,17 +10563,18 @@ def _unreadable_error(trace_id: str | None) -> str:
     """The refusal for a queued answer whose place could not be read for the gate's waiter-idle
     time (gov's finding on #422): not admitted, no model call. Its wait with GOOD reads has no
     ceiling (ADR-0072 5); only an unreadable one ends."""
-    return _perror(_UNREADABLE_MESSAGE, kind="understanding", retryable=True,
+    return _perror(_UNREADABLE_MESSAGE, kind="waiting", retryable=True,
                    cause="answer_admission_unreadable", failed_step="admission",
                    trace_id=trace_id or None)
 
 
-def _busy_error(queue_max) -> str:
+def _busy_error(queue_max, kind: str = "understanding") -> str:
     """The one refusal the admission gate gives a full queue (ruled 2026-11-16), whether the BFF
-    learns it at reserve time or from the run's own snapshot."""
+    learns it at reserve time or from the run's own snapshot. `kind` is the stage it ends: at
+    reserve time `understanding`, from the run's snapshot the `waiting` that was open."""
     return _perror(
         _busy_message(queue_max),
-        kind="understanding",
+        kind=kind,
         retryable=True,
         cause="answer_busy_queue_full",
     )
@@ -10548,12 +10625,12 @@ async def _generate_dagster_stream_inner(
     session_id = request.session_id
     user_query = request.message
 
-    # Option A: typed pipeline_stage "understanding" started. The
-    # gateway's /route_intent call is real gateway-level routing work
-    # (intent extraction + persona/domain bounding), not a shortcut
-    # around Dagster. Dagster launches AFTER this returns; its stages
-    # take over from "locating" onward.
-    yield _stage("understanding", "started")
+    # Option A: typed pipeline_stage "understanding". The gateway's /route_intent call is real
+    # gateway-level routing work (intent extraction + persona/domain bounding), not a shortcut
+    # around Dagster. Dagster launches AFTER this returns; its stages take over from "locating"
+    # onward. It STARTS where the routing branch is chosen, and on the durable path only AFTER
+    # admission: an answer waiting its turn shows `waiting`, never "understanding" (cortex
+    # names the first stage still loading). A refusal bound to it before then starts it first.
 
     # 0. Check if there is an active Process Creation Interview in Restate.
     # When a session is mid-interview, every subsequent message goes back
@@ -10732,6 +10809,7 @@ async def _generate_dagster_stream_inner(
     # the honest answer is a visible failure, never a silent slide into `/route_intent` on a
     # message that was only ever a label for logs.
     if _is_seed_panel_turn and not _pre_resolved:
+        yield _stage("understanding", "started")
         yield _perror(
             "this template's panel declares no subject, so it cannot be dispatched directly",
             kind="understanding",
@@ -10741,6 +10819,7 @@ async def _generate_dagster_stream_inner(
         yield _sse("stream_end", "{}")
         return
     if _is_askable_pick_turn and not _pre_resolved:
+        yield _stage("understanding", "started")
         # Like seed_panel: the message is only a label, so there is nothing to route instead.
         yield _perror(
             "this askable measure is no longer on the list, so it cannot be dispatched directly",
@@ -10833,6 +10912,7 @@ async def _generate_dagster_stream_inner(
     intent_extraction: dict = {}
 
     if is_interview_active:
+        yield _stage("understanding", "started")
         mode = "CONVERSATIONAL"
     elif _pre_resolved:
         # THE FOURTH MODEL CALL, and the one the first pass missed. `/route_intent` runs
@@ -10849,6 +10929,7 @@ async def _generate_dagster_stream_inner(
         #
         # The lookup moved ABOVE this block to make the skip possible; it reads the ask under
         # the caller's own ownership edge and needs nothing from the extraction.
+        yield _stage("understanding", "started")
         mode = "ONE_SHOT"
     else:
         # ADMISSION COMES BEFORE INTENT EXTRACTION (ruled 2026-11-16). `/route_intent` is a model
@@ -10869,6 +10950,7 @@ async def _generate_dagster_stream_inner(
                 _decision = _rv.get("decision")
                 if _decision == "busy":
                     _res["id"] = None       # a refusal holds nothing
+                    yield _stage("understanding", "started")
                     yield _busy_error(_rv.get("queue_max"))
                     # What the run-level BUSY refusal writes: a failed artifact. Written
                     # BEFORE stream_end, so a client that closes on stream_end cannot
@@ -10880,6 +10962,7 @@ async def _generate_dagster_stream_inner(
                     return
                 if _decision == "queued":
                     _res["queued"] = True
+                    yield _stage("waiting", "started", detail={"reason": "queued"})
                     _wq_t0 = _admission_clock()
                     _wq_last = None
                     _wq_ok = _wq_t0                     # the last GOOD read; the wait's start before the first
@@ -10899,6 +10982,7 @@ async def _generate_dagster_stream_inner(
                                 continue
                             logger.warning("admission wait for %s: no readable status for %.1fs; ended with the "
                                            "failure card", _rid, _admission_clock() - _wq_ok)
+                            yield _stage("waiting", "failed", detail={"reason": "queued"})
                             yield _unreadable_error(trace_id)
                             yield _sse("final_payload", json.dumps(_failure_card("admission", trace_id or None)))
                             await _dispatch_answer_artifact(_boundary_failure_bundle(
@@ -10912,6 +10996,7 @@ async def _generate_dagster_stream_inner(
                             # refused, never admitted, no model call (ruled 2026-11-24).
                             _res["id"] = None       # nothing is held to give back
                             _res["queued"] = False
+                            yield _stage("waiting", "failed", detail={"reason": "queued"})
                             yield _lost_error()
                             await _dispatch_answer_artifact(_boundary_failure_bundle(
                                 request, user_id, user_persona, entitled_domains,
@@ -10930,9 +11015,11 @@ async def _generate_dagster_stream_inner(
                                 "run_id": _rid, "position": _wq["position"],
                                 "ahead": _wq["ahead"]}))
                     _res["queued"] = False
+                    yield _stage("waiting", "completed", detail={"reason": "queued"})
                     yield _sse("answer_admitted", json.dumps({
                         "run_id": _rid,
                         "waited_ms": int((_admission_clock() - _wq_t0) * 1000)}))
+        yield _stage("understanding", "started")
         try:
             # The OUTER limit: engine O's model call stops sooner (see `_route_intent_timeout_s`).
             async with httpx.AsyncClient(timeout=_ROUTE_INTENT_TIMEOUT_S) as client:
@@ -11062,11 +11149,13 @@ async def _generate_dagster_stream_inner(
         return
 
     # 🟢 THE GRAPH PATH (DAGSTER)
-    # /route_intent has returned. Mark "understanding" complete and
-    # move to "locating" — the supervisor's create_task_plan step
-    # will run /plan and /resolve next.
+    # /route_intent has returned. Mark "understanding" complete. "locating" starts ONCE: on the
+    # direct path (a pre-resolved route) when the dispatch has answered, ahead of its buffered
+    # stages; on the run path when the first step shows (the supervisor's create_task_plan step
+    # runs /plan and /resolve). Until then nothing is being located: the time until the first
+    # step is queue and launch time, the "waiting" stage, started before the launch. A direct
+    # dispatch that declines falls back to the run path having opened no "locating".
     yield _stage("understanding", "completed")
-    yield _stage("locating", "started")
 
     # ── Hop 1 of projector build plan (docs/plans/projector-build-plan.md
     # commit 0eda9f7) — accumulate the AnswerArtifact bundle as the SSE
@@ -11090,6 +11179,9 @@ async def _generate_dagster_stream_inner(
     # True once a ROUTED subtask_slots_decision (non-empty verb_iri) has been captured into
     # resolved_intent. See the precedence guard at the reader.
     _resolved_from_routed = False
+    # The origin of `answer_timing`: the same instant `valid_as_of` is stamped below, which is
+    # what a recorded answer's `duration_ms` is measured from.
+    _t_birth = _stall_clock()
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,
@@ -11272,6 +11364,8 @@ async def _generate_dagster_stream_inner(
         # each stage carries the elapsed time actually measured at its own boundary rather
         # than a timeline composed here.
         if _direct is not None:
+            if _direct.kind in (direct_dispatch.ROUTED, direct_dispatch.ABSTAIN):
+                yield _stage("locating", "started")     # the direct path answers: its one start
             for _ev in _direct_stage_events():
                 yield _ev
 
@@ -11443,6 +11537,8 @@ async def _generate_dagster_stream_inner(
         {"answer_id": _res["id"], "reserved_arrived_at": _res["arrived_at"]}
         if _res is not None and _res.get("id")
         else {"reserve_failed": True} if _res is not None and _res.get("reserve_failed") else {})
+    # From here until the first step shows, the answer waits for its run to start.
+    yield _stage("waiting", "started")
     run_id = await _ab.launch(
         user_query,
         session_id,
@@ -11473,9 +11569,11 @@ async def _generate_dagster_stream_inner(
     if run_id and _res is not None:
         _res["claimed"] = True      # `run` owns the place now, and releases it itself
     if not run_id:
+        # The run never started: the wait for it fails, and nothing was ever being located.
+        yield _stage("waiting", "failed")
         yield _perror(
             "Failed to trigger Dagster job.",
-            kind="locating",
+            kind="waiting",
             retryable=True,
             cause="dagster_launch_failed",
         )
@@ -11546,9 +11644,33 @@ async def _generate_dagster_stream_inner(
     _last_status = None # last observed status, for the withdraw on disconnect
     _stall_s = getattr(_ab, "stall_s", None)
     _watch = _ProgressWatch(_stall_s, _stall_clock()) if _stall_s else None
+    # THE WALL-TIME CEILING: the same 15 minutes, but counted in time, so the deadline sent in
+    # `answer_timing` is true. A tick lasts `poll_s` plus every read in it, so the tick count
+    # alone stretches (measured at twice the limit). Counted time is the time of ticks that
+    # counted: not paused, and not queued with a place. Inactive when the backend has no `poll_s`.
+    _ceiling_s = _ab.max_ticks * _ab.poll_s
+    _used_s = 0.0
+    _uncounted_before = False   # the last tick did not count: the deadline moves when one does
+    _waiting_open = True        # the "waiting" stage, open from the launch to the first step
+    _expected = await _expected_ms(user_id)
+    _t_last = _stall_clock()    # after the read: its time (up to its timeout) is not a tick's
+
+    def _answer_timing() -> str:
+        _elapsed = int((_stall_clock() - _t_birth) * 1000)
+        return _sse("answer_timing", json.dumps({
+            "run_id": run_id,
+            "elapsed_ms": _elapsed,
+            "expected_ms": _expected,
+            "deadline_ms": (_elapsed + int((_ceiling_s - _used_s) * 1000)) if _ceiling_s > 0 else None,
+        }))
+
+    yield _answer_timing()
     try:
-        while _ticks < _ab.max_ticks:
+        while _ticks < _ab.max_ticks and not (_ceiling_s > 0 and _used_s >= _ceiling_s):
             await asyncio.sleep(_ab.poll_s)
+            _t_now = _stall_clock()
+            _dt = _t_now - _t_last
+            _t_last = _t_now
 
             _counted = False
             _vstate = VAULT.state(run_id)
@@ -11579,6 +11701,10 @@ async def _generate_dagster_stream_inner(
                 # No place and no run record yet (a restart): neither an admission nor an end.
                 # The run is replayed and either takes a slot again (admitted before) or
                 # persists the refusal below (it was waiting). Ruled 2026-11-24.
+                if _counted:
+                    _used_s += _dt
+                else:
+                    _uncounted_before = True
                 continue
             if _last_status == "BUSY":
                 # The admission queue was FULL at entry (ruled 2026-11-16): refused at once,
@@ -11586,10 +11712,16 @@ async def _generate_dagster_stream_inner(
                 # the service restarted (ruled 2026-11-24): refused, asked to ask again.
                 VAULT.close(run_id)
                 _busy = status_data.get("busy") or {}
+                # An error names the stage it ends: the open `waiting`, when no step has shown.
+                _in_wait = _waiting_open
+                if _waiting_open:
+                    _waiting_open = False
+                    yield _stage("waiting", "failed")
                 if _busy.get("reason") == "restarted":
                     yield _lost_error()
                 else:
-                    yield _busy_error(_busy.get("queue_max"))
+                    yield _busy_error(_busy.get("queue_max"),
+                                      kind="waiting" if _in_wait else "understanding")
                 _artifact_bundle["status"] = "failed"
                 break
             if _last_status == "QUEUED":
@@ -11600,6 +11732,7 @@ async def _generate_dagster_stream_inner(
                 if _q is not None:
                     if _counted:
                         _ticks -= 1
+                        _counted = False    # nor does it count toward the wall-time ceiling
                     if _watch is not None:
                         _watch.hold(_stall_clock())  # waiting its turn is not a stall
                     if _q_t0 is None:
@@ -11612,6 +11745,15 @@ async def _generate_dagster_stream_inner(
                 yield _sse("answer_admitted", json.dumps({
                     "run_id": run_id, "waited_ms": int((time.monotonic() - _q_t0) * 1000)}))
                 _q_t0 = None
+            # The tick's counted time, after the QUEUED rollback. Counting that resumes after
+            # an uncounted stretch (queued, paused) has moved the deadline: say so, once.
+            if _counted:
+                _used_s += _dt
+                if _uncounted_before:
+                    _uncounted_before = False
+                    yield _answer_timing()
+            else:
+                _uncounted_before = True
             if status_data.get("status") == "CANCELED":
                 VAULT.close(run_id)
                 break
@@ -11629,9 +11771,13 @@ async def _generate_dagster_stream_inner(
                     "failed_step": _f.get("failed_step") or None,
                     "trace_id": _f.get("trace_id") or trace_id or None,
                 }
+                _in_wait = _waiting_open
+                if _waiting_open:
+                    _waiting_open = False
+                    yield _stage("waiting", "failed")
                 yield _perror(
                     "Pipeline failed.",
-                    kind="retrieving",
+                    kind="waiting" if _in_wait else "retrieving",
                     retryable=False,
                     cause="session_expired" if _session_expired else _ab.failed_cause,
                     failed_step=_run_failure["failed_step"],
@@ -11650,6 +11796,9 @@ async def _generate_dagster_stream_inner(
             if status_data.get("status") == "SUCCESS":
                 VAULT.close(run_id)
                 is_success = True
+                if _waiting_open:
+                    _waiting_open = False
+                    yield _stage("waiting", "completed")
                 break
 
             if _watch is not None and not _reauth_paused:
@@ -11665,9 +11814,13 @@ async def _generate_dagster_stream_inner(
                         "trace_id": _f.get("trace_id") or trace_id or None,
                         "stalled_s": int(_now - _watch.since),
                     }
+                    _in_wait = _waiting_open
+                    if _waiting_open:
+                        _waiting_open = False
+                        yield _stage("waiting", "failed")
                     yield _perror(
                         "The answer stopped making progress.",
-                        kind="retrieving",
+                        kind="waiting" if _in_wait else "retrieving",
                         retryable=False,
                         cause="answer_run_stalled",
                         failed_step=_run_failure["failed_step"],
@@ -11930,9 +12083,9 @@ async def _generate_dagster_stream_inner(
             #                           composing row that stays loading
             #                           until the final payload arrives.
             STEP_TO_STARTED_KIND = {
-                # "locating" already started at line 1201 before the polling
-                # loop begins, so create_task_plan RUNNING only triggers the
-                # choosing_action started transition.
+                # "locating" started when the first step showed (just below, with
+                # "waiting" completing), so create_task_plan RUNNING only triggers
+                # the choosing_action started transition.
                 "create_task_plan": "choosing_action",
                 "synthesize_stateful": "composing",
                 "generate_ui_payload": "composing",
@@ -11964,6 +12117,15 @@ async def _generate_dagster_stream_inner(
                 return STEP_TO_COMPLETED_KINDS.get(step_key, [])
 
             step_stats = await _ab.steps(run_id)
+            # The first step to show ends the wait for the run to start, and only now is anything
+            # being located. Before this tick's per-step emissions, so the order is: waiting
+            # completed, locating started, choosing_action started.
+            if _waiting_open and any(
+                st.get("status") in ("RUNNING", "SUCCESS", "FAILURE") for st in step_stats
+            ):
+                _waiting_open = False
+                yield _stage("waiting", "completed")
+                yield _stage("locating", "started")
             for stat in step_stats:
                 step_key = stat.get("stepKey", "")
                 status = stat.get("status", "")
@@ -12074,9 +12236,13 @@ async def _generate_dagster_stream_inner(
         yield _sse("final_payload", json.dumps(_card))
     elif _last_status != "BUSY":
         # A BUSY refusal has already said why (the queue is full); no second, generic error.
+        _in_wait = _waiting_open
+        if _waiting_open:   # the ceiling came and no step ever showed: the wait itself failed
+            _waiting_open = False
+            yield _stage("waiting", "failed")
         yield _perror(
             "Timeout or failed to fetch UI payload.",
-            kind="composing",
+            kind="waiting" if _in_wait else "composing",
             retryable=True,
             cause="ui_payload_timeout",
         )
