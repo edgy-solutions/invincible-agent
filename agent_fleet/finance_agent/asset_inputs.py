@@ -20,6 +20,7 @@ the money or the identifier that broke it.
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import os
 import time
@@ -939,8 +940,12 @@ def dimension_members(df: Any, urn: str, contract: Any, as_of: Any, *,
                       ) -> dict[str, list[dict[str, Any]]]:
     """The members the declarations and the asset's distinct rows give, by class URI. NO I/O.
 
-    One member per (class, value, program), null and empty values skipped. A DIMENSION COLUMN's
-    values come from the rows (`df`, as `read_dimension_rows` returns them). A VERSION or a PERIOD
+    One member per (class, id, program), null and empty values skipped. A DIMENSION COLUMN's
+    values come from the rows (`df`, as `read_dimension_rows` returns them). A column that is a
+    HIERARCHY level has the node's PATH for its id, `json.dumps([top, ..., this], ensure_ascii=False)`
+    of the row's hierarchy values (the identity `lookups.hierarchy_answer` writes, no program in it),
+    and the name for its label; a null or empty component at or above the level gives no member. Any
+    other column's id and label are its value. A VERSION or a PERIOD
     never does: they are the declared version lists and the declared calendar's labels, one member
     per program present in the scope column, so a caller sees one exactly when they can view at
     least one of the dataset's programs. A version comes from the dataset rows' declared contracts
@@ -952,15 +957,22 @@ def dimension_members(df: Any, urn: str, contract: Any, as_of: Any, *,
     scope = contract.scope
     programs = sorted({p for p in df[scope].to_list() if isinstance(p, str) and p})
     out: dict[str, list[dict[str, Any]]] = {}
+    hierarchy = tuple(c for c, _ in hierarchy_levels(contract))
     for column, cls in dimension_columns(contract):
+        # A hierarchy level's member is its PATH (`lookups.hierarchy_answer`'s identity): the row's values
+        # of the hierarchy columns from the top level down to this one. Any other column's is its value.
+        path_columns = list(hierarchy[:hierarchy.index(column) + 1]) if column in hierarchy else [column]
         seen: set[tuple[str, str]] = set()
-        for program, value in df.select([scope, column]).iter_rows():
-            ident = "" if value is None else str(value)
-            if not ident or not isinstance(program, str) or not program or (ident, program) in seen:
+        for program, *values in df.select([scope, *path_columns]).iter_rows():
+            parts = ["" if v is None else str(v) for v in values]
+            if not all(parts) or not isinstance(program, str) or not program:
+                continue
+            ident = json.dumps(parts, ensure_ascii=False) if column in hierarchy else parts[0]
+            if (ident, program) in seen:
                 continue
             seen.add((ident, program))
             out.setdefault(cls, []).append({
-                "instance_id": ident, "label": ident, "class_uri": cls, "program": program,
+                "instance_id": ident, "label": parts[-1], "class_uri": cls, "program": program,
                 "provenance": {"dataset": urn, "column": column, "as_of": as_of}})
     declared: list[tuple[str, tuple[str, ...], dict[str, Any]]] = []
     first: dict[str, str] = {}

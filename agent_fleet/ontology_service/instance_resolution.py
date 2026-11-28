@@ -259,7 +259,44 @@ def passes_segment_specificity(identifier: str, candidate_text: str) -> bool:
 #     (`test`, not the stopword `and` that symmetry alone produces).
 #
 # The third reading — whether "the last word is the name" suits English phrases at all —
-# is untouched and still open. It is a larger question and this change does not prejudge it.
+# is RULED (architect, 2026-11-21): "Defect 2, the name check: build the fix as a draft PR for
+# the release after 0.4.91. A name is the whole phrase the person gave, not its last word.
+# Include tests where the name ends in its own kind word. The merge step: record the rejected
+# match and why. Build that in the same PR."
+#
+# MEASURED: `Revenue by Region dashboard` has the last-word name `dashboard`; the one real
+# claimant is labelled `Revenue by Region` (terminal word `region`) with id
+# `...revenue_by_region`. Every comparison failed and the classifier's kind won the merge. The
+# rule was also too LOOSE: `Fleet Readiness` passed `Crew Readiness` (both end `readiness`).
+#
+# `passes_candidate_specificity` therefore reads, for each of the candidate's id, label and
+# matched_on:
+#   a. WHOLE: the normalised identifier equals the candidate's NAME -- the whole text when it
+#      is a phrase (whitespace-joined words), the terminal component when it is a catalog id.
+#   b. OWN KIND WORD DROPPED: a trailing word equal to the candidate's OWN kind word (the local
+#      name of its class_uri, camelCase split -- the provider's word, never a list here) may be
+#      dropped from the identifier, from the candidate text, or from both, leaving a non-empty
+#      rest that satisfies (a). `Revenue by Region dashboard` -> `Revenue by Region`.
+#   c. QUALIFIED (the rule above, unchanged): `passes_segment_specificity`, but ONLY against a
+#      single-segment candidate text, so `publog p_cage` still names `p_cage` and a multi-word
+#      label is never matched on its last word.
+# RULED (architect, 2026-11-26), the two questions this PR asked:
+#   1. "PN 9001 matches the label pn_9001: yes. Compare with case folded and spaces, underscores
+#      and hyphens treated as the same separator, on both sides." So a and b apply to the label,
+#      the id and matched_on, for ANY identifier, single token or phrase. Label `pn 9001` now
+#      names `PN_9001`; until this ruling it was refused. Collapsed, never dropped: `PN9001`
+#      is still not `pn_9001`.
+#   2. "Fleet Readiness does not match a candidate named Readiness. One word of a longer name is
+#      not the named thing. ... The lookup may return it as a lower-scored suggestion, never as
+#      the subject." So in c, a WORD of a phrase before the name (`Fleet` in `Fleet Readiness`,
+#      `publog` in `publog p_cage`) must be spelled by the candidate: every segment of it must
+#      be a segment of its label, id or matched_on, compared by the same separator rule, so
+#      `publog_lake p_cage` matches where `publog-lake p_cage` does. `publog p_cage` still
+#      names the table whose id is `.../publog/p_cage`; `Fleet Readiness` does not name
+#      `Readiness` (`urn:x:readiness`).
+#      A PATH qualifier (`lake.p_cage`, no whitespace) is unchanged: it says where the name is,
+#      and stays corroboration, never a requirement. The refused candidate is kept, with its
+#      score and why, in `instance_rejected_top` and the note, never as the subject.
 #
 # REGRESSION-GUARDED, not assumed: the three defects the gate was built for
 # (`cage`->`p_cage`, `publog`->a table inside it, `p_caeg`->`p_cage`) are still refused, and
@@ -277,6 +314,48 @@ def candidate_asset_name(candidate_text: str) -> str:
     """
     kinded = _strip_env_suffixes(_kinded_segments(candidate_text))
     return kinded[-1][0] if kinded else ""
+
+
+def candidate_name(text: str) -> str:
+    """A candidate's NAME: the WHOLE text when it is a phrase (a human label with
+    whitespace-joined words), else its terminal component (`candidate_asset_name`)."""
+    stripped = (text or "").strip()
+    if stripped and _WHITESPACE.search(stripped):
+        return stripped
+    return candidate_asset_name(stripped)
+
+
+def _own_kind_word(class_uri: str) -> str:
+    """The candidate's own kind word: the local name of its class, camelCase split and
+    normalised (`...#ControlAccount` -> `control-account`). The provider's word."""
+    local = re.split(r"[#/]", class_uri or "")[-1]
+    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", local)
+    return normalise_identifier(words)
+
+
+def _drop_trailing_kind(normalised: str, kind: str) -> str:
+    """`normalised` without a trailing whole-word `kind`, or "" when nothing would be left."""
+    if kind and normalised.endswith("-" + kind):
+        return normalised[: -(len(kind) + 1)]
+    return ""
+
+
+def _name_match(identifier: str, text: str, kind: str) -> str:
+    """"" when the identifier names the candidate text by rule a or b, else a short
+    machine-readable account of what was compared."""
+    ident = normalise_identifier(identifier)
+    name = normalise_identifier(candidate_name(text))
+    whole = normalise_identifier(text)
+    ident_forms = {ident, _drop_trailing_kind(ident, kind)}
+    cand_forms = {name, whole}
+    for base in (name, whole):
+        cand_forms.add(_drop_trailing_kind(base, kind))
+    cand_forms.discard("")
+    ident_forms.discard("")
+    if ident_forms & cand_forms:
+        return ""
+    return (f"name {ident.replace('-', ' ')!r} != candidate name "
+            f"{name.replace('-', ' ')!r}")
 
 
 def decide(
@@ -332,6 +411,17 @@ def decide(
                     "instance_n": len(candidates),
                     "instance_rejected_n": len(above_floor),
                     "instance_identifier": identifier,
+                    # RULED 2026-11-21: the merge records WHICH match was refused and why.
+                    "instance_rejected_top": [
+                        {
+                            "instance_id": c.instance_id,
+                            "label": c.label,
+                            "class_uri": c.class_uri,
+                            "score": c.score,
+                            "why": specificity_refusal(identifier, c),
+                        }
+                        for c in sorted(above_floor, key=lambda c: c.score, reverse=True)[:3]
+                    ],
                 },
             )
         above_floor = specific
@@ -405,11 +495,66 @@ def passes_candidate_specificity(identifier: str, c: InstanceCandidate) -> bool:
     """The specificity gate for ONE candidate: the identifier names a whole segment of its id,
     its label, or the string its provider says it matched on -- or equals that string once both
     are normalised (`normalise_identifier`)."""
-    return (passes_segment_specificity(identifier, c.instance_id)
-            or passes_segment_specificity(identifier, c.label)
-            or bool(c.matched_on and (
-                passes_segment_specificity(identifier, c.matched_on)
-                or normalise_identifier(identifier) == normalise_identifier(c.matched_on))))
+    return not specificity_refusal(identifier, c)
+
+
+#: An English possessive on a phrase word (`publog's p_cage`): grammar, not part of the word.
+_POSSESSIVE = re.compile(r"['\u2019]s(?=\s)", re.IGNORECASE)
+
+
+def _unspelled_phrase_word(identifier: str, c: InstanceCandidate) -> str:
+    """The first WORD of the identifier's phrase, before its last word, that the candidate does
+    not spell (some segment of it is in none of the candidate's label, id or matched_on), or ""
+    when every such word is spelled or the identifier is not a phrase. Ruled 2026-11-26: one
+    word of a longer name is not the named thing."""
+    words = _POSSESSIVE.sub("", (identifier or "").strip()).split()
+    # The separator rule (ruling 1) on both sides here too: `publog_lake` is `publog-lake`.
+    spelled: set[str] = set()
+    for text in (c.label, c.instance_id, c.matched_on):
+        spelled.update(normalise_identifier(seg) for seg in _segments(text))
+    for word in words[:-1]:
+        if not {normalise_identifier(seg) for seg in _segments(word)} <= spelled:
+            return word
+    return ""
+
+
+def specificity_refusal(identifier: str, c: InstanceCandidate) -> str:
+    """"" when the gate passes the candidate (rules a, b, c above); otherwise why it did not."""
+    kind = _own_kind_word(c.class_uri)
+    unspelled = _unspelled_phrase_word(identifier, c)
+    why = ""
+    for text in (c.label, c.instance_id, c.matched_on):
+        if not text:
+            continue
+        # a and b: the normalised identifier against the normalised text, both sides (2026-11-26).
+        miss = _name_match(identifier, text, kind)
+        if not miss:
+            return ""
+        # c. QUALIFIED: only against a single-segment text, never a phrase's last word, and
+        # only when the candidate spells every word of the phrase before the name.
+        if not _WHITESPACE.search(text.strip()) and passes_segment_specificity(identifier, text):
+            if not unspelled:
+                return ""
+            miss = (f"{miss}; {unspelled.casefold()!r} of the phrase is not in the candidate, and "
+                    f"one word of a longer name is not the named thing")
+        why = why or miss
+    if c.matched_on and normalise_identifier(identifier) == normalise_identifier(c.matched_on):
+        return ""
+    return why or "no candidate text to compare"
+
+
+def rejected_match_note(provenance: Mapping) -> str:
+    """One sentence naming the top refused claimant and why; "" unless the lookup was
+    `not_specific` and recorded a rejected claimant."""
+    if (provenance or {}).get("instance_match") != "not_specific":
+        return ""
+    top = provenance.get("instance_rejected_top") or []
+    if not top:
+        return ""
+    t = top[0]
+    kind = re.split(r"[#/]", t.get("class_uri") or "")[-1]
+    return (f"The instance lookup found '{t.get('label') or t.get('instance_id')}' "
+            f"({kind}) and refused it: {t.get('why')}.")
 
 
 def narrow_to_most_specific(

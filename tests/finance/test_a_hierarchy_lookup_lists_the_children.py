@@ -190,6 +190,31 @@ def test_the_control_the_same_frame_with_the_name_made_distinct_answers(b):
     assert len({r["identity"] for r in program["rows"]}) == len(program["rows"]) == 4
 
 
+# -- a whole ancestor path, not the immediate parent (gov's N6 on #576 at 023aaab8) -------------------
+# One wbs_2 name `A` stands under two wbs_1 parents, so the wbs_3 name `X` under both `P / A` and
+# `Q / A` has one immediate parent and two ancestor paths. Comparing the parent alone answers it.
+
+def test_a_name_under_two_paths_through_one_parent_name_is_refused_naming_both_full_paths(b):
+    f = frame_from([("P", "A", "X", "X.1", "CA-1", "WP-a"), ("Q", "A", "X", "X.2", "CA-2", "WP-b")])
+    with pytest.raises(lookups.LookupRefused) as exc:
+        ask(b, f, PROG_B, "X")
+    assert exc.value.code == "element_ambiguous"
+    assert "P / A" in exc.value.message and "Q / A" in exc.value.message, exc.value.message
+
+
+def test_the_control_two_distinct_parents_are_still_refused(b):
+    f = frame_from([("P", "A", "X", "X.1", "CA-1", "WP-a"), ("Q", "B", "X", "X.2", "CA-2", "WP-b")])
+    with pytest.raises(lookups.LookupRefused) as exc:
+        ask(b, f, PROG_B, "X")
+    assert exc.value.code == "element_ambiguous"
+
+
+def test_the_control_one_path_answers(b):
+    f = frame_from([("P", "A", "X", "X.1", "CA-1", "WP-a"), ("Q", "A", "Y", "Y.1", "CA-2", "WP-b")])
+    answer, _ = ask(b, f, PROG_B, "X")
+    assert answer["level"] == "wbs_3" and names(answer["children"]) == ["X.1"]
+
+
 # -- the shared reader's three guards, through a lookup read ------------------------------------------
 
 def test_an_over_cap_read_is_refused_not_cut(b, monkeypatch):

@@ -961,16 +961,28 @@ dimension's members belong to programs, and with no scope there is no program to
 
 Each listing request (`/resolve_instance`, `/enumerate_instances`) reads the asset ONCE, as the caller,
 selecting only the scope column and the dimension columns, distinct rows, capped by the same row limit
-as the other reads. A value becomes one member per (class, value, program), and the caller sees it only
+as the other reads. A value becomes one member per (class, id, program), and the caller sees it only
 if they may view that program. A member carries its `program` and a `provenance`
-(`dataset`, `column`, `as_of` of the read's ticket). Null and empty values are skipped, and a seed or
-declared id wins over an asset member of the same id. With no dataset configured nothing is read. When
+(`dataset`, `column`, `as_of` of the read's ticket). A hierarchy level's member is its PATH, the
+identity `fin_hierarchy_children` writes: its `instance_id` is the JSON array of the row's hierarchy
+values from the top level down to this level (`["B-1", "B-1.1", "B-1.1.1"]`, no program in it) and its
+`label` is the name. So a name that stands under two parents, or at two levels, is two members, and the
+resolver offers two candidates where the lookup refuses it as `element_ambiguous`; a row with a null or
+empty value at or above a level gives no member for that level. Any other dimension column's member has
+its value for `instance_id` and `label`. The response carries one entry per (class, id): an asset or
+declared member comes back with `programs`, the sorted list of every program the caller may view it in,
+and no `program`; its `provenance` is the first member's, in program order. Null and empty values are
+skipped, and a seed or declared id wins over an asset member of the same id (a seed id is a bare id, so it
+no longer collides with an asset hierarchy member, whose id is a path). With no dataset configured nothing is read. When
 the read is refused or fails (no bearer, no grant on the asset, a contract violation, the broker down)
 the asset adds no members, the seed and the declared instances still answer, the response is 200, and
 one `asset_unread` line names the refusal's code and never a value.
 
 A **version** and a **fiscal period** are never searched in the data. `fin:Version` has one member per
-value of the contract's `version_dimension.values`; `fin:FiscalPeriod` has one per label of the
+label of the version lists declared by the dataset rows' contracts (`version_dimension.values` of each
+declared row's contract), not the deployment contract, which is one row per work package and period and
+holds no version column; a label two of them declare names the first in `contract_id` order.
+`fin:FiscalPeriod` has one per label of the
 declared calendar (`period.calendar`, section 8). Each is offered once per program present in the
 asset, so a caller sees them exactly when they may view at least one of the dataset's programs. A
 version or period the data carries and no declaration lists resolves to nothing. They are filters a
