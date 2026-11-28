@@ -52,7 +52,7 @@ def _schema(contract, **over):
 
 def test_the_template_marks_operator_ref_personal():
     """The mfg_trace template's personal columns are `operator_ref` in test_result and in
-    conf_test_repo_result (dag-tools v0.17.0), and no other column of any contract."""
+    conf_test_repo_result (dag-tools v0.19.0), and no other column of any contract."""
     got = dc.load_contracts(TEMPLATE)
     assert {cid: set(c.personal) for cid, c in got.items() if c.personal} == {
         RESULT: {"operator_ref"}, CONF_RESULT: {"operator_ref"}}
