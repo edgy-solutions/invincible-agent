@@ -2464,6 +2464,7 @@ try:
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
         declared_id_namespaces as _ir_declared_namespaces,
         refuse_cross_namespace as _ir_refuse_cross_namespace,
+        rejected_match_note as _ir_rejected_match_note,
     )
 except ImportError:
     from instance_resolution import (  # noqa: E402
@@ -2479,6 +2480,7 @@ except ImportError:
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
         declared_id_namespaces as _ir_declared_namespaces,
         refuse_cross_namespace as _ir_refuse_cross_namespace,
+        rejected_match_note as _ir_rejected_match_note,
     )
 
 # Canonical full-IRI form for the InstanceIdentifier subject. Session 2's
@@ -3700,8 +3702,8 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
     """
     if _caller_session_expired():
         # REFUSED BEFORE THE BIND, as `/resolve_instance` is (ruled 2026-11-19, Q2): the SDK leaves an
-        # expired token unverified, so `_bound` would read it as no person and answer 422
-        # `no_person`. An expired session is reported as one, never as an absent caller.
+        # expired token unverified, so `_bound` would bind no person, and the `no_person` check
+        # below would answer 422. An expired session is reported as one, never as an absent caller.
         return _session_expired_response()
     request, _ = await _bound(request, route="enumerate_instances")
     # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
@@ -4521,6 +4523,11 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             str(result.resolved_uri), result.confidence_score,
             candidates, result.reasoning, instance_provenance,
         )
+        # RULED 2026-11-21: a refused claimant is recorded with why, so the weak path says
+        # which match the gate turned away. Which subject is returned does not change.
+        _rejected_note = _ir_rejected_match_note(instance_provenance)
+        if _rejected_note:
+            _reason = f"{_reason} {_rejected_note}".strip()
         return SemanticResolutionResponse(
             resolved_uri=str(result.resolved_uri),
             confidence_score=_conf,

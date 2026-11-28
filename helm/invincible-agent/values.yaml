@@ -46,10 +46,10 @@ global:
   # rendered image that still carries only a tag. The map is keyed by repository, so a component
   # `image.tag` override on a row below is ignored; change the row instead.
   imageDigests:
-    # 0.17.0 (read 2026-11-19 by Docker-Content-Digest; index incl. linux/arm64; = :sha-a85c5f9)
-    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:1dcf1229fcdd227773a22bd4edd3c57e9b295b68f991def0f30ccd015da71e83"
-    # 0.17.0 (read 2026-11-19 by Docker-Content-Digest; index incl. linux/arm64; = :sha-a85c5f9)
-    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:a5bc71a89083556c8ad9daf32f1e5d7d18918eb8d4f52c07e7484ac9f074c989"
+    # 0.20.0 (read 2026-11-27 from the v0.20.0 release's image.json; = :sha-3c245d4)
+    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:31072ff2f531ae154109f81fd0cbe1687f3495b4673972cfc4e7caacf4d7f7d2"
+    # 0.20.0 (read 2026-11-27 from the v0.20.0 release's image.json; = :sha-3c245d4)
+    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:9200f8abaae83915fceda870ed816dee1a97b3d3a982672162fb8bdcf73949d6"
     # Kept over 1555b341 (source e5612fa: the CP1252 repair AND the V_CHARACTERISTICS fold, not reviewed),
     # architect 11-05; board 01M6P5ZAJ382FBHEQDA23941EA carries both forward on a reviewed build.
     # reviewed 09-23 (`master` build of 1aa2cbe) (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -230,7 +230,15 @@ global:
     # read `0.4.2` and the full sha to this digest and the 0.4.1 control to 84dead33.
     # 1660b84..e65409b changes no Dockerfile or package.json and adds no import.meta.env read. Its
     # only workflow changes are cortex's own build, retag and chart-release jobs.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:9e1d65738fa75eb71c7c1578b15185cb02be0eec1466be6cf3d5fdb011a3c459"
+    # RE-PINNED FOR 0.4.94 (architect via Chris, 2026-11-27): cortex-ui-0.4.2 -> cortex-ui-0.4.3 at
+    # 0ff8a4de3c0f4346a85be3f47da3c7949c5f0874, index digest 6310307d. e65409b (0.4.2) is its
+    # ancestor, one commit (e65409b..0ff8a4d), so every e65409b line above still holds. It adds:
+    # - the sign-in sentence on every card on a 401 ("Your sign-in expired — signing you in
+    #   again."); a 403 is unchanged.
+    # No contract change from 0.4.93 (snapshots still at 0.4.92 f7c3f5e6).
+    # Measured before pinning: cortex read `0.4.3` and the full sha to this digest; its build run
+    # 45942432901 and retag run 46023760922 were green.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:6310307d9a1e5b57119add60bcb4da2aa0cabf0c39c8676a709e0150197bc299"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -1394,8 +1402,8 @@ userDeployments:
       # types this broker reads a data as-of for, at authorize time. Default none: every read says
       # "as-of unavailable", as today. A type is allowed only if the pinned broker image registers
       # an as-of reader for it. The chart refuses any other type at render (user-deployments.yaml).
-      # At this pin the broker registers none, so ANY non-empty list is refused at render. That is
-      # the design, not a fault: dag-tools ships the readers, then the image pin and the chart's
+      # At this pin (dag-tools v0.20.0) the broker registers postgres and s3_parquet; any other
+      # type is refused at render. dag-tools ships the readers, then the image pin and the chart's
       # registered set move together, and only then can a deployment set a type here.
       # No measure row chooses its own as-of source: the type comes from the asset.
       asOf:
