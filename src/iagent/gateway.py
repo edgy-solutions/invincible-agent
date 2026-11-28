@@ -5087,7 +5087,7 @@ class SeedPortfolioCanvasRequest(_BaseModel):
 #   or dropped by arity, which is NOT a policy refusal; an unscoped re-check that failed is
 #   could-not-check, never a deny), seed_panel_unroutable (template declares no subject),
 #   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
-#   dagster_run_failed, answer_run_failed, session_expired, ui_payload_fetch_error,
+#   dagster_run_failed, answer_run_failed, answer_run_stalled, session_expired, ui_payload_fetch_error,
 #   ui_payload_timeout, acceptance_not_opened, engine_did_not_answer, render_ui_failed,
 #   stream_producer_error, stream_raised -- all faults of the seed/pipeline, not of the
 #   caller's grants. An absent cause is "unrecorded" and is never entitlement.
@@ -10239,6 +10239,77 @@ def _answer_path(environ=None) -> str:
     raise ValueError('IAGENT_ANSWER_PATH must be unset, "dagster" or "durable"')
 
 
+# THE DURABLE PATH'S STALL BOUND (architect, 2026-11-27: "a durable answer that makes no progress
+# has to end in the failure card, naming the step and the trace id, within a bound"). The tick
+# ceiling counts ticks, not time: a tick lasts as long as its reads, so reads that hang stretch
+# it without limit, and when it does run out the stream ends in `ui_payload_timeout`, which
+# names neither. This bound is wall time since the run last moved. A tunable, not a case.
+_DURABLE_STALL_S_DEFAULT = 300.0
+_stall_clock = time.monotonic
+
+
+def _durable_stall_s() -> float:
+    raw = os.environ.get("IAGENT_DURABLE_STALL_S", "").strip()
+    try:
+        value = float(raw) if raw else _DURABLE_STALL_S_DEFAULT
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        logger.warning("IAGENT_DURABLE_STALL_S=%r is not a positive number of seconds; using %s",
+                       raw, _DURABLE_STALL_S_DEFAULT)
+        value = _DURABLE_STALL_S_DEFAULT
+    return value
+
+
+class _ProgressWatch:
+    """Wall time since the run last moved. A move is anything not seen before: more events than
+    the most yet seen, a step in a status it was not yet seen in, or a status not yet seen. High
+    water marks, not the last read: two readers that see the run at different points (the live
+    view and the durable snapshot) must not look like movement by taking turns."""
+
+    def __init__(self, stall_s: float, now: float) -> None:
+        self.stall_s = stall_s
+        self.since = now
+        self._events = -1
+        self._seen: set = set()
+
+    def observe(self, mark: tuple | None, now: float) -> None:
+        if mark is None:
+            return
+        status, n_events, steps = mark
+        new = {("status", status)} | {("step", s) for s in steps}
+        moved = n_events > self._events or not new <= self._seen
+        self._events = max(self._events, n_events)
+        self._seen |= new
+        if moved:
+            self.since = now
+
+    def hold(self, now: float) -> None:
+        """A run paused for its person is waiting, not stalled: its clock restarts."""
+        self.since = now
+
+    def stalled(self, now: float) -> bool:
+        return now - self.since >= self.stall_s
+
+    def running(self) -> str | None:
+        """The steps seen in progress and never seen in a final status. The card falls back on
+        this when the last read does not show the step: the read may have come from the view that
+        is behind."""
+        seen = [mark for kind, mark in self._seen if kind == "step"]
+        final = ("SUCCESS", "FAILURE", "SKIPPED", "ABANDONED")
+        done = {key for key, status in seen if status in final}
+        keys = sorted({key for key, status in seen if key and key not in done})
+        return ", ".join(keys) or None
+
+
+def _running_steps(steps: list | None) -> str | None:
+    """The step or steps a run is in: started, not ended, not in a final status."""
+    keys = sorted({s.get("stepKey") for s in steps or []
+                   if s.get("stepKey") and not s.get("endTime")
+                   and s.get("status") not in ("SUCCESS", "FAILURE", "SKIPPED", "ABANDONED")})
+    return ", ".join(keys) or None
+
+
 def _answer_backend():
     """The launch and the run reads for ONE stream, chosen at call time.
 
@@ -10276,6 +10347,8 @@ def _answer_backend():
             max_ticks=int(round(900 / client.poll_interval_s)),
             queue=client.get_queue,
             withdraw=client.withdraw,
+            progress=client.get_progress,
+            stall_s=_durable_stall_s(),
         )
 
     async def _no_queue(rid):
@@ -10305,6 +10378,8 @@ def _answer_backend():
         poll_s=1.0,
         unreadable_s=waiter_idle_from_env(),
         max_ticks=900,
+        progress=None,
+        stall_s=None,
     )
 
 
@@ -11414,7 +11489,10 @@ async def _generate_dagster_stream_inner(
     # handled by _keepalive_wrap's `: keepalive\n\n` comment lines.
     # The accumulating-rows UI bug is fixed at its source.
 
-    # THE ONE DEADLINE IN THIS GENERATOR: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
+    # THE STALL BOUND (durable path only, `_ab.stall_s`): see `_ProgressWatch`. A run that does
+    # not move for `stall_s` of wall time ends in the failure card naming the step it is in.
+    #
+    # THE TICK CEILING: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
     # dagster, the same 15 minutes on the durable path), the ceiling for slow
     # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
     # ended by it, so a paused tick does not count toward it; the pause is bounded by
@@ -11428,6 +11506,8 @@ async def _generate_dagster_stream_inner(
     _q_last = None      # last queue position emitted
     _q_t0 = None        # monotonic time of the first answer_queued
     _last_status = None # last observed status, for the withdraw on disconnect
+    _stall_s = getattr(_ab, "stall_s", None)
+    _watch = _ProgressWatch(_stall_s, _stall_clock()) if _stall_s else None
     try:
         while _ticks < _ab.max_ticks:
             await asyncio.sleep(_ab.poll_s)
@@ -11435,6 +11515,8 @@ async def _generate_dagster_stream_inner(
             _counted = False
             _vstate = VAULT.state(run_id)
             if _vstate == "awaiting_reauth":
+                if _watch is not None:
+                    _watch.hold(_stall_clock())
                 if not _reauth_paused:
                     _reauth_paused = True
                     yield _sse("run_awaiting_reauth", json.dumps({
@@ -11480,6 +11562,8 @@ async def _generate_dagster_stream_inner(
                 if _q is not None:
                     if _counted:
                         _ticks -= 1
+                    if _watch is not None:
+                        _watch.hold(_stall_clock())  # waiting its turn is not a stall
                     if _q_t0 is None:
                         _q_t0 = time.monotonic()
                     if _q.get("position") != _q_last:
@@ -11529,6 +11613,30 @@ async def _generate_dagster_stream_inner(
                 VAULT.close(run_id)
                 is_success = True
                 break
+
+            if _watch is not None and not _reauth_paused:
+                _now = _stall_clock()
+                _watch.observe(await _ab.progress(run_id), _now)
+                if _watch.stalled(_now):
+                    # The stream stops waiting; the card names the step the run is in, and the trace
+                    # id the backend holds, else this stream's.
+                    VAULT.close(run_id)
+                    _f = await _ab.failure(run_id) or {}
+                    _run_failure = {
+                        "failed_step": _running_steps(await _ab.steps(run_id)) or _watch.running(),
+                        "trace_id": _f.get("trace_id") or trace_id or None,
+                        "stalled_s": int(_now - _watch.since),
+                    }
+                    yield _perror(
+                        "The answer stopped making progress.",
+                        kind="retrieving",
+                        retryable=False,
+                        cause="answer_run_stalled",
+                        failed_step=_run_failure["failed_step"],
+                        trace_id=_run_failure["trace_id"],
+                    )
+                    _artifact_bundle["status"] = "failed"
+                    break
                 
             # Pull intermediate asset materializations from the supervisor.
             # active_agent_roster surfaces:
@@ -11923,7 +12031,8 @@ async def _generate_dagster_stream_inner(
             _card = result["payload"]
         else:
             _card = _failure_card(_run_failure["failed_step"], _run_failure["trace_id"],
-                                  session_expired=_session_expired)
+                                  session_expired=_session_expired,
+                                  stalled_s=_run_failure.get("stalled_s"))
         yield _sse("final_payload", json.dumps(_card))
     elif _last_status != "BUSY":
         # A BUSY refusal has already said why (the queue is full); no second, generic error.
@@ -11949,7 +12058,7 @@ async def _generate_dagster_stream_inner(
 
 
 def _failure_card(failed_step: str | None, trace_id: str | None,
-                  session_expired: bool = False) -> dict:
+                  session_expired: bool = False, stalled_s: int | None = None) -> dict:
     """The card a failed run ends with when it produced none of its own (ADR-0072 8.1, ruled
     2026-11-15: "On a failed run the BFF delivers a failure card naming the step and the trace id;
     it never stays silent."). An absent value is said to be absent, never invented."""
@@ -11960,6 +12069,13 @@ def _failure_card(failed_step: str | None, trace_id: str | None,
         lines = ["# Your sign-in expired", "",
                  "This answer was waiting for you to sign in again, and the wait ran out, so it "
                  "was not finished. Ask the question again."]
+    elif stalled_s is not None:
+        # The run stopped moving and the stream stopped waiting for it (`_ProgressWatch`).
+        lines = ["# The answer stopped making progress", ""]
+        lines.append(f"It was at step `{step}`, and nothing moved for {stalled_s} seconds, so this "
+                     "answer was ended there. Ask the question again." if step else
+                     f"Nothing moved for {stalled_s} seconds, so this answer was ended. The step it "
+                     "was at was not recorded. Ask the question again.")
     else:
         lines = ["# The answer could not be completed", ""]
         lines.append(f"The run failed at step `{step}`." if step else
