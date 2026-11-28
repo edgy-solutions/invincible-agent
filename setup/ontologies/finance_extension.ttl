@@ -84,6 +84,16 @@ fin:FundingLine a owl:Class ;
     rdfs:label "Funding Line" ;
     rdfs:comment "An appropriation of money with its own authorization ceiling, the portion of it placed under obligation, and the portion actually expended. Questions about how much money is left to obligate, whether authorization covers what has been committed, or where the effort will run out of money before it runs out of work target this class. Its three quantities are a LADDER - each is a subset of the one above it - which is what distinguishes it from a requirement compared against a supply." .
 
+fin:Version a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Version" ;
+    rdfs:comment "A declared version of a program's dataset, such as a baseline or an estimate: the figures as they stood under one named basis. Questions that name which baseline or which estimate to read, or compare one against another, name this class. Its members are the versions the dataset's contract declares, never values found in the data, so a version nobody declared is not a version." .
+
+fin:FiscalPeriod a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Fiscal Period" ;
+    rdfs:comment "A period of the declared fiscal calendar that a program's dataset is read in. Questions that name a period to report through or to read alone name this class. Its members are the periods of the calendar the dataset's contract names, never values found in the data, so a label outside the calendar is not a period." .
+
 # =============================================================================
 # Response shapes - the OUTPUT end of Contract D
 # =============================================================================
@@ -170,6 +180,16 @@ fin:FundingStatusGrid a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Funding Status Grid" ;
     rdfs:comment "Cells indexed by subject and period, each holding three nested quantities where each is a subset of the one above it, the two balances derived between them, and a verdict stated by the producer rather than derived by the reader. Refuses a cell whose nesting is violated. The verdict is required because two of the three quantities cannot distinguish the middle condition from the settled one." .
+
+fin:FiscalCalendarPeriods a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Fiscal Calendar Periods" ;
+    rdfs:comment "An ordered sequence of the periods of one declared fiscal calendar, each with its start and end dates, fiscal year, quarter and half, and at most one period marked as the period the data is reported through. Carries no amount." .
+
+fin:HierarchyChildren a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Hierarchy Children" ;
+    rdfs:comment "The descendants of one named element of a declared breakdown, to a stated depth, each with its level, its role and its parent, ordered by name within a level. States how many levels were requested and how many were returned. Carries no amount." .
 
 # =============================================================================
 # Money primitives - FIBO, referenced rather than reinvented (ADR-0045 Decision 2)

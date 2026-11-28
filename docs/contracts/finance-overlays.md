@@ -807,8 +807,10 @@ the resolver scores an exact match 1.0 across every class and the router abstain
 
 A declared `Program` is visible only to the callers its `program_id` lists in
 `policy/program_members.yaml` (`grant_to`). A program with no row there is listed to no one.
-A declared row of any other class (a `ControlAccount`, say) loads, but no row can yet name the program
-it belongs to, so there is no program to check: it is listed and resolved to no one, not even a caller
+A declared row of any other class (a `ControlAccount`, say) may name the program it belongs to with
+the optional key `program` (a non-empty string; a `Program` row may not carry one, a program is its own
+program). It is then listed and resolved to the callers who may view that program, and to no one else.
+Without `program` there is no program to check: it is listed and resolved to no one, not even a caller
 who may view every program.
 
 ### 7a. When resolve or a listing comes back empty
@@ -915,3 +917,72 @@ period outside a declared calendar is refused with the same rule id.
 
 **The template names this kind.** `contracts/ev_fixture.yaml` gives `period.calendar`: the
 `calendar_id` of the declared `fin_calendar` the dataset's periods are drawn from.
+
+## The two built-in lookups, and the contract keys they read
+
+`fin_calendar_periods` lists the periods of the declared fiscal calendar in the calendar's own order
+(never sorted by label) and marks the period the data reports through. `fin_hierarchy_children` takes
+`element` and an optional `depth` (an integer of at least 1, default 1) and lists the element's
+children down that many levels, no further than the work package. Both answer an
+`INSTANCES_BY_PROPERTY` table with no amount, unit or verdict, are asset-only (with no dataset
+configured they refuse, and never answer from the seed), and read the asset as the caller.
+
+They read two optional keys of the dataset contract (ADR-0066):
+
+- `status_period`: one declared string column, `nullable: false`, determined by the contract's scope.
+  Its value in the program's rows names the status period. A value outside the declared calendar is
+  refused (`period_outside_calendar`). With no key, nothing is marked.
+- `hierarchy`: two or more distinct declared string columns, `nullable: false`, outermost first; the
+  last must determine the rest. The last two are the shipped levels (control account, work package);
+  any column above them is a WBS level, declared by the contract and never by the engine. With no key
+  the lookup refuses `hierarchy_not_declared`.
+
+An element named at more than one level is refused (`element_ambiguous`), naming the levels; a depth
+that is not an integer of at least 1 is refused (`bad_depth`) before anything is read.
+
+## Dimensions: the values a contract declares, resolved for their program's members
+
+A dimension is a column whose distinct values are members of a class: a control account, a work
+package, an organisation unit. The service resolves and lists them without a seed row for each.
+Two things declare one, and both are the contract's (ADR-0066), never the engine's:
+
+- the `hierarchy` columns: the control account and work package levels are shipped terms
+  (`fin:ControlAccount`, `fin:WorkPackage`), and any level above them is a `fin:WBSElement`;
+- the optional top-level key `dimensions`, a mapping `{column: class}` (for example
+  `obs: fin:OBSElement`). Each column must be declared in `columns`, and each class must be one the
+  service resolves; a class it does not resolve is refused at load, naming the column and the class.
+  A `personal_data` column is refused as a dimension: its values would be offered as members.
+  A column named by both `hierarchy` and `dimensions` with two different classes is refused.
+
+A contract that declares `dimensions`, `hierarchy` or `version_dimension` must name a scope. Under
+`scope: none` the service refuses the contract (`dimension_without_scope`, naming the keys): a
+dimension's members belong to programs, and with no scope there is no program to place them in.
+
+Each listing request (`/resolve_instance`, `/enumerate_instances`) reads the asset ONCE, as the caller,
+selecting only the scope column and the dimension columns, distinct rows, capped by the same row limit
+as the other reads. A value becomes one member per (class, id, program), and the caller sees it only
+if they may view that program. A member carries its `program` and a `provenance`
+(`dataset`, `column`, `as_of` of the read's ticket). A hierarchy level's member is its PATH, the
+identity `fin_hierarchy_children` writes: its `instance_id` is the JSON array of the row's hierarchy
+values from the top level down to this level (`["B-1", "B-1.1", "B-1.1.1"]`, no program in it) and its
+`label` is the name. So a name that stands under two parents, or at two levels, is two members, and the
+resolver offers two candidates where the lookup refuses it as `element_ambiguous`; a row with a null or
+empty value at or above a level gives no member for that level. Any other dimension column's member has
+its value for `instance_id` and `label`. The response carries one entry per (class, id): an asset or
+declared member comes back with `programs`, the sorted list of every program the caller may view it in,
+and no `program`; its `provenance` is the first member's, in program order. Null and empty values are
+skipped, and a seed or declared id wins over an asset member of the same id (a seed id is a bare id, so it
+no longer collides with an asset hierarchy member, whose id is a path). With no dataset configured nothing is read. When
+the read is refused or fails (no bearer, no grant on the asset, a contract violation, the broker down)
+the asset adds no members, the seed and the declared instances still answer, the response is 200, and
+one `asset_unread` line names the refusal's code and never a value.
+
+A **version** and a **fiscal period** are never searched in the data. `fin:Version` has one member per
+label of the version lists declared by the dataset rows' contracts (`version_dimension.values` of each
+declared row's contract), not the deployment contract, which is one row per work package and period and
+holds no version column; a label two of them declare names the first in `contract_id` order.
+`fin:FiscalPeriod` has one per label of the
+declared calendar (`period.calendar`, section 8). Each is offered once per program present in the
+asset, so a caller sees them exactly when they may view at least one of the dataset's programs. A
+version or period the data carries and no declaration lists resolves to nothing. They are filters a
+question names, so no verb takes either as its subject.

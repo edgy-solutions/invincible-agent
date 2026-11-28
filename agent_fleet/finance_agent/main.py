@@ -50,6 +50,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import export_dates
     import export_profiles
     import instance_overlays
+    import lookups
     import measure_verbs
     import measures
     import state_codec
@@ -65,6 +66,7 @@ except ImportError:
     from agent_fleet.finance_agent import export_dates
     from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import instance_overlays
+    from agent_fleet.finance_agent import lookups
     from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
@@ -148,7 +150,7 @@ _ensure_reasons_visible()
 # case; the rows are the rail's.
 _FIN_OWNER = "finance"
 
-FIN = "http://invincible-agent/fin#"
+FIN = asset_inputs.FIN  # stated once, where a contract's `fin:` CURIE expands
 MESH = "http://invincible-agent/mesh#"
 
 #: THE SEMANTIC DOMAIN, STATED ONCE. It appears on every registration below AND on this
@@ -471,6 +473,44 @@ VERBS: list[dict[str, Any]] = [
                      "expiring funds", "appropriation status"],
         "anti_synonyms": ["what will it cost", "why are we over", "CPI",
                           "which account is worst"],
+    },
+    {
+        "fn": "fin_calendar_periods",
+        "verb": "mesh:finCalendarPeriods",
+        "input_uri": FIN + "Program",
+        "also_askable_of": [],
+        "desc": (
+            "The periods of the program's declared fiscal calendar, in the calendar's own order, "
+            "each with its start and end dates, fiscal year, quarter and half, and the status "
+            "period the data is reported through marked. A LOOKUP: no amount and no verdict. "
+            "NOT what anything cost in a period - that is finVarianceAnalysis. NOT the structure "
+            "of the work - that is finHierarchyChildren. OWNS the phrasings: fiscal calendar, "
+            "reporting periods, which period, what period are we in, status period, period "
+            "list, quarter of a period."
+        ),
+        "synonyms": ["fiscal calendar", "reporting periods", "which period", "what period are we in",
+                     "status period", "period list", "what quarter is this period"],
+        "anti_synonyms": ["what is under this account", "children of", "WBS breakdown",
+                          "what did it cost", "cost variance", "EAC"],
+    },
+    {
+        "fn": "fin_hierarchy_children",
+        "verb": "mesh:finHierarchyChildren",
+        "input_uri": FIN + "Program",
+        "also_askable_of": [],
+        "desc": (
+            "The children of a named element of the program's declared breakdown, down one level "
+            "or to a stated depth and no further than the work package: the WBS levels, the "
+            "control accounts and the work packages. A LOOKUP: no amount and no verdict. NOT the "
+            "periods of the calendar - that is finCalendarPeriods. NOT what an account cost or "
+            "who is driving a variance - that is finVarianceDrivers. OWNS the phrasings: what "
+            "is under, children of, WBS breakdown, which control accounts are under, work "
+            "packages of, the structure below."
+        ),
+        "synonyms": ["what is under", "children of", "WBS breakdown",
+                     "which control accounts are under", "work packages of", "the structure below"],
+        "anti_synonyms": ["which period", "fiscal calendar", "status period",
+                          "what did it cost", "cost variance", "EAC"],
     },
 ]
 
@@ -1015,6 +1055,9 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
             "slots": missing,
         })
 
+    if fn in lookups.LOOKUP_FNS:
+        return _lookup_envelope(fn, params)
+
     try:
         # THE SAME SELECTION `_declared_envelope` makes: with the flag set a built-in computes over
         # the asset as the caller (ruled 2026-11-08), unless its row declares `source: seed`.
@@ -1079,6 +1122,55 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
         ),
         "rows": rows,
     }
+
+
+def _lookup_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
+    """The envelope of a built-in LOOKUP (`lookups.LOOKUP_FNS`): a governed read of the deployment's
+    declared dataset as the caller, shaped as INSTANCES_BY_PROPERTY with the answer's own keys beside
+    it. No amount, unit or verdict. Asset only: with no dataset configured the verb refuses (422
+    `no_dataset`) and never answers from the seed. A refusal is a 422 with its own `error` code."""
+    unknown = sorted(set(params) - set(lookups.LOOKUP_PARAMS[fn]))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"bad params for {fn}: {unknown}")
+    try:
+        depth = lookups.check_depth(1 if params.get("depth") is None else params["depth"]) if fn == "fin_hierarchy_children" else None
+        urn = asset_inputs.dataset_urn()
+        if urn is None:
+            raise lookups.LookupRefused(
+                "no_dataset", "this lookup reads the deployment's declared dataset; none is configured")
+        program_id = params["program_id"]
+        receipts: list[dict[str, Any]] = []
+        with _asset_read_errors(urn):
+            contract = asset_inputs.dataset_contract()
+            read = _ticketed_reader(receipts)
+            if fn == "fin_calendar_periods":
+                got = asset_inputs.read_calendar_status(read, urn, program_id=program_id, contract=contract)
+                answer = lookups.calendar_answer(got.calendar, got.status, got.status_column)
+            else:
+                levels = asset_inputs.hierarchy_levels(contract)
+                if not levels:
+                    raise lookups.LookupRefused(
+                        "hierarchy_not_declared",
+                        "the dataset contract declares no hierarchy; the lookup needs its level columns")
+                rows = asset_inputs.read_hierarchy_rows(read, urn, program_id=program_id, contract=contract)
+                answer = lookups.hierarchy_answer(
+                    program_id, params["element"], depth, contract.scope,
+                    [(contract.scope, asset_inputs.ROLE_SCOPE), *levels], rows)
+    except lookups.LookupRefused as exc:
+        raise HTTPException(status_code=422, detail={"error": exc.code, "message": exc.message}) from exc
+    except NotInModel as exc:
+        raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+    receipt = _the_receipt(receipts, urn)
+    envelope = {  # not `return {`: the wire seals select the built-in builder by that anchor
+        "measure": fn,
+        "output_uri": measures.OUTPUT_URI[fn],
+        "artifact_id": _artifact_id(fn, params, answer["rows"]),
+        "data_provenance": asset_inputs.provenance(urn, receipt),
+        "data_source": {"kind": "asset", "urn": urn},
+        "sources": _answer_sources(urn, receipt),
+        **answer,
+    }
+    return envelope
 
 
 def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
@@ -1991,7 +2083,7 @@ class ResolveRequest(BaseModel):
 #: `input_uri` in VERBS present here" — the enumerable set is DERIVED FROM WHAT THE ENGINE
 #: ROUTES ON, not from what looked worth listing. `_unroutable_classes()` below asserts it
 #: at boot, so a seventh verb on a new class fails at start rather than at an elicitation.
-_RESOLVABLE: dict[str, tuple[str, str, str]] = {
+_RESOLVABLE: dict[str, Optional[tuple[str, str, str]]] = {
     FIN + "Program":        ("programs", "program_id", "name"),
     FIN + "ControlAccount": ("control_accounts", "ca_id", "name"),
     FIN + "WorkPackage":    ("work_packages", "wp_id", "name"),
@@ -2002,7 +2094,13 @@ _RESOLVABLE: dict[str, tuple[str, str, str]] = {
     # `_members_of` dedupes on the id field, which is why both the resolver and the
     # enumerator go through it rather than iterating the collections themselves.
     FIN + "FundingLine":    ("funding", "line_id", "name"),
+    # NO SEED COLLECTION (`None`): a version and a period are NEVER searched in the data. Their
+    # members are the contract's declared version list and its declared calendar's labels
+    # (`asset_inputs.dimension_members`), one per program the caller can read.
+    FIN + "Version":        None,
+    FIN + "FiscalPeriod":   None,
 }
+asset_inputs.register_resolvable(_RESOLVABLE)
 
 #: fin:PerformanceMeasurementBaseline is the `input_uri` of two verbs and is DELIBERATELY
 #: absent above: it names a series, not a set of addressable things, so there is no menu to
@@ -2017,7 +2115,7 @@ def _load_instances() -> tuple["instance_overlays.InstanceRow", ...]:
     None declared is the default and the empty tuple. A malformed set RAISES. The seed's ids and
     labels are passed in so a row cannot collide with them.
     """
-    names = [getattr(i, f) for attr, idf, lf in _RESOLVABLE.values()
+    names = [getattr(i, f) for attr, idf, lf in (s for s in _RESOLVABLE.values() if s is not None)
              for i in getattr(STATE, attr) for f in (idf, lf)]
     return instance_overlays.load_instances({u[len(FIN):]: u for u in _RESOLVABLE}, names)
 
@@ -2028,7 +2126,8 @@ def _load_instances() -> tuple["instance_overlays.InstanceRow", ...]:
 INSTANCES: tuple["instance_overlays.InstanceRow", ...] = _load_instances()
 
 
-def _members_of(class_uri: str) -> list[dict[str, Any]]:
+def _members_of(class_uri: str, declared: Optional[dict[str, list[dict[str, Any]]]] = None
+                ) -> list[dict[str, Any]]:
     """The distinct members of one class, deduped by identity, in a stable order.
 
     ONE IMPLEMENTATION FOR BOTH PROVIDERS. The resolver scores against these and the
@@ -2036,13 +2135,18 @@ def _members_of(class_uri: str) -> list[dict[str, Any]]:
     ends up holding a stale idea of what this engine offers.
 
     Plus the instances a deployment declared of this class (`INSTANCES`); the seed wins an id.
+    Then `declared.get(class_uri)`: the members one request read from the asset and the contract's
+    declarations (`_declared_members`), each carrying its own `program`. A seed id wins an asset
+    member of the same id; two asset members of one id under two programs stay two members here, each
+    carrying its `program` (`_visible_to` filters, then folds them into one entry naming every program
+    the caller may view it in).
     """
-    spec = _RESOLVABLE.get(class_uri)
-    if spec is None:
+    if class_uri not in _RESOLVABLE:
         return []
-    attr, id_field, label_field = spec
+    spec = _RESOLVABLE[class_uri]
     seen: dict[str, dict[str, Any]] = {}
-    for item in getattr(STATE, attr):
+    attr, id_field, label_field = spec if spec is not None else ("", "", "")
+    for item in (getattr(STATE, attr) if spec is not None else ()):
         ident = getattr(item, id_field)
         if ident not in seen:
             seen[ident] = {
@@ -2060,8 +2164,12 @@ def _members_of(class_uri: str) -> list[dict[str, Any]]:
         if row.class_uri == class_uri and row.instance_id not in seen:
             seen[row.instance_id] = {
                 "instance_id": row.instance_id, "label": row.label, "class_uri": class_uri,
+                # A declared instance that names its program carries it (and where it came from).
+                **({"program": row.program, "provenance": {"declaration": "instance_overlay"}}
+                   if row.program is not None else {}),
             }
-    return [seen[k] for k in sorted(seen)]
+    return [seen[k] for k in sorted(seen)] + [
+        m for m in (declared or {}).get(class_uri, []) if m["instance_id"] not in seen]
 
 
 #: Classes this engine RESOLVES but no verb ROUTES ON, declared as deliberate.
@@ -2085,6 +2193,10 @@ _NO_VERB_BY_DESIGN = {
     FIN + "OBSElement",
     FIN + "WBSElement",
     FIN + "WorkPackage",
+    # A version and a period are FILTERS a question names ("through P7", "on the PMB baseline"),
+    # not subjects a verb is asked about.
+    FIN + "Version",
+    FIN + "FiscalPeriod",
 }
 
 #: A REAL SUBJECT NOBODY SERVES YET. Kept apart from `_NO_VERB_BY_DESIGN` deliberately, and
@@ -2157,25 +2269,30 @@ def _unroutable_classes() -> list[str]:
 #: `_RESOLVABLE`'s keys, so a class added to the map cannot arrive unfiltered.
 _PROGRAM_OF_CLASSES = frozenset({
     FIN + "Program", FIN + "OBSElement", FIN + "WBSElement", FIN + "ControlAccount",
-    FIN + "FundingLine", FIN + "WorkPackage",
+    FIN + "FundingLine", FIN + "WorkPackage", FIN + "Version", FIN + "FiscalPeriod",
 })
 
 
 def _program_of(class_uri: str, instance_id: str) -> str | None:
     """The program one member belongs to, or None when it cannot be decided (withheld)."""
-    spec = _RESOLVABLE.get(class_uri)
-    if spec is None or class_uri not in _PROGRAM_OF_CLASSES:
+    if class_uri not in _RESOLVABLE or class_uri not in _PROGRAM_OF_CLASSES:
         return None
-    attr, id_field, _label = spec
-    item = next((i for i in getattr(STATE, attr) if getattr(i, id_field) == instance_id), None)
+    spec = _RESOLVABLE[class_uri]
+    attr, id_field, _label = spec if spec is not None else ("", "", "")
+    item = None if spec is None else next(
+        (i for i in getattr(STATE, attr) if getattr(i, id_field) == instance_id), None)
     if item is None:
         # A DECLARED Program is its own program: its id IS the `program_members` key, so the
-        # membership check decides it like the seed program's. Any other declared class has
-        # no program here and stays withheld (deny by default).
-        if class_uri == FIN + "Program" and any(
-                r.class_uri == class_uri and r.instance_id == instance_id for r in INSTANCES):
-            return instance_id
-        return None
+        # membership check decides it like the seed program's. Any other declared instance has
+        # the program its row names, and with none it stays withheld (deny by default).
+        row = next((r for r in INSTANCES
+                    if r.class_uri == class_uri and r.instance_id == instance_id), None)
+        if row is None:
+            return None
+        # The non-Program branch below is unreachable by reach: `_members_of` always attaches `program`
+        # to a declared member that names one, and `_visible_to`, this function's only caller, reads
+        # `m["program"]` before it asks. Kept as the fail-closed answer for a caller that is not it.
+        return instance_id if class_uri == FIN + "Program" else row.program
     if class_uri == FIN + "Program":
         return item.program_id or None
     if class_uri == FIN + "WorkPackage":
@@ -2369,7 +2486,9 @@ def _why_refused(caller: str) -> str:
 
 def _visible_to(caller: str, members: list[dict[str, Any]],
                 why: Optional[collections.Counter] = None) -> list[dict[str, Any]]:
-    """The members whose program the caller may view. Withheld is unknown: no marker is added.
+    """The members whose program the caller may view, one entry per (class, id). Withheld is unknown:
+    no marker is added. An asset or declared member that carries a `program` comes back with
+    `programs`, the sorted list of every program the caller may view it in, and no `program`.
 
     One check per distinct program, through `_can_view` (which holds the svc/empty rules).
     `httpx.HTTPError` propagates. `why`, when given, counts one reason per WITHHELD member; it
@@ -2379,7 +2498,8 @@ def _visible_to(caller: str, members: list[dict[str, Any]],
     refusal: dict[str, str] = {}
     out: list[dict[str, Any]] = []
     for m in members:
-        prog = _program_of(m["class_uri"], m["instance_id"])
+        # An asset or declared member carries its own program; any other is decided as before.
+        prog = m["program"] if m.get("program") else _program_of(m["class_uri"], m["instance_id"])
         if prog is None:
             if why is not None:
                 why["program_undecidable"] += 1
@@ -2392,10 +2512,25 @@ def _visible_to(caller: str, members: list[dict[str, Any]],
             out.append(m)
         elif why is not None:
             why[refusal[prog]] += 1
-    return out
+    # One entry per (class, id). A member that carries a program is offered ONCE, naming every program
+    # the caller may view it in (`programs`, sorted, and no `program`): Engine O reads only
+    # `instance_id/class_uri/label/score/matched_on`, so one entry per program would reach the router
+    # as identical candidates. Its provenance is the first member's, in program order. A member whose
+    # program `_program_of` decides (the seed) is unchanged.
+    first: dict[tuple[str, str], dict[str, Any]] = {}
+    programs: dict[tuple[str, str], set[str]] = {}
+    for m in out:
+        key = (m["class_uri"], m["instance_id"])
+        first.setdefault(key, m)
+        if m.get("program"):
+            programs.setdefault(key, set()).add(m["program"])
+    return [{**{k: v for k, v in m.items() if k != "program"}, "programs": sorted(programs[key])}
+            if key in programs else m for key, m in first.items()]
 
 
-def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
+def _candidates(text: str, class_uri: Optional[str],
+                members_by_class: Optional[dict[str, list[dict[str, Any]]]] = None
+                ) -> list[dict[str, Any]]:
     """Exact, then case-insensitive, then contained phrase, then token overlap.
 
     DETERMINISTIC, NO MODEL, and each tier carries a DISTINCT score so the caller's gate can
@@ -2421,7 +2556,8 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
     for uri in _RESOLVABLE:
         if class_uri and class_uri != uri:
             continue
-        for member in _members_of(uri):
+        for member in (members_by_class[uri] if members_by_class is not None
+                       else _members_of(uri)):
             # `_members_of` now emits `instance_id`; this is its INTERNAL consumer and it
             # broke with the rename. The law that caught it is the same one that produced the
             # rename: read the consumer of what you fixed — including the ones inside your
@@ -2484,6 +2620,8 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
                 # produced candidates that resolved "successfully" with no usable id.
                 "instance_id": ident, "label": label,
                 "class_uri": uri, "score": round(score, 3),
+                # An asset or declared member says which program it is of and where it came from.
+                **{k: member[k] for k in ("program", "provenance") if k in member},
             })
     out.sort(key=lambda c: (-c["score"], c["instance_id"]))
     return out
@@ -2502,7 +2640,8 @@ def _local_name(uri: Optional[str]) -> str:
 
 
 def _empty_reason(*, identifier: Optional[str], class_uri: Optional[str], seen: int,
-                  withheld: "collections.Counter") -> str:
+                  withheld: "collections.Counter",
+                  declared: Optional[dict[str, list[dict[str, Any]]]] = None) -> str:
     """The first cause, in pipeline order, that explains an empty answer."""
     if identifier is not None:
         needle = identifier.strip()
@@ -2513,7 +2652,7 @@ def _empty_reason(*, identifier: Optional[str], class_uri: Optional[str], seen: 
     if class_uri is not None:
         if class_uri not in _RESOLVABLE:
             return "class_not_held"
-        if not _members_of(class_uri):
+        if not _members_of(class_uri, declared):
             return "class_has_no_members"
     if seen == 0:
         return "no_match"
@@ -2527,12 +2666,14 @@ def _empty_reason(*, identifier: Optional[str], class_uri: Optional[str], seen: 
 # one, and the directory unset or unreachable. `service_caller` is "no person identity on a call
 # that needs one": the body names a service and no person.
 _EMPTY_FAULTS = frozenset({"no_identity", "service_caller", "directory_unconfigured",
-                           "directory_unreachable"})
+                           "directory_unreachable", "asset_unread"})
 
 
 def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str], seen: int,
                withheld: "collections.Counter", user_email: str,
-               reason: Optional[str] = None) -> None:
+               reason: Optional[str] = None,
+               declared: Optional[dict[str, list[dict[str, Any]]]] = None,
+               code: Optional[str] = None) -> None:
     """One line saying why an answer came back empty (an empty answer says why, in the
     log; the architect, 2026-11-24).
 
@@ -2547,7 +2688,7 @@ def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str
     """
     if reason is None:
         reason = _empty_reason(identifier=identifier, class_uri=class_uri, seen=seen,
-                               withheld=withheld)
+                               withheld=withheld, declared=declared)
     fault = reason in _EMPTY_FAULTS or (
         reason == "withheld_mixed" and any(k in _EMPTY_FAULTS for k in withheld))
     level = logging.WARNING if fault else logging.INFO
@@ -2566,23 +2707,82 @@ def _log_empty(event: str, *, identifier: Optional[str], class_uri: Optional[str
     else:
         body_caller = "matches_bearer" if body == bearer_id.casefold() else "differs_from_bearer"
     classes = [class_uri] if class_uri in _RESOLVABLE else ([] if class_uri else list(_RESOLVABLE))
-    declared = sum(1 for r in INSTANCES if r.class_uri in classes)
+    declared_n = sum(1 for r in INSTANCES if r.class_uri in classes)
     tally = ",".join(f"{k}:{withheld[k]}" for k in sorted(withheld)) or "-"
     count_name = "matched" if event == "fin.resolve_empty" else "members"
     _reason_log.log(
         level,
         "%s reason=%s class=%s %s=%d withheld=%s bearer=%s verified=%s body_caller=%s "
-        "dataset_urn_set=%s declared_instances=%d",
+        "dataset_urn_set=%s declared_instances=%d%s",
         event, reason, _local_name(class_uri), count_name, seen, tally, bearer, verified,
-        body_caller, "true" if asset_inputs.dataset_urn() else "false", declared,
+        body_caller, "true" if asset_inputs.dataset_urn() else "false", declared_n,
+        f" code={_local_name(code)}" if code else "",
     )
+
+
+def _declared_versions() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """(contract_id, labels) for every declared dataset row whose contract declares a version
+    dimension, one per contract, by contract_id. `DECLARED` is read at call time."""
+    found = {r.contract.contract_id: tuple(r.contract.versions) for r in DECLARED.values()
+             if r.contract is not None and r.contract.versions}
+    return tuple(sorted(found.items()))
+
+
+def _declared_members(read: Callable[[str], Any], urn: str, contract: Any,
+                      receipts: Optional[list[dict[str, Any]]] = None
+                      ) -> dict[str, list[dict[str, Any]]]:
+    """The members the contract's declarations and the asset give, by class: ONE governed read as
+    the caller (`asset_inputs.read_dimension_rows`), then the pure `dimension_members`. A read that
+    refuses or fails gives NO declared members and one `asset_unread` line naming the refusal's
+    code (never a row value); it is never a 500."""
+    try:
+        with _asset_read_errors(urn):
+            df = asset_inputs.read_dimension_rows(read, urn, contract=contract)
+    except HTTPException as exc:
+        d = exc.detail
+        code = (d.get("status") or d.get("error")) if isinstance(d, dict) else None
+        _log_empty("fin.asset_unread", identifier=None, class_uri=None, seen=0,
+                   withheld=collections.Counter(), user_email="", reason="asset_unread",
+                   code=str(code or f"http_{exc.status_code}"))
+        return {}
+    except Exception as exc:  # a reader fault is not a request fault
+        _log_empty("fin.asset_unread", identifier=None, class_uri=None, seen=0,
+                   withheld=collections.Counter(), user_email="", reason="asset_unread",
+                   code=type(exc).__name__)
+        return {}
+    as_of = (receipts[-1].get("as_of") if receipts else None)
+    return asset_inputs.dimension_members(df, urn, contract, as_of, versions=_declared_versions())
+
+
+def _declared_for(caller: str) -> dict[str, list[dict[str, Any]]]:
+    """`_declared_members` for one listing request: nothing when no dataset is configured (and no
+    read), and an `asset_unread` line, no read, when there is no caller to read as."""
+    urn = asset_inputs.dataset_urn()
+    if not urn:
+        return {}
+    if not caller:
+        _log_empty("fin.asset_unread", identifier=None, class_uri=None, seen=0,
+                   withheld=collections.Counter(), user_email="", reason="asset_unread",
+                   code="no_bearer")
+        return {}
+    receipts: list[dict[str, Any]] = []
+    try:
+        contract = asset_inputs.dataset_contract()
+    except Exception as exc:
+        _log_empty("fin.asset_unread", identifier=None, class_uri=None, seen=0,
+                   withheld=collections.Counter(), user_email="", reason="asset_unread",
+                   code=type(exc).__name__)
+        return {}
+    return _declared_members(_ticketed_reader(receipts), urn, contract, receipts)
 
 
 @app.post("/resolve_instance")
 def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
     """Resolve a spoken finance name to an identifier in this model."""
     caller = _listing_caller(req.user_email, "resolve")
-    cands = [c for c in _candidates(req.identifier, req.class_uri)
+    declared = _declared_for(caller)
+    members_by_class = {uri: _members_of(uri, declared) for uri in _RESOLVABLE}
+    cands = [c for c in _candidates(req.identifier, req.class_uri, members_by_class)
              if c["score"] >= _RESOLVE_FLOOR]
     seen = len(cands)
     withheld: collections.Counter = collections.Counter()
@@ -2595,7 +2795,7 @@ def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
         raise HTTPException(503, f"program membership check failed: {e}") from e
     if not cands:
         _log_empty("fin.resolve_empty", identifier=req.identifier, class_uri=req.class_uri,
-                   seen=seen, withheld=withheld, user_email=req.user_email)
+                   seen=seen, withheld=withheld, user_email=req.user_email, declared=declared)
     return {
         "output_uri": MESH + "InstanceResolution",
         "query": req.identifier,
@@ -2650,8 +2850,9 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
         }
     held: list[dict[str, Any]] = []
     withheld: collections.Counter = collections.Counter()
+    declared = _declared_for(caller)
     try:
-        held = _members_of(req.class_uri)
+        held = _members_of(req.class_uri, declared)
         members = _visible_to(caller, held, withheld)
     except httpx.HTTPError as e:
         _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
@@ -2660,7 +2861,8 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
         raise HTTPException(503, f"program membership check failed: {e}") from e
     if not members:
         _log_empty("fin.enumerate_empty", identifier=None, class_uri=req.class_uri,
-                   seen=len(held), withheld=withheld, user_email=req.user_email)
+                   seen=len(held), withheld=withheld, user_email=req.user_email,
+                   declared=declared)
     if len(members) > req.limit:
         return {
             "output_uri": MESH + "InstanceEnumeration",

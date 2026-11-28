@@ -77,6 +77,11 @@ def _shipped():
 def _without_key(key: str, tmp_path: Path):
     raw = yaml.safe_load(TEXT)
     del raw[key]
+    if key == "dependencies":
+        # `status_period` and `hierarchy` are declared determined by `dependencies` (2026-11-25), so
+        # the dependencies are optional exactly as far as nothing declared needs them: delete what does.
+        raw.pop("status_period", None)
+        raw.pop("hierarchy", None)
     path = tmp_path / "ev_fixture.yaml"
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     return dataset_contracts.load_contracts(path)["ev_fixture"]

@@ -54,6 +54,12 @@ def _envelope(fn: str) -> dict:
     """The response body `/measure/<fn>` builds, via the app itself rather than a copy of it."""
     from fastapi.testclient import TestClient
     from agent_fleet.finance_agent.main import app
+    from agent_fleet.finance_agent.lookups import LOOKUP_FNS
+    if fn in LOOKUP_FNS:  # asset-only (ruled 2026-11-25): served from a declared dataset, as the caller
+        from tests.finance.lookup_serving import post_lookup
+        r = post_lookup(fn, {"program_id": "NP-MERIDIAN"}, _CALLER)
+        assert r.status_code == 200, f"{fn}: {r.status_code} {r.text[:200]}"
+        return r.json()
     with TestClient(app) as client:
         r = client.post(f"/measure/{fn}",
                         json={"params": {"program_id": "NP-MERIDIAN", **_KW.get(fn, {})},
