@@ -27,8 +27,39 @@ class DurableAnswers:
         self._ttl = snapshot_ttl_s
         self._cache: dict[str, tuple[float, dict]] = {}
 
-    async def launch(self, op_config: dict) -> str | None:
-        answer_id = str(uuid.uuid4())
+    async def reserve(self, answer_id: str) -> dict | None:
+        """Take a place in the admission gate under `answer_id` (before the first model call).
+        The decision dict, or None on any error."""
+        try:
+            async with self._client_factory() as client:
+                # Restate's ingress refuses any body (400) to a handler that declares no input;
+                # send none.
+                resp = await client.post(
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/reserve")
+                resp.raise_for_status()
+                body = resp.json()
+            return body if isinstance(body, dict) and "decision" in body else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("durable answer reserve failed for %s: %s", answer_id, exc)
+            return None
+
+    async def release(self, answer_id: str) -> bool:
+        """Give back a reservation that was never launched. False on any error."""
+        try:
+            async with self._client_factory() as client:
+                resp = await client.post(
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/release")
+                resp.raise_for_status()
+                body = resp.json()
+            return bool(isinstance(body, dict) and body.get("released"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("durable answer release failed for %s: %s", answer_id, exc)
+            return False
+        finally:
+            self._cache.pop(answer_id, None)
+
+    async def launch(self, op_config: dict, answer_id: str | None = None) -> str | None:
+        answer_id = answer_id or str(uuid.uuid4())
         try:
             async with self._client_factory() as client:
                 resp = await client.post(
@@ -43,7 +74,7 @@ class DurableAnswers:
         try:
             async with self._client_factory() as client:
                 resp = await client.post(
-                    f"{self._ingress}/SupervisorAnswer/{answer_id}/snapshot", json={})
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/snapshot")
                 resp.raise_for_status()
                 snap = resp.json()
             return snap if isinstance(snap, dict) else None
@@ -67,7 +98,13 @@ class DurableAnswers:
         snap = await self._snapshot(answer_id)
         if snap is None:
             return {}
-        return {"__typename": "Run", "status": snap.get("status")}
+        out = {"__typename": "Run", "status": snap.get("status")}
+        if snap.get("status") == "BUSY":
+            out["busy"] = snap.get("busy") or {}
+        if snap.get("status") == "QUEUED" and isinstance(snap.get("queue"), dict):
+            # The place, from THIS snapshot, so a caller deciding "waiting or admitted" reads one.
+            out["queue"] = snap["queue"]
+        return out
 
     async def get_run_events(self, answer_id: str) -> list:
         snap = await self._snapshot(answer_id)
@@ -79,6 +116,15 @@ class DurableAnswers:
             return []
         return [{"stepKey": s.get("stepKey"), "status": s.get("status"), "endTime": s.get("endTime")}
                 for s in snap.get("steps") or []]
+
+    async def get_progress(self, answer_id: str) -> tuple | None:
+        """What moves when the answer moves: its status, how many events it has logged, and each
+        step's status. `None` on a failed read, which is no movement seen."""
+        snap = await self._snapshot(answer_id)
+        if snap is None:
+            return None
+        return (snap.get("status"), len(snap.get("events") or []),
+                frozenset((s.get("stepKey"), s.get("status")) for s in snap.get("steps") or []))
 
     async def get_failure(self, answer_id: str) -> dict:
         """The failed step and the trace id the snapshot carries (ADR-0072 8.1). `{}` on a failed read."""
@@ -94,3 +140,26 @@ class DurableAnswers:
         if result.get("payload") is None:
             return {"error": "Durable answer has no UI payload"}
         return {"payload": result["payload"], "referenced_uris": result.get("referenced_uris") or []}
+
+    async def get_queue(self, answer_id: str) -> dict | None:
+        """The admission queue place of a WAITING answer (from the cached snapshot), else None."""
+        snap = await self._snapshot(answer_id)
+        if snap is None or snap.get("status") != "QUEUED":
+            return None
+        q = snap.get("queue")
+        return q if isinstance(q, dict) else None
+
+    async def withdraw(self, answer_id: str) -> bool:
+        """Take a still-waiting answer out of the queue (its stream closed). False on any error."""
+        try:
+            async with self._client_factory() as client:
+                resp = await client.post(
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/withdraw")
+                resp.raise_for_status()
+                body = resp.json()
+            return bool(isinstance(body, dict) and body.get("withdrawn"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("durable answer withdraw failed for %s: %s", answer_id, exc)
+            return False
+        finally:
+            self._cache.pop(answer_id, None)
