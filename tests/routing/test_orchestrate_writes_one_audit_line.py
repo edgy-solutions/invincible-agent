@@ -1,6 +1,7 @@
 """/orchestrate leaves exactly ONE `orchestrate_access` line per call: who, through which client
 (`azp`), session, the routed verb and the case if the events carried them, when, and how it ended
-(completed | closed | error | refused:<status>). Never message text, tokens or payload bodies.
+(completed | failed:<cause> | closed | error | refused:<status>). Never message text, tokens or payload
+bodies. `failed` is sealed in tests/routing/test_the_audit_line_says_an_ask_failed.py.
 
 Drives the REAL wrapper and the REAL logger (`iagent.audit.orchestrate`) with caplog; the stream is
 a synthetic SSE sequence shaped like the real one (`route_decision` carries `action.iri`).

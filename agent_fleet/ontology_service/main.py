@@ -50,7 +50,8 @@ except IndexError:
     pass  # Running in CNB container — baml_client is already in /workspace/
 
 from baml_client import b  # noqa: E402  — BAML async client
-from baml_py.errors import BamlValidationError  # noqa: E402
+from baml_py import AbortController  # noqa: E402
+from baml_py.errors import BamlAbortError, BamlValidationError  # noqa: E402
 from baml_client.types import SemanticResolution as BamlSemanticResolution  # noqa: E402
 from baml_client.type_builder import TypeBuilder
 
@@ -5778,6 +5779,28 @@ async def fill_slots(request: FillSlotsRequest):
     )
 
 
+def _route_intent_model_timeout_s(env=os.environ) -> float:
+    """How long /route_intent's model call (ExtractIntent) may run before BAML aborts it:
+    ROUTE_INTENT_MODEL_TIMEOUT_S, 150 s by default.
+
+    THE INNER OF TWO LIMITS. The BFF waits ROUTE_INTENT_TIMEOUT_S (180 s by default) for this
+    route, so this must be SHORTER: the model call then ends, and this route answers, while its
+    caller is still waiting. Unset, the call ran to BAML's own limit (300 s, as measured) and
+    could finish after the BFF had gone (2026-11-28: 204 s against 180 s). The chart refuses to
+    render the pair in the wrong order. Read at import: a value that is not a positive number
+    stops engine O at start."""
+    raw = env.get("ROUTE_INTENT_MODEL_TIMEOUT_S") or "150"
+    value = float(raw)
+    if not value > 0:
+        raise ValueError(
+            f"ROUTE_INTENT_MODEL_TIMEOUT_S must be a positive number of seconds, not {raw!r}"
+        )
+    return value
+
+
+_ROUTE_INTENT_MODEL_TIMEOUT_S = _route_intent_model_timeout_s()
+
+
 # ---------------------------------------------------------------------------
 # POST /route_and_plan
 # ---------------------------------------------------------------------------
@@ -5795,11 +5818,21 @@ async def route_intent(request: RouteIntentRequest) -> RouteIntentResponse:
     """
     request, _ = await _bound(request, route="route_intent", email_field=None)
     try:
-        intent = await b.ExtractIntent(user_query=request.query)
+        # A controller per call: BAML aborts the model request itself at the limit (the
+        # in-flight coalescer shields its task, so cancelling our await would not stop it).
+        intent = await b.ExtractIntent(
+            user_query=request.query,
+            baml_options={"abort_controller": AbortController(
+                timeout_ms=int(_ROUTE_INTENT_MODEL_TIMEOUT_S * 1000))},
+        )
     except Exception as exc:
+        reason = (
+            f"the model did not answer within ROUTE_INTENT_MODEL_TIMEOUT_S="
+            f"{_ROUTE_INTENT_MODEL_TIMEOUT_S:g} s" if isinstance(exc, BamlAbortError) else exc
+        )
         raise HTTPException(
             status_code=502,
-            detail=f"BAML ExtractIntent failed: {exc}",
+            detail=f"BAML ExtractIntent failed: {reason}",
         ) from exc
 
     # Silent-degrade detection (paired with /plan above). All-empty
