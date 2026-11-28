@@ -10,7 +10,8 @@ the shared `iagent-config` through `envFrom`, and that config carries `MINIO_END
 THE POD'S ENVIRONMENT IS READ FROM THE CHART, NOT RESTATED HERE. A test that typed the three names
 would agree with whatever the fix typed, and pass against the next rename of either side.
 `agentFleet.env` in `values-sandbox.yaml` is what `templates/configmap.yaml` renders into
-`iagent-config`.
+`iagent-config`. The env is read from the RENDER, because the MinIO pair is filled at render time
+from `minioBucketInit` (#586): the raw values file carries those two entries empty.
 
 THE CONTROL DIFFERS IN EXACTLY ONE THING: the same chart environment with its object-store names
 removed. It must reach the client with nothing, which proves the arm above discriminates on those
@@ -19,6 +20,8 @@ names rather than on something the stub or the host environment supplied.
 from __future__ import annotations
 
 import pathlib
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -29,7 +32,8 @@ sys.path.insert(0, str(ROOT))
 
 from agent_fleet.docs_agent.body_store import MinioBodyStore  # noqa: E402
 
-VALUES = ROOT / "helm" / "invincible-agent" / "values-sandbox.yaml"
+CHART = ROOT / "helm" / "invincible-agent"
+VALUES = CHART / "values-sandbox.yaml"
 
 #: Every name the reader could fall back on. All are cleared first, so the host's own environment
 #: cannot satisfy the arm.
@@ -38,7 +42,20 @@ _READER_NAMES = ("S3_ENDPOINT_URL", "MINIO_URL", "MINIO_ENDPOINT_URL", "AWS_ACCE
 
 
 def _chart_env() -> dict:
-    env = (yaml.safe_load(VALUES.read_text(encoding="utf-8"))["agentFleet"]["env"]) or {}
+    """The data of the rendered `iagent-config` ConfigMap, the pod's shared environment. tests/conftest.py
+    puts the render-only overlay into this `helm template`, so the MinIO pair is filled with its
+    placeholders; the assertions below name keys and never print a value."""
+    if shutil.which("helm") is None:
+        pytest.skip("helm not installed")
+    r = subprocess.run(
+        ["helm", "template", "t", str(CHART), "--show-only", "templates/configmap.yaml",
+         "-f", str(VALUES)],
+        capture_output=True, text=True, cwd=str(ROOT), timeout=300)
+    assert r.returncode == 0, f"helm template failed: {r.stderr[-300:]}"
+    cm = [d for d in yaml.safe_load_all(r.stdout)
+          if d and d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "t-config"]
+    assert len(cm) == 1, f"expected one rendered ConfigMap t-config, found {len(cm)}"
+    env = cm[0].get("data") or {}
     return {k: str(v) for k, v in env.items() if isinstance(v, (str, int, float, bool))}
 
 
@@ -65,7 +82,7 @@ def test_the_chart_environment_is_one_the_reader_can_connect_with(monkeypatch):
     object_store = sorted(k for k in env if k in _READER_NAMES)
     # Population check: if the chart stops carrying object-store names at all, this seal must say
     # so rather than pass on a vacuous environment.
-    assert object_store, "values-sandbox.yaml agentFleet.env carries no object-store names at all"
+    assert object_store, "the rendered iagent-config carries no object-store names at all"
 
     kw = _client_kwargs(monkeypatch, env)
     missing = [k for k in ("endpoint_url", "aws_access_key_id", "aws_secret_access_key")
