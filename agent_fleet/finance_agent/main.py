@@ -1077,8 +1077,24 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
             measures.SUMMARY[fn](rows) or {}
             if fn in measures.SUMMARY else {}
         ),
+        # A BUILT-IN ROW'S RESTATEMENTS (Q6), filled from the rows above and ABSENT WHEN THE ROW
+        # DECLARES NONE: same absent-means-silent rule. A sentence the rows cannot fill is named
+        # under `explanations_withheld`, never served partly filled.
+        # Two literal keys, each its own conditional spread, so the wire census reads both names
+        # (an opaque `**helper()` is a key source it cannot see).
+        **({"explanations": _ex} if (_ex := (_exw := _explanations_of(fn, rows))[0]) else {}),
+        **({"explanations_withheld": _wh} if (_wh := _exw[1]) else {}),
         "rows": rows,
     }
+
+
+def _explanations_of(fn: str, rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """`(explanations, withheld)` of a built-in's row over its served rows; `([], [])` when the row
+    declares none. The envelope spreads each only when it is non-empty."""
+    row = SOURCES.get(fn)
+    if row is None or not row.explanations:
+        return [], []
+    return measures.explanations_for(fn, row.explanations, rows)
 
 
 def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
