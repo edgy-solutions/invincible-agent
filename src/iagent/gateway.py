@@ -7876,7 +7876,7 @@ def _sse(event: str, data: str) -> str:
 #                     how long answers of this caller usually take, and when the server stops
 #                     waiting. All three are milliseconds from the answer's birth (the instant its
 #                     `valid_as_of` is stamped), so the client's remaining time is deadline_ms -
-#                     elapsed_ms. `expected_ms` is the median of the caller's own recorded complete
+#                     elapsed_ms. `expected_ms` is the 90th percentile of the caller's own recorded complete
 #                     answers, null when too few are recorded. `deadline_ms` is when the stream stops
 #                     waiting on a run that keeps moving (900 s of counted wall time: queued and
 #                     paused time do not count), null when the backend has no ceiling; the stall
@@ -10283,8 +10283,9 @@ def _durable_stall_s() -> float:
     return value
 
 
-# HOW LONG AN ANSWER IS EXPECTED TO TAKE, from the caller's own recorded answers: the median
-# duration of the last `IAGENT_EXPECTED_SAMPLE` complete ones, or None when fewer than
+# HOW LONG AN ANSWER IS EXPECTED TO TAKE, from the caller's own recorded answers: the 90th
+# percentile duration of the last `IAGENT_EXPECTED_SAMPLE` complete ones (ruled 2026-11-28: an
+# upper figure, "usually under"; the median would flag half of all answers as slow), or None when fewer than
 # `IAGENT_EXPECTED_MIN` are recorded. A number the person can be shown beside the time the
 # server will wait. Never read across people, and never allowed to fail the stream.
 _EXPECTED_SAMPLE_DEFAULT = 50
@@ -10313,7 +10314,8 @@ def _expected_min() -> int:
 
 
 async def _expected_ms(user_id: str) -> int | None:
-    """The median duration of the caller's recent complete answers, or None."""
+    """The 90th percentile duration of the caller's recent complete answers, or None. Linear
+    between the two nearest ranks (`statistics.quantiles`, inclusive)."""
     sample, minimum = _expected_sample(), _expected_min()
 
     def _read() -> list:
@@ -10330,7 +10332,9 @@ async def _expected_ms(user_id: str) -> int | None:
     durations = [d for d in durations if isinstance(d, (int, float))]
     if len(durations) < minimum:
         return None
-    return int(statistics.median(durations))
+    if len(durations) == 1:
+        return int(durations[0])
+    return int(statistics.quantiles(durations, n=10, method="inclusive")[8])
 
 
 class _ProgressWatch:

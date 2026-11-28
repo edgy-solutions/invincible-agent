@@ -11,7 +11,7 @@ Now:
   * `answer_timing {run_id, elapsed_ms, expected_ms, deadline_ms}` is sent once after the
     launch, and again whenever counting resumes after queued or paused time (the deadline moved).
   * The limit is 900 s of COUNTED wall time as well as 900 ticks, so `deadline_ms` is true.
-  * `expected_ms` is the median duration of the caller's own recorded complete answers.
+  * `expected_ms` is the 90th percentile duration of the caller's own recorded complete answers.
 
 DRIVEN THROUGH THE REAL ``_generate_dagster_stream_inner`` with a real ``DurableAnswers`` on a
 mock transport, on the stream's own clock (`_stall_clock`), as the stall seal does.
@@ -304,10 +304,12 @@ async def test_expected_is_none_when_too_few_answers_are_recorded(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_expected_is_the_median_of_the_callers_recorded_durations(monkeypatch):
+async def test_expected_is_the_90th_percentile_of_the_callers_recorded_durations(monkeypatch):
     d = _Driver(rows=[9000, 1000, 5000, 3000, 7000, 100_000])
     _with_driver(monkeypatch, d)
-    assert await gw._expected_ms("u-1") == 6000  # median of six: (5000 + 7000) / 2
+    # sorted 1000 3000 5000 7000 9000 100000: rank 0.9 * 5 = 4.5, so 9000 + 0.5 * 91000. The
+    # rejected median is 6000 and the maximum 100000, so this value tells them apart.
+    assert await gw._expected_ms("u-1") == 54500
     (cypher, params), = d.calls
     assert params == {"user_id": "u-1", "limit": 50}
     for word in ("PRODUCED_FOR", "complete", "duration_ms"):
@@ -321,8 +323,16 @@ async def test_the_sample_and_minimum_follow_their_settings(monkeypatch):
     _with_driver(monkeypatch, d)
     monkeypatch.setenv("IAGENT_EXPECTED_SAMPLE", "3")
     monkeypatch.setenv("IAGENT_EXPECTED_MIN", "3")
-    assert await gw._expected_ms("u-2") == 2000
+    assert await gw._expected_ms("u-2") == 2800  # rank 0.9 * 2 = 1.8: 2000 + 0.8 * 1000
     assert d.calls[0][1] == {"user_id": "u-2", "limit": 3}
+
+
+@pytest.mark.asyncio
+async def test_a_single_recorded_answer_is_its_own_percentile(monkeypatch):
+    """With the minimum set to one, one recorded answer is the figure (`quantiles` needs two)."""
+    _with_driver(monkeypatch, _Driver(rows=[4000]))
+    monkeypatch.setenv("IAGENT_EXPECTED_MIN", "1")
+    assert await gw._expected_ms("u-3") == 4000
 
 
 @pytest.mark.asyncio
