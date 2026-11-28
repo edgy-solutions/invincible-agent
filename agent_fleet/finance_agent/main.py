@@ -2137,8 +2137,9 @@ def _members_of(class_uri: str, declared: Optional[dict[str, list[dict[str, Any]
     Plus the instances a deployment declared of this class (`INSTANCES`); the seed wins an id.
     Then `declared.get(class_uri)`: the members one request read from the asset and the contract's
     declarations (`_declared_members`), each carrying its own `program`. A seed id wins an asset
-    member of the same id; two asset members of one value under two programs stay two entries
-    (`_visible_to` filters, then dedupes).
+    member of the same id; two asset members of one id under two programs stay two members here, each
+    carrying its `program` (`_visible_to` filters, then folds them into one entry naming every program
+    the caller may view it in).
     """
     if class_uri not in _RESOLVABLE:
         return []
@@ -2288,6 +2289,9 @@ def _program_of(class_uri: str, instance_id: str) -> str | None:
                     if r.class_uri == class_uri and r.instance_id == instance_id), None)
         if row is None:
             return None
+        # The non-Program branch below is unreachable by reach: `_members_of` always attaches `program`
+        # to a declared member that names one, and `_visible_to`, this function's only caller, reads
+        # `m["program"]` before it asks. Kept as the fail-closed answer for a caller that is not it.
         return instance_id if class_uri == FIN + "Program" else row.program
     if class_uri == FIN + "Program":
         return item.program_id or None
@@ -2482,7 +2486,9 @@ def _why_refused(caller: str) -> str:
 
 def _visible_to(caller: str, members: list[dict[str, Any]],
                 why: Optional[collections.Counter] = None) -> list[dict[str, Any]]:
-    """The members whose program the caller may view. Withheld is unknown: no marker is added.
+    """The members whose program the caller may view, one entry per (class, id). Withheld is unknown:
+    no marker is added. An asset or declared member that carries a `program` comes back with
+    `programs`, the sorted list of every program the caller may view it in, and no `program`.
 
     One check per distinct program, through `_can_view` (which holds the svc/empty rules).
     `httpx.HTTPError` propagates. `why`, when given, counts one reason per WITHHELD member; it
@@ -2506,11 +2512,20 @@ def _visible_to(caller: str, members: list[dict[str, Any]],
             out.append(m)
         elif why is not None:
             why[refusal[prog]] += 1
-    # One member per (class, id): the same value under two programs the caller can view is one.
+    # One entry per (class, id). A member that carries a program is offered ONCE, naming every program
+    # the caller may view it in (`programs`, sorted, and no `program`): Engine O reads only
+    # `instance_id/class_uri/label/score/matched_on`, so one entry per program would reach the router
+    # as identical candidates. Its provenance is the first member's, in program order. A member whose
+    # program `_program_of` decides (the seed) is unchanged.
     first: dict[tuple[str, str], dict[str, Any]] = {}
+    programs: dict[tuple[str, str], set[str]] = {}
     for m in out:
-        first.setdefault((m["class_uri"], m["instance_id"]), m)
-    return list(first.values())
+        key = (m["class_uri"], m["instance_id"])
+        first.setdefault(key, m)
+        if m.get("program"):
+            programs.setdefault(key, set()).add(m["program"])
+    return [{**{k: v for k, v in m.items() if k != "program"}, "programs": sorted(programs[key])}
+            if key in programs else m for key, m in first.items()]
 
 
 def _candidates(text: str, class_uri: Optional[str],
