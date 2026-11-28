@@ -485,7 +485,7 @@ Neo4j Password
 {{- if .Values.neo4j.enabled -}}
 {{ .Values.neo4j.auth.password }}
 {{- else -}}
-{{ .Values.externalNeo4j.password }}
+{{ .Values.externalNeo4j.password | required "externalNeo4j.password is unset: the chart ships no default for it (neo4j.enabled is false, so the fleet reads the external server's password from here)" }}
 {{- end -}}
 {{- end }}
 
@@ -1016,4 +1016,25 @@ role cannot be given different passwords. Override the name to use a pre-made Se
 
 {{- define "invincible-agent.electricDbSecretKey" -}}
 {{- default "password" .Values.electric.db.secret.key -}}
+{{- end }}
+
+{{/*
+MinIO's access pair has ONE home: minioBucketInit.accessKey / minioBucketInit.secretKey (both required, no
+default). Every other place that carries the pair in an env map (userDeployments.<name>.codeLocation.env and
+.broker.env, agentFleet.env, cortexBff.env) writes the key EMPTY and takes the value from that pair, so a
+rotation changes two values and no consumer keeps the old key. An env entry named for one of the four
+credential variables and left empty resolves here; an explicit non-empty value still wins, and every other
+env entry renders as it always did. Call: include "invincible-agent.minioEnvIsDerived" (dict "k" $k "v" $v)
+to ask, include "invincible-agent.minioEnvValue" (dict "k" $k "root" $) to read.
+*/}}
+{{- define "invincible-agent.minioEnvIsDerived" -}}
+{{- if and (not .v) (has .k (list "AWS_ACCESS_KEY_ID" "MINIO_ACCESS_KEY" "AWS_SECRET_ACCESS_KEY" "MINIO_SECRET_KEY")) -}}yes{{- end -}}
+{{- end }}
+
+{{- define "invincible-agent.minioEnvValue" -}}
+{{- if has .k (list "AWS_ACCESS_KEY_ID" "MINIO_ACCESS_KEY") -}}
+{{- .root.Values.minioBucketInit.accessKey | required (printf "minioBucketInit.accessKey is unset: the chart ships no default for it, and %s takes its value from it" .k) -}}
+{{- else -}}
+{{- .root.Values.minioBucketInit.secretKey | required (printf "minioBucketInit.secretKey is unset: the chart ships no default for it, and %s takes its value from it" .k) -}}
+{{- end -}}
 {{- end }}

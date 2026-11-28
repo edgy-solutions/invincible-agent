@@ -14,7 +14,7 @@ render. The render holds Secrets, so a document is classified by its `kind:` lin
 skipped WITHOUT being parsed -- its data is never read, even to find out that it is a Secret.
 Only workload documents are parsed at all.
 
-Usage:  helm template ... | python scripts/seal_image_digests.py
+Usage:  helm template ... -f scripts/values-render-placeholders.yaml | python scripts/seal_image_digests.py
 """
 from __future__ import annotations
 

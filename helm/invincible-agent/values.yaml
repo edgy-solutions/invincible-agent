@@ -1246,8 +1246,8 @@ userDeployments:
       # relocated to the dag-tools user-deployment (2026-06-26); only
       # publog-relevant config stays here.
       env:
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # Every name here must be one pub-tools' code reads; the chart
@@ -1293,8 +1293,8 @@ userDeployments:
       # Defaults to http://<release>-central-gateway:8090 when unset.
       # centralGatewayUrl: ""
       env:
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # The broker loads the same Definitions, so it reads the same name.
@@ -1336,8 +1336,8 @@ userDeployments:
         # here matches the sandbox-friendly defaults pattern in this
         # file; production values files MUST override to "false".
         DAG_TOOLS_DEMO_MODE: "true"
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # New bucket for dag-tools-owned demo content. Replaces
@@ -1384,8 +1384,8 @@ userDeployments:
         # Broker reads the same demo flag so its physical_coordinates
         # advertisements match the code-location's writes.
         DAG_TOOLS_DEMO_MODE: "true"
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         DAG_TOOLS_DEMO_S3_BUCKET: "dag-lake"
@@ -2232,7 +2232,7 @@ neo4j:
 externalNeo4j:
   uri: ""     # e.g. "bolt://my-neo4j.infra.svc:7687"
   username: "neo4j"
-  password: "changeme"
+  password: ""   # required when neo4j.enabled is false: the chart ships no default for it
 
 weaviate:
   enabled: true

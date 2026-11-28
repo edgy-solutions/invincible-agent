@@ -147,7 +147,11 @@ spec:
             {{- with $deploy.codeLocation.env }}
             {{- range $k, $v := . }}
             - name: {{ $k }}
+              {{- if include "invincible-agent.minioEnvIsDerived" (dict "k" $k "v" $v) }}
+              value: {{ include "invincible-agent.minioEnvValue" (dict "k" $k "root" $) | quote }}
+              {{- else }}
               value: {{ $v | quote }}
+              {{- end }}
             {{- end }}
             {{- end }}
             {{- if and $deploy.grist $deploy.grist.enabled }}
@@ -256,7 +260,11 @@ spec:
             {{- with $deploy.broker.env }}
             {{- range $k, $v := . }}
             - name: {{ $k }}
+              {{- if include "invincible-agent.minioEnvIsDerived" (dict "k" $k "v" $v) }}
+              value: {{ include "invincible-agent.minioEnvValue" (dict "k" $k "root" $) | quote }}
+              {{- else }}
               value: {{ $v | quote }}
+              {{- end }}
             {{- end }}
             {{- end }}
             {{- /* One home, checked unconditionally: an env-only DAG_TOOLS_AS_OF_READERS (with

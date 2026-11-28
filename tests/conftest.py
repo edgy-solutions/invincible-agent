@@ -570,7 +570,7 @@ def register_rail(monkeypatch, tmp_path):
 
 
 # ── helm template gets the render-only credential overlay ────────────────────────────────────
-# The chart ships NO default for a credential (0.4.93): an unset client secret or admin password
+# The chart ships NO default for a credential (0.4.94): an unset client secret or admin password
 # stops the render, naming the key. Every test that renders the chart would then fail for a
 # reason it is not about. So `helm template` run from a test gets
 # `-f scripts/values-render-placeholders.yaml` INSERTED right after the word `template`, which

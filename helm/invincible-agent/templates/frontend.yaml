@@ -190,7 +190,11 @@ spec:
             {{- if .Values.cortexBff.env }}
             {{- range $k, $v := .Values.cortexBff.env }}
             - name: {{ $k }}
+              {{- if include "invincible-agent.minioEnvIsDerived" (dict "k" $k "v" $v) }}
+              value: {{ include "invincible-agent.minioEnvValue" (dict "k" $k "root" $) | quote }}
+              {{- else }}
               value: {{ $v | quote }}
+              {{- end }}
             {{- end }}
             {{- end }}
             {{- with .Values.cortexBff.answerPath }}
