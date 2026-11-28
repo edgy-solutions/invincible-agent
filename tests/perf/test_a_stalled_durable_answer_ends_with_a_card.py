@@ -266,6 +266,39 @@ async def test_a_run_queued_past_the_bound_then_stuck_gets_the_card_a_bound_afte
         clock["now"]
 
 
+@pytest.mark.asyncio
+async def test_a_run_admitted_and_never_claimed_gets_the_card_a_bound_after_its_place_went(
+    base, clock, monkeypatch
+):
+    """QUEUED without a place is "admitted and not yet claimed by `run`" (#422). Only a place
+    holds the clock: a run left unclaimed never moves, so it gets the card a bound after its
+    place went, not a wait for ever (gov's J2 and J3, on #594)."""
+    def unclaimed(now):
+        if now >= QUEUED_S + 3 * STALL_S:  # the bound on the drive: an answer it must never reach
+            return {"status": "SUCCESS", "events": [], "steps": [],
+                    "result": {"payload": ANSWER, "referenced_uris": []}}
+        return {"status": "QUEUED", "events": [], "steps": [], "result": None}
+
+    _durable(monkeypatch, _queued_then(unclaimed), clock=clock)
+    blob = await _drive()
+    pairs = _parse(blob)
+    # reach: the place was seen; the stream still reads QUEUED, so it has announced no admission
+    assert [q["position"] for q in _of(pairs, "answer_queued")] == [1], pairs
+    assert _of(pairs, "answer_admitted") == [], pairs
+    finals = _of(pairs, "final_payload")
+    assert len(finals) == 1 and finals[0] != ANSWER, blob[-2000:]
+    md = finals[0]["components"][0]["markdown_content"]
+    assert TRACE in md, md
+    _assert_waited(md)
+    errs = _of(pairs, "pipeline_error")
+    assert [e["cause"] for e in errs] == ["answer_run_stalled"], errs
+    assert errs[0].get("failed_step") is None  # no step ran, and none is invented
+    assert "ui_payload_timeout" not in blob
+    assert base["bundles"][-1]["status"] == "failed"
+    assert QUEUED_S + STALL_S - 2 * POLL_S <= clock["now"] <= QUEUED_S + STALL_S + 2 * POLL_S, \
+        clock["now"]
+
+
 # -- the control ------------------------------------------------------------------------------
 
 @pytest.mark.asyncio
