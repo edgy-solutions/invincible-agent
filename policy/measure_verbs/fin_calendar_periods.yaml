@@ -1,0 +1,6 @@
+# A built-in LOOKUP (ruled 2026-11-25). It answers only from the deployment's declared dataset and
+# fiscal calendar, as the caller, and refuses when no dataset is configured. It computes no amount.
+measure_id: fin_calendar_periods
+source: asset
+name: Fiscal calendar periods
+description: The periods of the declared fiscal calendar in order, with the period the data is reported through marked.

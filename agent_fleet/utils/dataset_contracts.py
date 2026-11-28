@@ -25,6 +25,18 @@ contract at its join, as engine-fin does.
 PERIOD CALENDAR. `period.calendar` (optional) names the declared period calendar the dataset's
 period values are drawn from. The reader resolves it, not this module.
 
+STATUS PERIOD. `status_period` (optional, top level) names the column that carries the period the
+scope's data is reported through. It must be a declared string column, `nullable: false`, and
+declared determined by the scope (a dependency on the scope determines it), so a scope's rows
+carry one value of it; `scope: none` refuses it. The reader holds the shape only: what the value
+marks is the engine's.
+
+HIERARCHY. `hierarchy` (optional, top level) names the breakdown's level columns, top first, below
+the scope: a list of at least two distinct string columns, each `nullable: false`, none the scope or
+personal data, and the LAST declared to determine every other. Nothing more is enforced: a middle
+level's name may repeat under different parents (a work package still has one path). The reader
+holds the shape only. What each level IS (the roles) is the engine's.
+
 VERSION DIMENSION. `version_dimension` (optional) declares `{column, values}`: the versions
 (baselines, estimates) the dataset's rows carry in `column`, in declared order; the column must be in grain. It is NOT the
 top-level `version`, which is the contract's own revision and is not read here. The values are
@@ -122,6 +134,8 @@ class DatasetContract:
     versions: tuple[str, ...] = ()                           # `version_dimension.values`, in order
     period_column: str | None = None                         # `period.column`, else None
     additive_over: dict[str, tuple[str, ...]] = field(default_factory=dict)  # column -> its `additive_over`
+    status_column: str | None = None                         # top-level `status_period`, else None
+    hierarchy: tuple[str, ...] = ()                          # top-level `hierarchy`, top first, else ()
 
     @property
     def scoped(self) -> bool:
@@ -285,11 +299,69 @@ def _parse(raw: dict) -> DatasetContract:
                 raise ValueError(f"period.column {period_column!r} is nullable; a period column is declared "
                                  f"nullable: false")
     version_column, versions = _parse_version(raw.get("version_dimension"), types, key)
+    status_column = _parse_status_period(raw.get("status_period"), types, non_nullable, scope, dependencies)
+    hierarchy = _parse_hierarchy(raw.get("hierarchy"), types, non_nullable, scope, set(personal), dependencies)
     return DatasetContract(contract_id=contract_id, types=types, required=tuple(required),
                            key=key, scope=scope, dependencies=dependencies, rules=dict(rules),
                            non_nullable=tuple(non_nullable), personal=frozenset(personal),
                            calendar=calendar, version_column=version_column, versions=versions,
-                           period_column=period_column, additive_over=additive)
+                           period_column=period_column, additive_over=additive,
+                           status_column=status_column, hierarchy=hierarchy)
+
+
+def _determined_by(dependencies: tuple[tuple[str, tuple[str, ...]], ...], column: str) -> frozenset[str]:
+    return frozenset(by for by, cols in dependencies if column in cols)
+
+
+def _parse_status_period(value: Any, types: dict[str, str], non_nullable: list[str], scope: str | None,
+                         dependencies: tuple[tuple[str, tuple[str, ...]], ...]) -> str | None:
+    """The optional top-level `status_period`: the column naming the period the scope's data is
+    reported through, else None. ValueError names the key and the column."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in types:
+        raise ValueError(f"status_period {value!r} is not a declared column")
+    if types[value] != "string":
+        raise ValueError(f"status_period {value!r} is declared {types[value]!r}; a status period column is a string")
+    if value not in non_nullable:
+        raise ValueError(f"status_period {value!r} is nullable; a status period column is declared nullable: false")
+    if scope is None:
+        raise ValueError(f"status_period {value!r} is declared under `scope: none`; a status period is "
+                         f"one value of a scope, so the contract names its scope")
+    if scope not in _determined_by(dependencies, value):
+        raise ValueError(f"status_period {value!r} is not declared determined by the scope {scope!r}; "
+                         f"a dependency on the scope must determine it")
+    return value
+
+
+def _parse_hierarchy(value: Any, types: dict[str, str], non_nullable: list[str], scope: str | None,
+                     personal: set[str],
+                     dependencies: tuple[tuple[str, tuple[str, ...]], ...]) -> tuple[str, ...]:
+    """The optional top-level `hierarchy`: the breakdown's level columns, top first, below the
+    scope; else `()`. ValueError names the key and the column."""
+    if value is None:
+        return ()
+    if (not isinstance(value, list) or len(value) < 2 or not all(isinstance(c, str) for c in value)
+            or len(set(value)) != len(value)):
+        raise ValueError(f"hierarchy is a list of at least 2 distinct column names; {value!r} is not")
+    for col in value:
+        if col not in types:
+            raise ValueError(f"hierarchy column {col!r} is not a declared column")
+        if types[col] != "string":
+            raise ValueError(f"hierarchy column {col!r} is declared {types[col]!r}; a level column is a string")
+        if col not in non_nullable:
+            raise ValueError(f"hierarchy column {col!r} is nullable; a level column is declared nullable: false")
+        if col == scope:
+            raise ValueError(f"hierarchy column {col!r} is the scope; the levels are below the scope")
+        if col in personal:  # cannot fire today: the reader refuses a personal column in a dependency first
+            # (test_a_nullable_or_personal_hierarchy_column_is_refused); kept as defence.
+            raise ValueError(f"hierarchy column {col!r} is personal data; a level column is never personal")
+    last = value[-1]
+    undetermined = [c for c in value[:-1] if last not in _determined_by(dependencies, c)]
+    if undetermined:
+        raise ValueError(f"hierarchy column {last!r} (the last) is not declared to determine {undetermined}; "
+                         f"the last level determines every other; a middle level's name may repeat under different parents")
+    return tuple(value)
 
 
 def _parse_version(version: Any, types: dict[str, str], key: Any) -> tuple[str | None, tuple[str, ...]]:
@@ -401,18 +473,24 @@ def check_contract_values(df: Any, contract: Any) -> None:
                 raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
 
 
-def check_contract_rows(df: Any, contract: Any) -> None:
+def check_contract_rows(df: Any, contract: Any, *, projected: bool = False) -> None:
     """The values (`check_contract_values`) first, then the key and the dependencies, over the rows
     of one read: one scope value's rows, or the whole asset under `scope: none`. A message names the
-    columns, never a value."""
+    columns, never a value.
+
+    `projected=True` is for a read that selected only the columns it names (engine-fin's lookups).
+    Such a frame may lack the whole key, or a dependency's `by`; those checks then hold over the
+    columns it carries. The default is the whole-row read: a missing key column is an error there,
+    never a skipped check."""
     import polars as pl
 
     check_contract_values(df, contract)
-    if df.select(list(contract.key)).is_duplicated().any():
+    whole_key = not projected or all(k in df.columns for k in contract.key)
+    if whole_key and df.select(list(contract.key)).is_duplicated().any():
         raise ContractViolation("duplicate_key", f"more than one row for one ({', '.join(contract.key)})")
     for by, determined in contract.dependencies:
         present = [c for c in determined if c in df.columns]
-        if not present:
+        if not present or (projected and by not in df.columns):
             continue
         counts = df.group_by(by).agg(pl.col(c).n_unique() for c in present)
         for c in present:

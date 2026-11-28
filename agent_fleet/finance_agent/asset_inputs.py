@@ -710,6 +710,104 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
         status=first[status] if status else None)
 
 
+#: The roles of a contract's `hierarchy` levels (Q4, ruled 2026-11-25): the last column is the work
+#: package and the one above it the control account, both shipped; every column above those is the
+#: deployment's declared WBS depth, which may be none.
+ROLE_WBS, ROLE_CONTROL_ACCOUNT, ROLE_WORK_PACKAGE, ROLE_SCOPE = (
+    "wbs", "control_account", "work_package", "scope")
+
+
+def hierarchy_levels(contract: Any) -> tuple[tuple[str, str], ...]:
+    """`(column, role)` of each level the contract's `hierarchy` declares, top first; empty when it
+    declares none. The ONE place the roles are read: the last two columns are the control account
+    and the work package, every column above them is a WBS level."""
+    columns = tuple(contract.hierarchy)
+    if not columns:
+        return ()
+    roles = [ROLE_WBS] * max(len(columns) - 2, 0) + [ROLE_CONTROL_ACCOUNT, ROLE_WORK_PACKAGE]
+    return tuple(zip(columns, roles[-len(columns):]))
+
+
+def _read_projection(read: Callable[[str], Any], urn: str, *, program_id: str, contract: Any,
+                     columns: tuple[str, ...]) -> Any:
+    """The rows of ONE program, of the named `columns` and no others, collected under `max_rows()`.
+
+    The schema is checked against the contract before a row is collected (`check_contract_schema`),
+    the filter keeps the rows whose scope column is `program_id`, the cap applies before collect,
+    and the contract's value rules are checked after (`check_contract_rows`). Every outcome maps as
+    `read_dataset_series` maps it; an empty frame is `NotInModel`."""
+    import polars as pl
+
+    t0 = time.perf_counter()
+    try:
+        lf = read(urn)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_for_read_failure(exc)
+    t1 = time.perf_counter()
+    try:
+        schema = lf.collect_schema()
+    except Exception as exc:
+        log.warning("asset scan failed: %s", type(exc).__name__)
+        raise AssetUnavailable("the asset could not be scanned") from None
+    named = list(dict.fromkeys(columns))
+    check_contract_schema(schema, contract, tuple(named))
+    cap = max_rows()
+    try:
+        df = lf.filter(pl.col(contract.scope) == program_id).select(named).head(cap + 1).collect()
+    except Exception as exc:
+        log.warning("asset scan failed: %s", type(exc).__name__)
+        raise AssetUnavailable("the asset could not be scanned") from None
+    t2 = time.perf_counter()
+    log.info("asset read ticket_ms=%d scan_ms=%d sql_ms=0 rows=%d bytes=%d urn=%s",
+             round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
+    if df.height > cap:
+        raise AssetTooLarge(cap)
+    if df.height == 0:
+        raise NotInModel(f"the asset holds no rows for program {program_id!r}")
+    check_contract_rows(df, contract, projected=True)
+    return df
+
+
+class CalendarRead(NamedTuple):
+    """What `read_calendar_status` returns: the declared calendar, and the status period the data
+    reports (None when the contract declares no status column)."""
+    calendar: Any
+    status: Optional[str]
+    status_column: Optional[str]
+
+
+def read_calendar_status(read: Callable[[str], Any], urn: str, *, program_id: str,
+                         contract: Any) -> CalendarRead:
+    """ONE governed read for the calendar lookup, as the caller: the scope column, and the
+    contract's status column when it declares one. The read is made even when it declares none,
+    because the caller's access to the program's data is what the answer is gated on. A status
+    value outside the declared calendar is `period_outside_calendar`; an undeclared calendar is
+    `NotInModel`, naming the declaration."""
+    try:
+        calendar = _fiscal_calendar.calendar_for(contract.calendar)
+    except _fiscal_calendar.FiscalCalendarError as exc:
+        raise NotInModel(str(exc)) from None
+    sc = contract.status_column
+    df = _read_projection(read, urn, program_id=program_id, contract=contract,
+                          columns=(contract.scope, *((sc,) if sc else ())))
+    status = df[sc][0] if sc else None
+    if status is not None and status not in calendar.labels:
+        raise ContractViolation("period_outside_calendar", "a period outside the fiscal calendar")
+    return CalendarRead(calendar, status, sc)
+
+
+def read_hierarchy_rows(read: Callable[[str], Any], urn: str, *, program_id: str,
+                        contract: Any) -> tuple[tuple[str, ...], ...]:
+    """ONE governed read for the hierarchy lookup, as the caller: the scope column and the
+    contract's hierarchy columns, and no other (no amount is selected). Returns the distinct
+    tuples of the hierarchy columns, top level first."""
+    df = _read_projection(read, urn, program_id=program_id, contract=contract,
+                          columns=(contract.scope, *contract.hierarchy))
+    return tuple(df.select(list(contract.hierarchy)).unique().iter_rows())
+
+
 def require_grant(read: Callable[[str], Any], urn: str) -> None:
     """Refuse unless the caller may read `urn`: the ticket `read_rows` takes first (the client's
     `get_dataframe_with_ticket` asks the gateway's `/authorize` before it returns a frame), and

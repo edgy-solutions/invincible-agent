@@ -68,7 +68,10 @@ period:  # [optional]
   calendar: us_federal_fy26  # [optional] [ev_fixture]
 # The period the program is reported through. Named here so a time-phased row can mark it from
 # data; never a constant in a measure row.
-status_period: status_period  # [unread] [ev_fixture]
+status_period: status_period  # [optional] [ev_fixture]
+# The breakdown's level columns, top first, below the scope: the control account, then the work
+# package. The last determines the others (the dependency on `work_package` above).
+hierarchy: [control_account, work_package]  # [optional] [ev_fixture]
 
 # `nullable: false`: a null in the column refuses `null_value` on every read, named by the row or
 # not (ruled 2026-11-16). Absent: it may be null.

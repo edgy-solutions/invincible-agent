@@ -1,0 +1,6 @@
+# A built-in LOOKUP (ruled 2026-11-25). It answers only from the deployment's declared dataset and its
+# contract's `hierarchy`, as the caller, and refuses when no dataset is configured. No amount.
+measure_id: fin_hierarchy_children
+source: asset
+name: Breakdown children
+description: The children of a named element of the program's breakdown, one level down or to a stated depth, down to the work package.

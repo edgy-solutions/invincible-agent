@@ -24,7 +24,7 @@ for _p in (REPO, REPO / "src", REPO / "scripts"):
         sys.path.insert(0, str(_p))
 
 from agent_fleet.finance_agent import main as engine  # noqa: E402
-from agent_fleet.finance_agent import measures  # noqa: E402
+from agent_fleet.finance_agent import lookups, measures  # noqa: E402
 from iagent.canvas_template import load_template, panel_dispatch  # noqa: E402
 
 PROGRAM = "NP-MERIDIAN"
@@ -142,6 +142,11 @@ def test_1_member_runs_every_verb_non_member_is_refused(double, measured, client
     assert fns, "the verb table is empty"
     for fn in fns:
         r = client.post(f"/measure/{fn}", json={"params": _params(fn), "user_email": ALICE})
+        if fn in lookups.LOOKUP_FNS:
+            # asset-only (ruled 2026-11-25): with no dataset here a member reaches the lookup and is
+            # told so (422 no_dataset or the missing slot), never refused as a non-member (403)
+            assert r.status_code == 422, f"{fn}: {r.text[:200]}"
+            continue
         assert r.status_code == 200, f"{fn}: {r.text[:200]}"
     assert [c[0] for c in measured] == fns
     measured.clear()
