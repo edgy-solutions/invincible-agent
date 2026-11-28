@@ -443,6 +443,10 @@ async def test_an_answer_queued_for_admission_shows_waiting_from_the_queue_to_it
     done = seq.index(("stage", "waiting", "completed", "queued"))
     assert start < seq.index(("answer_queued",)) < done < seq.index(("answer_admitted",)), seq
     assert ("stage", "waiting", "failed", "queued") not in seq, seq
+    # cortex names the first stage still loading: `understanding` must not be open through the
+    # queue, so it starts only once the answer is admitted (cortex's point 3)
+    und = [i for i, e in enumerate(seq) if e[:3] == ("stage", "understanding", "started")]
+    assert len(und) == 1 and und[0] > done, seq
 
 
 @pytest.mark.asyncio
@@ -461,7 +465,11 @@ async def test_an_admission_wait_that_cannot_be_read_fails_the_waiting_stage(
     m = mesh_env(on_post=after)
     monkeypatch.setattr(gw, "_DURABLE_ANSWERS", DurableAnswers(
         "http://ingress", client_factory=m.client, snapshot_ttl_s=0.0))
-    seq = _reasoned(await asyncio.wait_for(_stream(m), 10))
+    blob = await asyncio.wait_for(_stream(m), 10)
+    seq = _reasoned(blob)
     failed = seq.index(("stage", "waiting", "failed", "queued"))
     assert failed < seq.index(("pipeline_error",)), seq
     assert ("stage", "waiting", "completed", "queued") not in seq, seq
+    # the refusal is bound to the stage it ended in; the question was never understood
+    assert [e["kind"] for e in _of(_parse(blob), "pipeline_error")] == ["waiting"], blob[-2000:]
+    assert not [e for e in seq if e[:2] == ("stage", "understanding")], seq

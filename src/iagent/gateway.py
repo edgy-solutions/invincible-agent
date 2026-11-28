@@ -10505,7 +10505,7 @@ _LOST_MESSAGE = ("Your question was waiting for its turn when the answer service
 def _lost_error() -> str:
     """The refusal for an answer that lost its place in a restart (ruled 2026-11-24): never an
     admission, and the queue is not rebuilt."""
-    return _perror(_LOST_MESSAGE, kind="understanding", retryable=True,
+    return _perror(_LOST_MESSAGE, kind="waiting", retryable=True,
                    cause="answer_admission_lost")
 
 
@@ -10522,7 +10522,7 @@ def _unreadable_error(trace_id: str | None) -> str:
     """The refusal for a queued answer whose place could not be read for the gate's waiter-idle
     time (gov's finding on #422): not admitted, no model call. Its wait with GOOD reads has no
     ceiling (ADR-0072 5); only an unreadable one ends."""
-    return _perror(_UNREADABLE_MESSAGE, kind="understanding", retryable=True,
+    return _perror(_UNREADABLE_MESSAGE, kind="waiting", retryable=True,
                    cause="answer_admission_unreadable", failed_step="admission",
                    trace_id=trace_id or None)
 
@@ -10583,12 +10583,12 @@ async def _generate_dagster_stream_inner(
     session_id = request.session_id
     user_query = request.message
 
-    # Option A: typed pipeline_stage "understanding" started. The
-    # gateway's /route_intent call is real gateway-level routing work
-    # (intent extraction + persona/domain bounding), not a shortcut
-    # around Dagster. Dagster launches AFTER this returns; its stages
-    # take over from "locating" onward.
-    yield _stage("understanding", "started")
+    # Option A: typed pipeline_stage "understanding". The gateway's /route_intent call is real
+    # gateway-level routing work (intent extraction + persona/domain bounding), not a shortcut
+    # around Dagster. Dagster launches AFTER this returns; its stages take over from "locating"
+    # onward. It STARTS where the routing branch is chosen, and on the durable path only AFTER
+    # admission: an answer waiting its turn shows `waiting`, never "understanding" (cortex
+    # names the first stage still loading). A refusal bound to it before then starts it first.
 
     # 0. Check if there is an active Process Creation Interview in Restate.
     # When a session is mid-interview, every subsequent message goes back
@@ -10767,6 +10767,7 @@ async def _generate_dagster_stream_inner(
     # the honest answer is a visible failure, never a silent slide into `/route_intent` on a
     # message that was only ever a label for logs.
     if _is_seed_panel_turn and not _pre_resolved:
+        yield _stage("understanding", "started")
         yield _perror(
             "this template's panel declares no subject, so it cannot be dispatched directly",
             kind="understanding",
@@ -10776,6 +10777,7 @@ async def _generate_dagster_stream_inner(
         yield _sse("stream_end", "{}")
         return
     if _is_askable_pick_turn and not _pre_resolved:
+        yield _stage("understanding", "started")
         # Like seed_panel: the message is only a label, so there is nothing to route instead.
         yield _perror(
             "this askable measure is no longer on the list, so it cannot be dispatched directly",
@@ -10868,6 +10870,7 @@ async def _generate_dagster_stream_inner(
     intent_extraction: dict = {}
 
     if is_interview_active:
+        yield _stage("understanding", "started")
         mode = "CONVERSATIONAL"
     elif _pre_resolved:
         # THE FOURTH MODEL CALL, and the one the first pass missed. `/route_intent` runs
@@ -10884,6 +10887,7 @@ async def _generate_dagster_stream_inner(
         #
         # The lookup moved ABOVE this block to make the skip possible; it reads the ask under
         # the caller's own ownership edge and needs nothing from the extraction.
+        yield _stage("understanding", "started")
         mode = "ONE_SHOT"
     else:
         # ADMISSION COMES BEFORE INTENT EXTRACTION (ruled 2026-11-16). `/route_intent` is a model
@@ -10904,6 +10908,7 @@ async def _generate_dagster_stream_inner(
                 _decision = _rv.get("decision")
                 if _decision == "busy":
                     _res["id"] = None       # a refusal holds nothing
+                    yield _stage("understanding", "started")
                     yield _busy_error(_rv.get("queue_max"))
                     # What the run-level BUSY refusal writes: a failed artifact. Written
                     # BEFORE stream_end, so a client that closes on stream_end cannot
@@ -10972,6 +10977,7 @@ async def _generate_dagster_stream_inner(
                     yield _sse("answer_admitted", json.dumps({
                         "run_id": _rid,
                         "waited_ms": int((_admission_clock() - _wq_t0) * 1000)}))
+        yield _stage("understanding", "started")
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(
