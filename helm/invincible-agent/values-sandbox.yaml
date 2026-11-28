@@ -200,6 +200,16 @@ agentFleet:
     # are RESERVED for goat-yard-archive production work and MUST NOT
     # appear in this project's values files. Only ai1 (.126) and ai2
     # (.169) are valid LLM hosts here. See memory/project_inference_hosts.md.
+    #
+    # LARGE-MODEL RULE (the architect, via Chris, 2026-11-28): a model of
+    # 14 GB or more is not called on the mem0 host (MEM0_OLLAMA_BASE_URL)
+    # without Chris's word first. That server is shared, and a model that
+    # size evicts another project's model. phi4-16k:14b is such a model
+    # (Chris's figure, 14 GB; the ~9 GB above is superseded). Today mem0
+    # calls only the embedder there: every fleet m.add passes infer=False
+    # and no search reranks, so MEM0_LLM_MODEL is configured but never
+    # called. tests/test_mem0_never_calls_its_llm.py holds that. A change
+    # that would call it goes to Chris before it merges.
     MEM0_LLM_MODEL: "phi4-16k:14b"
     MEM0_LLM_PROVIDER: "ollama"
     MEM0_OLLAMA_BASE_URL: "http://192.168.1.169:11434"
