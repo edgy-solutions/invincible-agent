@@ -200,13 +200,14 @@ spec:
     {{- include "invincible-agent.selectorLabels" (dict "component" $name "root" $) | nindent 4 }}
 {{- end }}{{/* end $codeLocationEnabled */}}
 {{- if $brokerEnabled }}
-{{- /* The source types the PINNED broker image registers an as-of reader for. Empty at the
-     current pin, because `dag_tools.domain_broker.ticket_identity.AS_OF_READERS` ships empty.
+{{- /* The source types the PINNED broker image registers an as-of reader for. At v0.20.0,
+     `dag_tools.domain_broker.ticket_identity.AVAILABLE_AS_OF_READERS` is built from
+     `as_of_readers.SHIPPED_AS_OF_READERS`: postgres and s3_parquet.
      It moves only in the commit that moves the broker image pin, copied from the set dag-tools
      exports (`AVAILABLE_AS_OF_READERS`: the one table that the broker's start-time check and its
      /health also read; a second list here would let the three disagree silently).
      Deliberately not a values key, so a deployment cannot widen it. */}}
-{{- $asOfRegistered := list }}
+{{- $asOfRegistered := list "postgres" "s3_parquet" }}
 ---
 # ---------------------------------------------------------------------------
 # {{ $name }} — Broker (same image, runs dag_tools.domain_broker)

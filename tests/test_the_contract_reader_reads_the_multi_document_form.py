@@ -46,7 +46,7 @@ def _load(tmp_path, doc, cid="demo"):
 
 
 def test_the_template_parses_whole():
-    """A verbatim copy for the parser's seal (dag-tools v0.17.0, commit a85c5f99, unchanged since
+    """A verbatim copy for the parser's seal (dag-tools v0.19.0, commit 02e3db2e, unchanged since
     v0.16.1); Lane 1's CI check pins the live template."""
     got = dc.load_contracts(TEMPLATE)
     assert list(got) == [f"mfg_trace.{i}" for i in IDS]
