@@ -10531,12 +10531,13 @@ def _unreadable_error(trace_id: str | None) -> str:
                    trace_id=trace_id or None)
 
 
-def _busy_error(queue_max) -> str:
+def _busy_error(queue_max, kind: str = "understanding") -> str:
     """The one refusal the admission gate gives a full queue (ruled 2026-11-16), whether the BFF
-    learns it at reserve time or from the run's own snapshot."""
+    learns it at reserve time or from the run's own snapshot. `kind` is the stage it ends: at
+    reserve time `understanding`, from the run's snapshot the `waiting` that was open."""
     return _perror(
         _busy_message(queue_max),
-        kind="understanding",
+        kind=kind,
         retryable=True,
         cause="answer_busy_queue_full",
     )
@@ -11110,14 +11111,13 @@ async def _generate_dagster_stream_inner(
         return
 
     # 🟢 THE GRAPH PATH (DAGSTER)
-    # /route_intent has returned. Mark "understanding" complete. On the direct path (a
-    # pre-resolved route) move to "locating" at once. On the run path nothing is being located
-    # yet: the run has not been launched, and the time until its first step is queue and launch
-    # time. That is the "waiting" stage, started before the launch, and "locating" starts when
-    # the first step shows (the supervisor's create_task_plan step runs /plan and /resolve).
+    # /route_intent has returned. Mark "understanding" complete. "locating" starts ONCE: on the
+    # direct path (a pre-resolved route) when the dispatch has answered, ahead of its buffered
+    # stages; on the run path when the first step shows (the supervisor's create_task_plan step
+    # runs /plan and /resolve). Until then nothing is being located: the time until the first
+    # step is queue and launch time, the "waiting" stage, started before the launch. A direct
+    # dispatch that declines falls back to the run path having opened no "locating".
     yield _stage("understanding", "completed")
-    if _pre_resolved:
-        yield _stage("locating", "started")
 
     # ── Hop 1 of projector build plan (docs/plans/projector-build-plan.md
     # commit 0eda9f7) — accumulate the AnswerArtifact bundle as the SSE
@@ -11326,6 +11326,8 @@ async def _generate_dagster_stream_inner(
         # each stage carries the elapsed time actually measured at its own boundary rather
         # than a timeline composed here.
         if _direct is not None:
+            if _direct.kind in (direct_dispatch.ROUTED, direct_dispatch.ABSTAIN):
+                yield _stage("locating", "started")     # the direct path answers: its one start
             for _ev in _direct_stage_events():
                 yield _ev
 
@@ -11610,10 +11612,10 @@ async def _generate_dagster_stream_inner(
     # counted: not paused, and not queued with a place. Inactive when the backend has no `poll_s`.
     _ceiling_s = _ab.max_ticks * _ab.poll_s
     _used_s = 0.0
-    _t_last = _stall_clock()
     _uncounted_before = False   # the last tick did not count: the deadline moves when one does
     _waiting_open = True        # the "waiting" stage, open from the launch to the first step
     _expected = await _expected_ms(user_id)
+    _t_last = _stall_clock()    # after the read: its time (up to its timeout) is not a tick's
 
     def _answer_timing() -> str:
         _elapsed = int((_stall_clock() - _t_birth) * 1000)
@@ -11672,13 +11674,16 @@ async def _generate_dagster_stream_inner(
                 # the service restarted (ruled 2026-11-24): refused, asked to ask again.
                 VAULT.close(run_id)
                 _busy = status_data.get("busy") or {}
+                # An error names the stage it ends: the open `waiting`, when no step has shown.
+                _in_wait = _waiting_open
                 if _waiting_open:
                     _waiting_open = False
                     yield _stage("waiting", "failed")
                 if _busy.get("reason") == "restarted":
                     yield _lost_error()
                 else:
-                    yield _busy_error(_busy.get("queue_max"))
+                    yield _busy_error(_busy.get("queue_max"),
+                                      kind="waiting" if _in_wait else "understanding")
                 _artifact_bundle["status"] = "failed"
                 break
             if _last_status == "QUEUED":
@@ -11728,12 +11733,13 @@ async def _generate_dagster_stream_inner(
                     "failed_step": _f.get("failed_step") or None,
                     "trace_id": _f.get("trace_id") or trace_id or None,
                 }
+                _in_wait = _waiting_open
                 if _waiting_open:
                     _waiting_open = False
                     yield _stage("waiting", "failed")
                 yield _perror(
                     "Pipeline failed.",
-                    kind="retrieving",
+                    kind="waiting" if _in_wait else "retrieving",
                     retryable=False,
                     cause="session_expired" if _session_expired else _ab.failed_cause,
                     failed_step=_run_failure["failed_step"],
@@ -11770,12 +11776,13 @@ async def _generate_dagster_stream_inner(
                         "trace_id": _f.get("trace_id") or trace_id or None,
                         "stalled_s": int(_now - _watch.since),
                     }
+                    _in_wait = _waiting_open
                     if _waiting_open:
                         _waiting_open = False
                         yield _stage("waiting", "failed")
                     yield _perror(
                         "The answer stopped making progress.",
-                        kind="retrieving",
+                        kind="waiting" if _in_wait else "retrieving",
                         retryable=False,
                         cause="answer_run_stalled",
                         failed_step=_run_failure["failed_step"],
@@ -12191,12 +12198,13 @@ async def _generate_dagster_stream_inner(
         yield _sse("final_payload", json.dumps(_card))
     elif _last_status != "BUSY":
         # A BUSY refusal has already said why (the queue is full); no second, generic error.
+        _in_wait = _waiting_open
         if _waiting_open:   # the ceiling came and no step ever showed: the wait itself failed
             _waiting_open = False
             yield _stage("waiting", "failed")
         yield _perror(
             "Timeout or failed to fetch UI payload.",
-            kind="composing",
+            kind="waiting" if _in_wait else "composing",
             retryable=True,
             cause="ui_payload_timeout",
         )
