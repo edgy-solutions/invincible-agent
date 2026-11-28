@@ -157,7 +157,7 @@ spec:
               containerPort: 7687
           env:
             - name: NEO4J_AUTH
-              value: "{{ .Values.neo4j.auth.username }}/{{ .Values.neo4j.auth.password }}"
+              value: "{{ .Values.neo4j.auth.username }}/{{ .Values.neo4j.auth.password | required "neo4j.auth.password is unset: the chart ships no default for this credential; set it in a values file kept out of git" }}"
             - name: NEO4J_PLUGINS
               value: '["apoc", "n10s"]'
           volumeMounts:
@@ -318,7 +318,7 @@ spec:
               containerPort: 3030
           env:
             - name: ADMIN_PASSWORD
-              value: "{{ .Values.fuseki.auth.adminPassword }}"
+              value: "{{ .Values.fuseki.auth.adminPassword | required "fuseki.auth.adminPassword is unset: the chart ships no default for this credential; set it in a values file kept out of git" }}"
           volumeMounts:
             - name: data
               # PERSIST the TDB2 dataset — NOT /fuseki (the PVC was mounted there but the image's

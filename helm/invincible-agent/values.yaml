@@ -1195,8 +1195,8 @@ minioBucketInit:
   # bottom of this file. Chart 0.3.0 retired the legacy
   # `global.images.mc` key + `minioBucketInit.image` string.
   endpoint: "http://iagent-minio:9000"
-  accessKey: "minio-sandbox"
-  secretKey: "minio-sandbox-secret"
+  accessKey: ""
+  secretKey: ""
   # Buckets to ensure exist. Order doesn't matter (each is mc-mb'd
   # idempotently). Add new entries when a new user-deployment needs
   # a bucket.
@@ -1254,8 +1254,8 @@ userDeployments:
       # relocated to the dag-tools user-deployment (2026-06-26); only
       # publog-relevant config stays here.
       env:
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # Every name here must be one pub-tools' code reads; the chart
@@ -1301,8 +1301,8 @@ userDeployments:
       # Defaults to http://<release>-central-gateway:8090 when unset.
       # centralGatewayUrl: ""
       env:
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # The broker loads the same Definitions, so it reads the same name.
@@ -1344,8 +1344,8 @@ userDeployments:
         # here matches the sandbox-friendly defaults pattern in this
         # file; production values files MUST override to "false".
         DAG_TOOLS_DEMO_MODE: "true"
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # New bucket for dag-tools-owned demo content. Replaces
@@ -1392,8 +1392,8 @@ userDeployments:
         # Broker reads the same demo flag so its physical_coordinates
         # advertisements match the code-location's writes.
         DAG_TOOLS_DEMO_MODE: "true"
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         DAG_TOOLS_DEMO_S3_BUCKET: "dag-lake"
@@ -2231,7 +2231,7 @@ neo4j:
     tag: "5.26.0"
   auth:
     username: "neo4j"
-    password: "changeme"
+    password: ""
   persistence:
     enabled: true
     storageClass: ""
@@ -2240,7 +2240,7 @@ neo4j:
 externalNeo4j:
   uri: ""     # e.g. "bolt://my-neo4j.infra.svc:7687"
   username: "neo4j"
-  password: "changeme"
+  password: ""   # required when neo4j.enabled is false: the chart ships no default for it
 
 weaviate:
   enabled: true
@@ -2282,7 +2282,7 @@ fuseki:
     repository: "secoresearch/fuseki"
     tag: "5.5.0"   # pin to sandbox-tested + mirrored version (was "latest" — no :latest exists in the airgapped mirror)
   auth:
-    adminPassword: "changeme-fuseki"
+    adminPassword: ""
   persistence:
     enabled: true
     storageClass: ""
@@ -2327,7 +2327,7 @@ keycloak:
     tag: "26.6.4"   # pin to the version the LIVE sandbox runs (its :latest resolves to 26.6.4); mirror must push 26.6.4 too
   auth:
     adminUser: "admin"
-    adminPassword: "changeme-keycloak"
+    adminPassword: ""
   realm: "invincible-agent"
   # Client secret for the iagent-review-starter service account (the extraction->review sensor's
   # client-credentials identity). This ONE value feeds BOTH the client `secret` in the realm import
@@ -2635,51 +2635,54 @@ keycloak:
   extraServiceClients: []
 
   # Registration identity for engine-lg, the graph host (see serviceClients above).
-  graphHostClientSecret: "sandbox-graph-host-secret"
+  # EVERY *ClientSecret BELOW IS UNSET ON PURPOSE: the chart ships no default for a client secret, and the render FAILS
+  # naming the key when one is unset (templates/secrets.yaml, keycloak-configmap.yaml). Set all 16 in a values file kept
+  # out of git (values-<env>.secret.yaml). A comment below that says "placeholder" or "dev value" predates this.
+  graphHostClientSecret: ""
 
   # Registration identity for engine-d (see serviceClients above).
-  engineDClientSecret: "sandbox-engine-d-secret"
+  engineDClientSecret: ""
   # Registration identity for engine-e (see serviceClients above).
-  engineEClientSecret: "sandbox-engine-e-secret"
+  engineEClientSecret: ""
   # Registration identity for engine-o (see serviceClients above).
-  engineOClientSecret: "sandbox-engine-o-secret"
+  engineOClientSecret: ""
   # Registration identity for engine-w (see serviceClients above).
-  engineWClientSecret: "sandbox-engine-w-secret"
-  reviewStarterClientSecret: "sandbox-review-starter-secret"
+  engineWClientSecret: ""
+  reviewStarterClientSecret: ""
   # Engine P's service-account client secret (iagent-planning-agent). Same contract as the
   # engines above: a PLACEHOLDER in the tracked file, overridden by values-sandbox.secret.yaml.
-  planningAgentClientSecret: "sandbox-planning-agent-secret"
+  planningAgentClientSecret: ""
   # Engine F's service-account client secret (iagent-finance-agent). Same contract as the
   # engines above: a PLACEHOLDER in the tracked file, overridden per deployment. This ONE
   # value feeds BOTH the realm import's `secret` and ENGINE_FIN_CLIENT_SECRET in the Secret,
   # so the two cannot drift.
-  financeAgentClientSecret: "sandbox-finance-agent-secret"
+  financeAgentClientSecret: ""
   # engine-safety's service-account client secret (iagent-safety-agent). PLACEHOLDER in the
   # tracked file, overridden per deployment. This ONE value feeds BOTH the realm import's
   # `secret` and ENGINE_SAFETY_CLIENT_SECRET in the Secret, so the two cannot drift — which is
   # the failure that costs a silent 401 on registration while every probe stays green.
-  safetyAgentClientSecret: "sandbox-safety-agent-secret"
+  safetyAgentClientSecret: ""
 
   # engine-docs' service-account client secret (iagent-docs-agent). PLACEHOLDER in the chart and
   # overridden per deployment — a secret with a real value in a values file is a secret in git.
-  docsAgentClientSecret: "sandbox-docs-agent-secret"
+  docsAgentClientSecret: ""
   # engine-cost's service-account client secret (iagent-cost-agent). PLACEHOLDER in the
   # tracked file, overridden per deployment. This ONE value feeds BOTH the realm import's
   # `secret` and ENGINE_COST_CLIENT_SECRET in the Secret, so the two cannot drift.
-  costAgentClientSecret: "sandbox-cost-agent-secret"
+  costAgentClientSecret: ""
   # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
   # review starter's above — this value AND the realm import's `secret` come from here, so
   # they cannot drift. Override per deployment (a real secret at work); the sandbox default
   # is a dev value, not sensitive. Reaches DA as CORTEX_CLIENT_SECRET.
-  dataAnalystClientSecret: "sandbox-data-analyst-secret"
+  dataAnalystClientSecret: ""
   # Supervisor dispatch identity — reaches the supervisor as SUPERVISOR_CLIENT_SECRET.
-  supervisorClientSecret: "sandbox-supervisor-secret"
+  supervisorClientSecret: ""
   # Engine A process credential — reaches engine-a as ENGINE_A_CLIENT_SECRET.
-  engineAClientSecret: "sandbox-engine-a-secret"
+  engineAClientSecret: ""
   # doc-tools transport identity. Consumed by the SEPARATE doc-tools release as
   # DOC_TOOLS_CLIENT_SECRET — set the same value in doc-tools' chart, or its semantic_linker
   # mints nothing (silently, under OBSERVE) and 401s the moment REQUIRE lands.
-  docToolsClientSecret: "sandbox-doc-tools-secret"
+  docToolsClientSecret: ""
   service:
     type: ClusterIP
     port: 8080

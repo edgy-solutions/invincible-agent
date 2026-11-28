@@ -114,7 +114,7 @@
   ghcr.io/docker.io, and they are OCI index digests, which Artifactory
   rejects (see "WHY" above), so the digest Artifactory holds is the
   child's. Pass it after your Artifactory overlay, then check the render:
-    helm template ... -f values-artifactory.yaml -f values-artifactory-digests-<version>.yaml |
+    helm template ... -f scripts/values-render-placeholders.yaml -f values-artifactory.yaml -f values-artifactory-digests-<version>.yaml |
       python scripts/seal_image_digests.py
   A key that misses (the overlay renders a different registry/repository
   split than the destination path) shows up there as an image on a tag.

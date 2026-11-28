@@ -231,7 +231,7 @@ data:
               "standardFlowEnabled": false,
               "directAccessGrantsEnabled": false,
               {{- if $c.secretRef }}
-              "secret": {{ get $.Values.keycloak $c.secretRef | quote }},
+              "secret": {{ get $.Values.keycloak $c.secretRef | required (printf "keycloak.%s is unset: client %s names it as its secretRef and the chart ships no default; set it in a values file kept out of git" $c.secretRef $c.clientId) | quote }},
               {{- end }}
               "protocolMappers": [
                   {

@@ -1,5 +1,12 @@
 """THE CHART MUST RENDER WITH NO VALUES FILE — because that is what every tool assumes.
 
+BARE NOW MEANS BARE PLUS THE RENDER-ONLY OVERLAY (0.4.94). The chart ships no default for a
+credential (tests/test_no_credential_default_chart.py), so with no values file at all it refuses and
+names the key. Every `helm template` this suite runs is given scripts/values-render-placeholders.yaml
+by tests/conftest.py; what these tests prove is that nothing ELSE is missing: no key a template
+reads that values.yaml never declared. The unqualified claim below held until the credential keys
+were emptied, and it is no longer true of the bare chart.
+
 `helm template helm/invincible-agent` FAILED on bare defaults, and had for some time:
 
     dagster.yaml:131            .Values.dagster.daemon.image.registry     nil

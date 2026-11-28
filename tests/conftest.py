@@ -567,3 +567,35 @@ def register_rail(monkeypatch, tmp_path):
 
     write([])
     return write
+
+
+# ── helm template gets the render-only credential overlay ────────────────────────────────────
+# The chart ships NO default for a credential (0.4.94): an unset client secret or admin password
+# stops the render, naming the key. Every test that renders the chart would then fail for a
+# reason it is not about. So `helm template` run from a test gets
+# `-f scripts/values-render-placeholders.yaml` INSERTED right after the word `template`, which
+# puts it first: any `-f` or `--set` the test passes after it still wins. The overlay is
+# render-only (its own header says never to deploy it).
+# A test that must see the bare refusal sets IAGENT_NO_RENDER_OVERLAY=1 in its own environment
+# (tests/test_no_credential_default_chart.py does). Patched at Popen so run / check_output /
+# call are all covered, and at import so a module-scoped fixture is covered too.
+import subprocess as _subprocess  # noqa: E402
+
+_RENDER_OVERLAY = str(Path(__file__).resolve().parents[1] / "scripts" / "values-render-placeholders.yaml")
+_real_popen_init = _subprocess.Popen.__init__
+
+
+def _popen_init_with_overlay(self, args, *a, **kw):  # noqa: D103
+    if (
+        isinstance(args, (list, tuple))
+        and len(args) >= 2
+        and Path(str(args[0])).stem.lower() == "helm"
+        and args[1] == "template"
+        and not os.environ.get("IAGENT_NO_RENDER_OVERLAY")
+        and _RENDER_OVERLAY not in map(str, args)
+    ):
+        args = [args[0], "template", "-f", _RENDER_OVERLAY, *args[2:]]
+    return _real_popen_init(self, args, *a, **kw)
+
+
+_subprocess.Popen.__init__ = _popen_init_with_overlay  # type: ignore[method-assign]

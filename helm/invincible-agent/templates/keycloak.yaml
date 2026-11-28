@@ -45,7 +45,7 @@ spec:
             - name: KEYCLOAK_ADMIN
               value: "{{ .Values.keycloak.auth.adminUser }}"
             - name: KEYCLOAK_ADMIN_PASSWORD
-              value: "{{ .Values.keycloak.auth.adminPassword }}"
+              value: "{{ .Values.keycloak.auth.adminPassword | required "keycloak.auth.adminPassword is unset: the chart ships no default for this credential; set it in a values file kept out of git" }}"
             - name: KC_DB
               value: dev-file
             {{- if .Values.keycloak.ingress.enabled }}

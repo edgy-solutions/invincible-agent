@@ -424,7 +424,11 @@ data:
   # Shared Agent Fleet Configs
   {{- if .Values.agentFleet.env }}
   {{- range $k, $v := .Values.agentFleet.env }}
+  {{- if include "invincible-agent.minioEnvIsDerived" (dict "k" $k "v" $v) }}
+  {{ $k }}: {{ include "invincible-agent.minioEnvValue" (dict "k" $k "root" $) | quote }}
+  {{- else }}
   {{ $k }}: {{ $v | quote }}
+  {{- end }}
   {{- end }}
   {{- end }}
   {{- /* Registrar auto-wiring — enabling the mesh-registrar DEPLOYMENT

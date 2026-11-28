@@ -156,8 +156,8 @@ agentFleet:
     # http://localhost:9000/ontologies". iagent-minio is the in-cluster svc; these
     # are sandbox test creds (same values cortexBff.env already carries in plaintext).
     MINIO_ENDPOINT_URL: "http://iagent-minio:9000"
-    MINIO_ACCESS_KEY: "minio-sandbox"
-    MINIO_SECRET_KEY: "minio-sandbox-secret"
+    MINIO_ACCESS_KEY: ""
+    MINIO_SECRET_KEY: ""
 
     # External DataHub web UI (Phase 3 follow-up 2026-06-24).
     # When set, datahub_wrapper's /query_metadata response includes
@@ -436,7 +436,7 @@ neo4j:
   enabled: true
   auth:
     username: "neo4j"
-    password: "changeme-neo4j-sandbox"  # CHANGE — must match agentFleet.secrets.NEO4J_PASSWORD
+    # password: in values-sandbox.secret.yaml (neo4j.auth.password); the chart ships no default (0.4.94 upgrade note).
   persistence:
     size: 5Gi  # sandbox — half the default
 
@@ -447,8 +447,7 @@ weaviate:
 
 fuseki:
   enabled: true
-  auth:
-    adminPassword: "changeme-fuseki-sandbox"
+  # auth.adminPassword: in values-sandbox.secret.yaml (fuseki.auth.adminPassword); the chart ships no default.
   persistence:
     size: 2Gi
 
@@ -601,11 +600,9 @@ keycloak:
       onBehalfOf:
         - user: platform-registrar
           role: operator
-  # Case runner's client secret — read by templates/secrets.yaml's CASE_RUNNER_CLIENT_SECRET
-  # projection (hasKey-guarded, same fallback literal) and by the realm reconcile/configmap
-  # templates via secretRef above (`get $.Values.keycloak $c.secretRef`), so both sides of the
-  # mint agree on one value rather than drifting.
-  caseRunnerClientSecret: "sandbox-case-runner-secret"
+  # Case runner's client secret (keycloak.caseRunnerClientSecret) is NOT here: the chart ships no default, so it is
+  # declared in values-sandbox.secret.yaml with the other client secrets and credentials (see the 0.4.94 upgrade note).
+  # templates/secrets.yaml's CASE_RUNNER_CLIENT_SECRET projection and the realm import both read that one value.
   # ADMIN CREDENTIALS ARE DECLARED IN values-sandbox.secret.yaml — NOT HERE.
   #
   # This block used to say `adminPassword: "changeme-keycloak-sandbox"  # CHANGE`, and that
@@ -841,8 +838,8 @@ cortexBff:
   # name; production would point at a TLS-terminated ingress.
   env:
     MINIO_ENDPOINT_URL: "http://iagent-minio:9000"
-    MINIO_ACCESS_KEY: "minio-sandbox"
-    MINIO_SECRET_KEY: "minio-sandbox-secret"
+    MINIO_ACCESS_KEY: ""
+    MINIO_SECRET_KEY: ""
     MINIO_REGION: "us-east-1"
     # Steward corrections (row_edits) on a document_promotion. OFF until one live correction is
     # proven; then this and cortexUi.env.VITE_REVIEW_ROW_EDITS go "true" together. Only the exact
