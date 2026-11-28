@@ -14,6 +14,7 @@
   - **New setting (0.18.0): `BROKER_UNMINTED_POSTURE`.** It decides whether the broker refuses a ticket it did not mint. The default is `observe` (today's behaviour, plus counts in `/health`), and the chart doesn't set it.
   - **As-of readers ship (0.19.0), and none is selected.** `DAG_TOOLS_AS_OF_READERS` stays unset unless a deployment names a type in `asOf.readers`.
   - **Breaking change (0.20.0): a dlt asset-group config now refuses an unknown key.** dag-tools is now 0.20.0. An unknown key in a dlt asset-group config (`DltAssetGroupConfig`) is refused at load rather than ignored, so a config with a stale or misspelt key fails where it used to pass silently. This repo ships no dlt pipeline config, so nothing here carries such a key; a deployment that supplies its own config must check its keys before it rolls. 0.20.0 also lets a legal default no longer take out a node name or an asset group, gives each unit its own destination credentials, declares pydantic, and allows only https for clickhouse.
+- **The cortex pin moves to cortex-ui 0.4.3** (Lane 1; the architect's order, 2026-11-27). The frontend digest moves `9e1d6573` → `6310307d` (`0ff8a4d`, one commit over 0.4.2): every card shows the sign-in sentence on a 401. No contract change. Upgrade note: none; the frontend pod rolls to the new digest.
 
 ## 0.4.93 — 2026-11-26
 
