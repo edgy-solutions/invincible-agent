@@ -230,7 +230,15 @@ global:
     # read `0.4.2` and the full sha to this digest and the 0.4.1 control to 84dead33.
     # 1660b84..e65409b changes no Dockerfile or package.json and adds no import.meta.env read. Its
     # only workflow changes are cortex's own build, retag and chart-release jobs.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:9e1d65738fa75eb71c7c1578b15185cb02be0eec1466be6cf3d5fdb011a3c459"
+    # RE-PINNED FOR 0.4.94 (architect via Chris, 2026-11-27): cortex-ui-0.4.2 -> cortex-ui-0.4.3 at
+    # 0ff8a4de3c0f4346a85be3f47da3c7949c5f0874, index digest 6310307d. e65409b (0.4.2) is its
+    # ancestor, one commit (e65409b..0ff8a4d), so every e65409b line above still holds. It adds:
+    # - the sign-in sentence on every card on a 401 ("Your sign-in expired — signing you in
+    #   again."); a 403 is unchanged.
+    # No contract change from 0.4.93 (snapshots still at 0.4.92 f7c3f5e6).
+    # Measured before pinning: cortex read `0.4.3` and the full sha to this digest; its build run
+    # 45942432901 and retag run 46023760922 were green.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:6310307d9a1e5b57119add60bcb4da2aa0cabf0c39c8676a709e0150197bc299"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
