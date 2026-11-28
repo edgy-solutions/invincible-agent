@@ -152,8 +152,7 @@ def test_7b_a_normalised_spelling_of_matched_on_is_the_same_identifier():
         c = InstanceCandidate(instance_id="CSI-7001", class_uri=SAFETY_ITEM,
                               label="Fuel quantity probe seal kit.", score=0.9, matched_on=spelled)
         assert decide([c], identifier="PN_9001").provenance["instance_match"] == "fuzzy", spelled
-    # CONTROLS, each differing in one thing: another number, and no matched_on (ids and labels keep
-    # the 2026-08-30 segment rule -- the label spells the part number, normalised, and is refused).
+    # CONTROLS, each differing in one thing: another number, and no separator.
     other = InstanceCandidate(instance_id="CSI-7001", class_uri=SAFETY_ITEM,
                               label="Fuel quantity probe seal kit.", score=0.9, matched_on="PN-90011")
     assert decide([other], identifier="PN_9001").provenance["instance_match"] == "not_specific"
@@ -163,7 +162,11 @@ def test_7b_a_normalised_spelling_of_matched_on_is_the_same_identifier():
     assert decide([unseparated], identifier="PN_9001").provenance["instance_match"] == "not_specific"
     by_label = InstanceCandidate(instance_id="CSI-7001", class_uri=SAFETY_ITEM,
                                  label="pn 9001", score=0.9)
-    assert decide([by_label], identifier="PN_9001").provenance["instance_match"] == "not_specific"
+    # RULED 2026-11-26 (architect, on #506): the same normalisation applies to a label, on both
+    # sides, so the label `pn 9001` names `PN_9001`. This control was the opposite until then.
+    assert decide([by_label], identifier="PN_9001").provenance["instance_match"] != "not_specific"
+    assert decide([replace(by_label, label="pn9001")],
+                  identifier="PN_9001").provenance["instance_match"] == "not_specific"
 
 
 # -- through the service ----------------------------------------------------------------------
