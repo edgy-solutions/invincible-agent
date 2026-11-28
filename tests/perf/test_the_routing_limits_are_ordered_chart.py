@@ -73,3 +73,26 @@ def test_a_pair_out_of_order_or_not_a_positive_number_does_not_render(env):
 def test_control_one_second_apart_renders():
     data = _data(_render(*_env(ROUTE_INTENT_TIMEOUT_S="151")))
     assert (data[OUTER], data[INNER]) == ("151", "150")
+
+
+# cortexBff.env and engineO.env render as each container's own `env:`, which beats the ConfigMap's
+# `envFrom`. A limit set there would escape the order check, so the chart refuses either key in
+# either map, the way frontend.yaml refuses IAGENT_ANSWER_PATH in an env map. The first two cases
+# are gov's two renders on #596; the last two are in order and are refused all the same, because
+# the check cannot see a value it does not read.
+@pytest.mark.parametrize("path, value", [
+    (f"cortexBff.env.{OUTER}", "100"),
+    (f"engineO.env.{INNER}", "300"),
+    (f"cortexBff.env.{INNER}", "100"),
+    (f"engineO.env.{OUTER}", "240"),
+])
+def test_a_limit_in_a_containers_own_env_map_does_not_render(path, value):
+    err = _render_fails(*_set(path, value))
+    assert OUTER in err and INNER in err, err[-600:]
+    assert "agentFleet.env" in err, err[-600:]
+
+
+@pytest.mark.parametrize("path", ["cortexBff.env.SOME_OTHER_SETTING", "engineO.env.SOME_OTHER_SETTING"])
+def test_control_another_key_in_those_env_maps_renders(path):
+    data = _data(_render(*_set(path, "1")))
+    assert (data[OUTER], data[INNER]) == ("180", "150")

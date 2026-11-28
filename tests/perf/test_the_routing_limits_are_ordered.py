@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -169,11 +168,26 @@ def test_route_intent_hands_the_model_call_a_controller_set_to_the_inner_limit(e
     assert rec.kw["user_query"] == "how is the pump doing"
 
 
+class _Refused:
+    async def ExtractIntent(self, **kw):  # noqa: N802
+        raise RuntimeError("the model host refused the connection")
+
+
+def test_another_model_failure_keeps_its_own_text_and_names_no_limit(eo, monkeypatch):
+    # Only an abort is the inner limit. Any other failure is reported as itself: its text kept,
+    # and no limit named, so nobody raises the limit to fix a refused connection.
+    monkeypatch.setattr(eo, "b", _Refused())
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(eo.route_intent(eo.RouteIntentRequest(query="how is the pump doing")))
+    assert caught.value.status_code == 502
+    assert "the model host refused the connection" in caught.value.detail, caught.value.detail
+    assert "ROUTE_INTENT_MODEL_TIMEOUT_S" not in caught.value.detail, caught.value.detail
+
+
 async def _silent_model(eo, limit_s):
     """route_intent against a model endpoint that accepts and never answers (a local socket; no
     model anywhere), through engine O's own wrapping: (elapsed, HTTPException, socket events)."""
     from baml_py import ClientRegistry  # noqa: PLC0415
-    sys.path.insert(0, str(_REPO / "baml_shared" / "baml_client"))
     from baml_client import b as raw  # noqa: PLC0415
     events = []
 
@@ -212,6 +226,7 @@ async def _silent_model(eo, limit_s):
 
 @pytest.mark.parametrize("limit_s", [0.5, 2.0])
 def test_the_inner_limit_stops_the_model_request_itself(eo, monkeypatch, limit_s):
+    monkeypatch.syspath_prepend(str(_REPO / "baml_shared" / "baml_client"))  # for the raw client
     monkeypatch.setattr(eo, "b", eo.b)                                 # restored after
     monkeypatch.setattr(eo, "_ROUTE_INTENT_MODEL_TIMEOUT_S", eo._ROUTE_INTENT_MODEL_TIMEOUT_S)
     elapsed, err, events = asyncio.run(_silent_model(eo, limit_s))

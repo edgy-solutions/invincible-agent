@@ -8843,7 +8843,7 @@ async def _keepalive_wrap(stream, interval_s: float = 10.0):
     during quiet stretches.
 
     Cortex-bff went silent during long-running steps — most notably the
-    Engine O ``/route_intent`` call (up to 30 s) and while waiting for
+    Engine O ``/route_intent`` call (up to ``ROUTE_INTENT_TIMEOUT_S``) and while waiting for
     Dagster materializations — long enough for either Traefik or
     @microsoft/fetch-event-source on the browser side to consider the
     connection idle and reconnect. Each reconnect re-fired POST

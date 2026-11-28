@@ -115,7 +115,15 @@ data:
   after its caller has gone (perf measured one at 204 s against the 180 s limit; BAML's own
   default would let it run 300 s). The 30 s between them covers the rest of the route. The chart
   refuses to render a pair in the wrong order, or a value that is not a positive number. Either
-  key is overridden in agentFleet.env. */}}
+  key is overridden in agentFleet.env, and only there: cortexBff.env and engineO.env render as a
+  container's own env, which beats this ConfigMap, so a key set there would escape the check.
+  The chart refuses either key in either map (the house pattern, frontend.yaml's
+  IAGENT_ANSWER_PATH). */}}
+  {{- $bffEnv := (.Values.cortexBff | default dict).env | default dict }}
+  {{- $engineOEnv := (.Values.engineO | default dict).env | default dict }}
+  {{- if or (hasKey $bffEnv "ROUTE_INTENT_TIMEOUT_S") (hasKey $bffEnv "ROUTE_INTENT_MODEL_TIMEOUT_S") (hasKey $engineOEnv "ROUTE_INTENT_TIMEOUT_S") (hasKey $engineOEnv "ROUTE_INTENT_MODEL_TIMEOUT_S") }}
+  {{- fail "set ROUTE_INTENT_TIMEOUT_S and ROUTE_INTENT_MODEL_TIMEOUT_S in agentFleet.env, not in cortexBff.env or engineO.env, so the chart's check that the model limit is shorter than the BFF's applies" }}
+  {{- end }}
   {{- $routeEnv := .Values.agentFleet.env | default dict }}
   {{- $routeOuter := "180" }}
   {{- if hasKey $routeEnv "ROUTE_INTENT_TIMEOUT_S" }}{{ $routeOuter = get $routeEnv "ROUTE_INTENT_TIMEOUT_S" }}{{ end }}
