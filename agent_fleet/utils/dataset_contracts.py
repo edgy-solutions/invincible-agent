@@ -120,6 +120,8 @@ class DatasetContract:
     calendar: str | None = None                              # `period.calendar`, else None
     version_column: str | None = None                        # `version_dimension.column`, else None
     versions: tuple[str, ...] = ()                           # `version_dimension.values`, in order
+    period_column: str | None = None                         # `period.column`, else None
+    additive_over: dict[str, tuple[str, ...]] = field(default_factory=dict)  # column -> its `additive_over`
 
     @property
     def scoped(self) -> bool:
@@ -195,6 +197,7 @@ def _parse(raw: dict) -> DatasetContract:
     required = []
     non_nullable = []
     personal = []
+    additive: dict[str, tuple[str, ...]] = {}
     for col in raw["columns"]:
         name, kind = col["name"], col["type"]
         if kind not in TYPES:
@@ -217,6 +220,15 @@ def _parse(raw: dict) -> DatasetContract:
             raise ValueError(f"column {name!r} has personal_data {pd!r}; it is true or false")
         if pd:
             personal.append(name)
+        over = col.get("additive_over")
+        if over is not None:
+            if not isinstance(over, list) or not all(isinstance(a, str) for a in over):
+                raise ValueError(f"column {name!r} has additive_over {over!r}; it is a list of column names")
+            additive[name] = tuple(over)
+    for name, over in additive.items():
+        undeclared_axes = sorted(a for a in over if a not in types)
+        if undeclared_axes:
+            raise ValueError(f"column {name!r} is additive over {undeclared_axes}, which no column declares")
     key, scope = tuple(raw["grain"]), raw.get("scope")
     if scope is None:
         raise ValueError("declares no scope: a contract names its scope column, "
@@ -254,6 +266,7 @@ def _parse(raw: dict) -> DatasetContract:
         raise ValueError(f"rules maps a rule id to its message; {rules!r} is not")
     period = raw.get("period")
     calendar = None
+    period_column = None
     if period is not None:
         if not isinstance(period, dict):
             raise ValueError(f"period is a mapping; {period!r} is not")
@@ -261,11 +274,22 @@ def _parse(raw: dict) -> DatasetContract:
             calendar = period["calendar"]
             if not isinstance(calendar, str) or not calendar.strip():
                 raise ValueError(f"period.calendar is a non-empty string; {calendar!r} is not")
+        if "column" in period:
+            period_column = period["column"]
+            if not isinstance(period_column, str) or period_column not in types:
+                raise ValueError(f"period.column {period_column!r} is not a declared column")
+            if types[period_column] != "string":
+                raise ValueError(f"period.column {period_column!r} is declared {types[period_column]!r}; "
+                                 f"a period column is a string")
+            if period_column not in non_nullable:
+                raise ValueError(f"period.column {period_column!r} is nullable; a period column is declared "
+                                 f"nullable: false")
     version_column, versions = _parse_version(raw.get("version_dimension"), types, key)
     return DatasetContract(contract_id=contract_id, types=types, required=tuple(required),
                            key=key, scope=scope, dependencies=dependencies, rules=dict(rules),
                            non_nullable=tuple(non_nullable), personal=frozenset(personal),
-                           calendar=calendar, version_column=version_column, versions=versions)
+                           calendar=calendar, version_column=version_column, versions=versions,
+                           period_column=period_column, additive_over=additive)
 
 
 def _parse_version(version: Any, types: dict[str, str], key: Any) -> tuple[str | None, tuple[str, ...]]:

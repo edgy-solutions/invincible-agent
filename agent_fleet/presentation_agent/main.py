@@ -1081,6 +1081,18 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # carries a passthrough key only when the producer supplied it, so a column card is unchanged.
     # The seal is tests/finance/test_the_flow_table_reaches_the_card.py.
     "FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict", "data_provenance", "walk")),
+
+    # ── WATERFALL (Lane 1; the architect's order, via Chris, 2026-11-26). Runbook site 2. ──
+    #
+    # The walk over a flow decomposition's level-1 edges. #553 admitted the archetype and declared
+    # `mesh:Waterfall` but left this row out, so a WATERFALL answer degraded to KNOWLEDGE_DOCUMENT
+    # and cortex's Waterfall card never received its fields. The passthrough is cortex-ui's
+    # `WATERFALL_ENVELOPE_FIELDS` (src/archetypes/waterfall/contract.ts), in its order. `walk` is
+    # REQUIRED by that contract (a missing walk is the card's `walk_missing` refusal), but it is
+    # carried here like every passthrough key: only when the producer supplied it. The card draws
+    # the refusal; the projector does not invent a walk. The seal is
+    # tests/finance/test_the_waterfall_reaches_the_card.py.
+    "WATERFALL": ("rows", ("walk", "value_label", "render", "verdict", "data_provenance")),
 }
 
 
