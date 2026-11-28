@@ -202,8 +202,13 @@ def _real_broker(monkeypatch, **coords):
     coordinate resolution replaced by a synthetic ticket. Returns the `broker_reply` for the world."""
     from dag_tools.domain_broker import main as broker
 
+    # dag-tools 0.18.0: `_resolve_ticket` returns `Resolved(ticket, minted)`, never a bare dict
+    # (`resolve_asset` reads `.ticket`). The synthetic ticket carries no credential, so
+    # `minted=False` is the truthful answer, and `unminted_posture.decide` serves it uncounted.
     async def _synthetic(request):
-        return {"source_type": "synthetic", "physical_uri": "synthetic://x", **coords}
+        return broker.Resolved(
+            ticket={"source_type": "synthetic", "physical_uri": "synthetic://x", **coords},
+            minted=False)
 
     monkeypatch.setattr(broker, "_resolve_ticket", _synthetic)
 

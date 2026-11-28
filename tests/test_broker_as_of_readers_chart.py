@@ -97,7 +97,7 @@ def _strip_setting(chart: Path) -> None:
     v.write_text(s2, encoding="utf-8")
     t = chart / _TPL
     s = t.read_text(encoding="utf-8")
-    s2, n1 = re.subn(r"\{\{- /\* The source types the PINNED.*?\*/\}\}\n\{\{- \$asOfRegistered := list \}\}\n",
+    s2, n1 = re.subn(r"\{\{- /\* The source types the PINNED.*?\*/\}\}\n\{\{- \$asOfRegistered := list[^}]*\}\}\n",
                      "", s, flags=re.S)
     s3, n2 = re.subn(r"            \{\{- /\* One home, checked unconditionally.*?value: \{\{ join \",\" \$asOfReaders \| quote \}\}\n"
                      r"            \{\{- end \}\}\n", "", s2, flags=re.S)
@@ -153,8 +153,23 @@ def test_the_env_alone_is_refused_too(tmp_path: Path, widened: bool):
     assert "dag_tools.domain_broker.main:app" in _render(ch)  # control: the same chart renders without it
 
 
-def test_the_registered_constant_is_empty_at_this_pin():
+def test_the_registered_constant_is_the_pinned_brokers_table():
+    """The chart's constant is the one table the PINNED dag-tools exports, read, never typed.
+
+    The installed package must be the pinned one first, or the comparison reads another version."""
+    import tomllib
+    from importlib.metadata import version
+
+    from dag_tools.domain_broker import ticket_identity
+
+    deps = tomllib.loads((_REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    pins = [d.split("==", 1)[1] for d in deps if d.startswith("edgy-dag-tools==")]
+    assert len(pins) == 1, f"expected one exact edgy-dag-tools pin, got {pins}"
+    assert version("edgy-dag-tools") == pins[0], "the venv's dag-tools is not the pinned one"
     s = (_CHART / _TPL).read_text(encoding="utf-8")
     m = _REGISTERED_RE.search(s)
     assert m, "$asOfRegistered not found"
-    assert m.group(1).strip() == "", f"registered set is not empty: {m.group(1)!r}"
+    chart = set(re.findall(r'"([^"]+)"', m.group(1)))
+    assert set(ticket_identity.AVAILABLE_AS_OF_READERS), "control: the pinned table is non-empty"
+    assert chart == set(ticket_identity.AVAILABLE_AS_OF_READERS), (
+        f"the chart registers {sorted(chart)}, the pinned broker {sorted(ticket_identity.AVAILABLE_AS_OF_READERS)}")

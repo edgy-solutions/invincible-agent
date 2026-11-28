@@ -504,8 +504,8 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.17.0"
-source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.17.0#a85c5f99233962a8c34e6eb0f399c23030865ee4" }
+version = "0.20.0"
+source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.20.0#3c245d4cb555ba05997f332a83924218c301ea8d" }
 dependencies = [
     { name = "clickhouse-connect" },
     { name = "connectorx" },
@@ -515,6 +515,7 @@ dependencies = [
     { name = "oracledb" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "pydantic" },
     { name = "pyiceberg" },
     { name = "pyodbc" },
     { name = "pyyaml" },
@@ -575,7 +576,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.17.0" },
+    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.20.0" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
