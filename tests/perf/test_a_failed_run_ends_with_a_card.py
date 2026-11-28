@@ -35,6 +35,7 @@ _RealAsyncClient = httpx.AsyncClient
 import iagent.gateway as gw  # noqa: E402
 from iagent.identity_vault import IdentityVault  # noqa: E402
 from src.iagent.durable_answers import DurableAnswers  # noqa: E402
+from tests.perf import _restate_wire as wire  # noqa: E402
 from tests.planning.test_seed_panel_gates_and_fallback import stubbed_stream  # noqa: E402,F401
 
 RUN = "run-fail-1"
@@ -108,6 +109,10 @@ def _durable(monkeypatch, *, status, failed_step=None, result=None):
     launched = {}
 
     def h(req):
+        _name = req.url.path.split("/SupervisorAnswer/", 1)[-1].partition("/")[2]
+        if "/SupervisorAnswer/" in req.url.path and wire.refuses(
+                _name, has_body=wire.request_has_body(req)):
+            return httpx.Response(400, json=wire.REFUSAL)
         if req.url.path.endswith("/run/send"):
             launched["body"] = json.loads(req.content or b"null")
             return httpx.Response(202, json={})

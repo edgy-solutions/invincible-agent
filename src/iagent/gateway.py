@@ -5087,7 +5087,7 @@ class SeedPortfolioCanvasRequest(_BaseModel):
 #   or dropped by arity, which is NOT a policy refusal; an unscoped re-check that failed is
 #   could-not-check, never a deny), seed_panel_unroutable (template declares no subject),
 #   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
-#   dagster_run_failed, answer_run_failed, session_expired, ui_payload_fetch_error,
+#   dagster_run_failed, answer_run_failed, answer_run_stalled, session_expired, ui_payload_fetch_error,
 #   ui_payload_timeout, acceptance_not_opened, engine_did_not_answer, render_ui_failed,
 #   stream_producer_error, stream_raised -- all faults of the seed/pipeline, not of the
 #   caller's grants. An absent cause is "unrecorded" and is never entitlement.
@@ -7865,6 +7865,22 @@ def _sse(event: str, data: str) -> str:
 #                     closed union and its switch ignores unknown events, so an old cortex
 #                     stays intact.
 #   run_reauth_resumed  → {run_id}: the person signed in again; once per resume.
+#   answer_queued   → {run_id, position, ahead}: the durable answer WAITS behind the admission
+#                     limit (ADR-0072 5, ruled 2026-11-16); emitted once per CHANGE of position,
+#                     never per tick. Queued time does not count toward the stream's ceiling. A
+#                     NEW event name on purpose: cortex's switch ignores unknown events, so an
+#                     old cortex stays intact. cortex renders it (a separate packet).
+#   answer_admitted → {run_id, waited_ms}: the queued answer started; once, after answer_queued.
+#   pipeline_error cause answer_busy_queue_full → the admission queue was FULL at entry (retryable);
+#                     refused at once, nobody waited (ruled 2026-11-16). A cause, not a new event.
+#   pipeline_error cause answer_admission_lost → the answer was WAITING when the answer service
+#                     restarted (retryable): not admitted, no model call, the person is asked to
+#                     ask again (ruled 2026-11-24). The queue is never rebuilt. A cause, not a new event.
+#   pipeline_error cause answer_admission_unreadable → the answer was WAITING and its place could
+#                     not be read for IAGENT_ANSWER_WAITER_IDLE_S (retryable): not admitted, no model
+#                     call; then the failure card (final_payload, step `admission`) and stream_end, and
+#                     the place is withdrawn. Only consecutive FAILED reads count; a readable wait has no
+#                     ceiling (ADR-0072 5). A cause, not a new event.
 
 
 def _stage(
@@ -10099,6 +10115,9 @@ async def generate_dagster_stream(
     A richer one would need the body's state, and needing the body's state is what made the gap.
     """
     _wrote = False
+    # ONE holder per stream, ONE `finally` below: whatever the body reserved and did not launch
+    # is given back however the stream ends (an early return, an exception, a closed stream).
+    _res: dict = {"id": None, "claimed": False}
 
     try:
         async for _ev in _generate_dagster_stream_inner(
@@ -10110,6 +10129,7 @@ async def generate_dagster_stream(
             entitled_domains=entitled_domains,
             entitlement_source=entitlement_source,
             caller_token=caller_token,
+            _res=_res,
         ):
             _wrote = True
             yield _ev
@@ -10147,6 +10167,8 @@ async def generate_dagster_stream(
             )
             yield _sse("stream_end", "{}")
         return
+    finally:
+        _release_reservation_quietly(_res)
 
 
 def _boundary_failure_bundle(
@@ -10217,19 +10239,103 @@ def _answer_path(environ=None) -> str:
     raise ValueError('IAGENT_ANSWER_PATH must be unset, "dagster" or "durable"')
 
 
+# THE DURABLE PATH'S STALL BOUND (architect, 2026-11-27: "a durable answer that makes no progress
+# has to end in the failure card, naming the step and the trace id, within a bound"). The tick
+# ceiling counts ticks, not time: a tick lasts as long as its reads, so reads that hang stretch
+# it without limit, and when it does run out the stream ends in `ui_payload_timeout`, which
+# names neither. This bound is wall time since the run last moved. A tunable, not a case.
+_DURABLE_STALL_S_DEFAULT = 300.0
+_stall_clock = time.monotonic
+
+
+def _durable_stall_s() -> float:
+    raw = os.environ.get("IAGENT_DURABLE_STALL_S", "").strip()
+    try:
+        value = float(raw) if raw else _DURABLE_STALL_S_DEFAULT
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        logger.warning("IAGENT_DURABLE_STALL_S=%r is not a positive number of seconds; using %s",
+                       raw, _DURABLE_STALL_S_DEFAULT)
+        value = _DURABLE_STALL_S_DEFAULT
+    return value
+
+
+class _ProgressWatch:
+    """Wall time since the run last moved. A move is anything not seen before: more events than
+    the most yet seen, a step in a status it was not yet seen in, or a status not yet seen. High
+    water marks, not the last read: two readers that see the run at different points (the live
+    view and the durable snapshot) must not look like movement by taking turns."""
+
+    def __init__(self, stall_s: float, now: float) -> None:
+        self.stall_s = stall_s
+        self.since = now
+        self._events = -1
+        self._seen: set = set()
+
+    def observe(self, mark: tuple | None, now: float) -> None:
+        if mark is None:
+            return
+        status, n_events, steps = mark
+        new = {("status", status)} | {("step", s) for s in steps}
+        moved = n_events > self._events or not new <= self._seen
+        self._events = max(self._events, n_events)
+        self._seen |= new
+        if moved:
+            self.since = now
+
+    def hold(self, now: float) -> None:
+        """A run paused for its person is waiting, not stalled: its clock restarts."""
+        self.since = now
+
+    def stalled(self, now: float) -> bool:
+        return now - self.since >= self.stall_s
+
+    def running(self) -> str | None:
+        """The steps seen in progress and never seen in a final status. The card falls back on
+        this when the last read does not show the step: the read may have come from the view that
+        is behind."""
+        seen = [mark for kind, mark in self._seen if kind == "step"]
+        final = ("SUCCESS", "FAILURE", "SKIPPED", "ABANDONED")
+        done = {key for key, status in seen if status in final}
+        keys = sorted({key for key, status in seen if key and key not in done})
+        return ", ".join(keys) or None
+
+
+def _running_steps(steps: list | None) -> str | None:
+    """The step or steps a run is in: started, not ended, not in a final status."""
+    keys = sorted({s.get("stepKey") for s in steps or []
+                   if s.get("stepKey") and not s.get("endTime")
+                   and s.get("status") not in ("SUCCESS", "FAILURE", "SKIPPED", "ABANDONED")})
+    return ", ".join(keys) or None
+
+
 def _answer_backend():
     """The launch and the run reads for ONE stream, chosen at call time.
 
     Every dagster-side helper is looked up when it is CALLED (the lambdas), never bound here:
     the seam's tests monkeypatch the module-level names."""
     global _DURABLE_ANSWERS
+    from src.iagent.answer_admission import waiter_idle_from_env
     if _answer_path() == "durable":
         if _DURABLE_ANSWERS is None:
             from src.iagent.durable_answers import DurableAnswers
             _DURABLE_ANSWERS = DurableAnswers(_RESTATE_INGRESS_URL)
         client = _DURABLE_ANSWERS
+
+        def _launch(*a, answer_id=None, reserved_arrived_at=None, reserve_failed=False, **kw):
+            cfg = _supervisor_op_config(*a, **kw)
+            if reserved_arrived_at is not None:
+                cfg["reserved_arrived_at"] = reserved_arrived_at
+            if reserve_failed:
+                # Absent otherwise: `run` counts it on the queue-wait span (ruled 2026-11-16).
+                cfg["reserve_failed"] = True
+            return client.launch(cfg, answer_id=answer_id)
+
         return SimpleNamespace(
-            launch=lambda *a, **kw: client.launch(_supervisor_op_config(*a, **kw)),
+            launch=_launch,
+            reserve=client.reserve,
+            release=client.release,
             status=client.get_run_status,
             events=client.get_run_events,
             steps=client.get_step_stats,
@@ -10237,9 +10343,31 @@ def _answer_backend():
             failed_cause="answer_run_failed",
             payload=client.get_ui_payload_output,
             poll_s=client.poll_interval_s,
+            unreadable_s=waiter_idle_from_env(),
             max_ticks=int(round(900 / client.poll_interval_s)),
+            queue=client.get_queue,
+            withdraw=client.withdraw,
+            progress=client.get_progress,
+            stall_s=_durable_stall_s(),
         )
+
+    async def _no_queue(rid):
+        return None
+
+    async def _no_withdraw(rid):
+        return False
+
+    async def _no_reserve(rid):
+        return None
+
+    async def _no_release(rid):
+        return False
+
     return SimpleNamespace(
+        queue=_no_queue,
+        withdraw=_no_withdraw,
+        reserve=_no_reserve,
+        release=_no_release,
         launch=lambda *a, **kw: _launch_supervisor_job(*a, **kw),
         status=lambda rid: _get_run_status(rid),
         events=lambda rid: _get_run_events(rid),
@@ -10248,7 +10376,93 @@ def _answer_backend():
         failed_cause="dagster_run_failed",
         payload=lambda rid: _get_ui_payload_output(rid),
         poll_s=1.0,
+        unreadable_s=waiter_idle_from_env(),
         max_ticks=900,
+        progress=None,
+        stall_s=None,
+    )
+
+
+def _withdraw_quietly(ab, run_id: str) -> None:
+    """Schedule the withdraw of a still-queued answer whose stream closed. Fire and forget:
+    never awaited in the closing frame, and its errors are swallowed."""
+    async def _go() -> None:
+        try:
+            await ab.withdraw(run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("withdraw of queued answer %s failed: %s", run_id, exc)
+    try:
+        asyncio.ensure_future(_go())
+    except Exception as exc:  # noqa: BLE001 -- no running loop
+        logger.warning("withdraw of queued answer %s not scheduled: %s", run_id, exc)
+
+
+def _release_reservation_quietly(res: dict) -> None:
+    """The ONE place a reservation the stream took and never launched is given back: it runs in
+    the `finally` of the boundary, so no exit of the stream can leak a place. A still-queued
+    reservation is withdrawn, one that was admitted is released; fire and forget, errors
+    swallowed. Claimed (launched) means `run` owns it, and nothing is done."""
+    rid, ab = res.get("id"), res.get("ab")
+    if not rid or res.get("claimed") or ab is None:
+        return
+    res["id"] = None
+    if res.get("queued"):
+        _withdraw_quietly(ab, rid)
+        return
+
+    async def _go() -> None:
+        try:
+            await ab.release(rid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("release of reservation %s failed: %s", rid, exc)
+    try:
+        asyncio.ensure_future(_go())
+    except Exception as exc:  # noqa: BLE001 -- no running loop
+        logger.warning("release of reservation %s not scheduled: %s", rid, exc)
+
+
+def _busy_message(queue_max) -> str:
+    return ("The answer service is busy: the queue is full "
+            f"({queue_max} waiting, the most allowed). Please ask again shortly.")
+
+
+_LOST_MESSAGE = ("Your question was waiting for its turn when the answer service restarted, "
+                 "so it was not started. Please ask it again.")
+
+
+def _lost_error() -> str:
+    """The refusal for an answer that lost its place in a restart (ruled 2026-11-24): never an
+    admission, and the queue is not rebuilt."""
+    return _perror(_LOST_MESSAGE, kind="understanding", retryable=True,
+                   cause="answer_admission_lost")
+
+
+_UNREADABLE_MESSAGE = ("Your question was waiting for its turn, and its place in the queue could "
+                       "not be read, so it was not started. Please ask it again.")
+
+
+# The queued admission wait's clock (gov, #422). A seam only: tests drive it, the way #594's
+# `_stall_clock` is driven, so the bound's seals do not depend on a runner's speed.
+_admission_clock = time.monotonic
+
+
+def _unreadable_error(trace_id: str | None) -> str:
+    """The refusal for a queued answer whose place could not be read for the gate's waiter-idle
+    time (gov's finding on #422): not admitted, no model call. Its wait with GOOD reads has no
+    ceiling (ADR-0072 5); only an unreadable one ends."""
+    return _perror(_UNREADABLE_MESSAGE, kind="understanding", retryable=True,
+                   cause="answer_admission_unreadable", failed_step="admission",
+                   trace_id=trace_id or None)
+
+
+def _busy_error(queue_max) -> str:
+    """The one refusal the admission gate gives a full queue (ruled 2026-11-16), whether the BFF
+    learns it at reserve time or from the run's own snapshot."""
+    return _perror(
+        _busy_message(queue_max),
+        kind="understanding",
+        retryable=True,
+        cause="answer_busy_queue_full",
     )
 
 
@@ -10280,6 +10494,10 @@ async def _generate_dagster_stream_inner(
     # alice's credential exist in the same place; after this the boundary is crossed by a
     # reference alone.
     caller_token: str = "",
+    # The reservation holder of THIS stream, owned by the boundary (`generate_dagster_stream`),
+    # whose `finally` gives back anything this body reserved and did not launch. None (a direct
+    # call) means: no reservation is taken.
+    _res: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Trigger Dagster job and stream step status as Holographic Thinking Cards.
@@ -10596,6 +10814,88 @@ async def _generate_dagster_stream_inner(
         # the caller's own ownership edge and needs nothing from the extraction.
         mode = "ONE_SHOT"
     else:
+        # ADMISSION COMES BEFORE INTENT EXTRACTION (ruled 2026-11-16). `/route_intent` is a model
+        # call; a request the gate would refuse or hold must not spend one. So the place is
+        # taken HERE, under the id the launch will use, and `run` claims it. Only the durable
+        # path, only the branch that makes the call (not an interview, not `_pre_resolved`).
+        if _res is not None and _answer_path() == "durable":
+            _rb = _answer_backend()
+            _rid = str(uuid.uuid4())
+            _rv = await _rb.reserve(_rid)
+            if _rv is None:
+                logger.warning(
+                    "admission reserve failed for %s: no reservation; `run`'s own admission "
+                    "gates this answer (it calls the model BEFORE admission)", _rid)
+                _res["reserve_failed"] = True     # carried to `run`, which counts it
+            else:
+                _res.update(id=_rid, ab=_rb, arrived_at=_rv.get("arrived_at"), queued=False)
+                _decision = _rv.get("decision")
+                if _decision == "busy":
+                    _res["id"] = None       # a refusal holds nothing
+                    yield _busy_error(_rv.get("queue_max"))
+                    # What the run-level BUSY refusal writes: a failed artifact. Written
+                    # BEFORE stream_end, so a client that closes on stream_end cannot
+                    # cancel the write.
+                    await _dispatch_answer_artifact(_boundary_failure_bundle(
+                        request, user_id, user_persona, entitled_domains, entitlement_source,
+                        {"cause": "answer_busy_queue_full", "where": "admission"}))
+                    yield _sse("stream_end", "{}")
+                    return
+                if _decision == "queued":
+                    _res["queued"] = True
+                    _wq_t0 = _admission_clock()
+                    _wq_last = None
+                    _wq_ok = _wq_t0                     # the last GOOD read; the wait's start before the first
+                    _wq_bound = float(_rb.unreadable_s)
+                    while True:
+                        await asyncio.sleep(_rb.poll_s)
+                        # ONE read decides. The place comes from the SAME snapshot as the
+                        # status: a second read may be newer (the cache expired between them)
+                        # and say LOST, or fail, and its "no place" was taken for an admission.
+                        _wsd = await _rb.status(_rid)
+                        _wst = _wsd.get("status")
+                        if _wst is None:
+                            # The read failed: not an admission. Look again, but not for ever (gov, #422): past the
+                            # gate's waiter-idle time an unread waiter is gone from the gate anyway. A GOOD read
+                            # resets this; a queued wait whose reads succeed has no ceiling (ADR-0072 5).
+                            if _admission_clock() - _wq_ok < _wq_bound:
+                                continue
+                            logger.warning("admission wait for %s: no readable status for %.1fs; ended with the "
+                                           "failure card", _rid, _admission_clock() - _wq_ok)
+                            yield _unreadable_error(trace_id)
+                            yield _sse("final_payload", json.dumps(_failure_card("admission", trace_id or None)))
+                            await _dispatch_answer_artifact(_boundary_failure_bundle(
+                                request, user_id, user_persona, entitled_domains, entitlement_source,
+                                {"cause": "answer_admission_unreadable", "where": "admission"}))
+                            yield _sse("stream_end", "{}")
+                            return      # _res stays queued: the boundary's finally WITHDRAWS the place
+                        _wq_ok = _admission_clock()
+                        if _wst == "LOST":
+                            # The gate no longer knows this answer (a restart while it waited):
+                            # refused, never admitted, no model call (ruled 2026-11-24).
+                            _res["id"] = None       # nothing is held to give back
+                            _res["queued"] = False
+                            yield _lost_error()
+                            await _dispatch_answer_artifact(_boundary_failure_bundle(
+                                request, user_id, user_persona, entitled_domains,
+                                entitlement_source,
+                                {"cause": "answer_admission_lost", "where": "admission"}))
+                            yield _sse("stream_end", "{}")
+                            return
+                        # QUEUED with a place: still waiting. QUEUED without one: admitted and
+                        # not yet claimed by `run`, the one admission this loop accepts.
+                        _wq = _wsd.get("queue") if _wst == "QUEUED" else None
+                        if not isinstance(_wq, dict):
+                            break
+                        if _wq.get("position") != _wq_last:
+                            _wq_last = _wq.get("position")
+                            yield _sse("answer_queued", json.dumps({
+                                "run_id": _rid, "position": _wq["position"],
+                                "ahead": _wq["ahead"]}))
+                    _res["queued"] = False
+                    yield _sse("answer_admitted", json.dumps({
+                        "run_id": _rid,
+                        "waited_ms": int((_admission_clock() - _wq_t0) * 1000)}))
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(
@@ -11100,9 +11400,15 @@ async def _generate_dagster_stream_inner(
             "extracted_concepts": [],
         })
     _ab = _answer_backend()
+    # A reserved answer launches under the id it reserved, carrying the reservation's arrival.
+    _reserved_kw = (
+        {"answer_id": _res["id"], "reserved_arrived_at": _res["arrived_at"]}
+        if _res is not None and _res.get("id")
+        else {"reserve_failed": True} if _res is not None and _res.get("reserve_failed") else {})
     run_id = await _ab.launch(
         user_query,
         session_id,
+        **_reserved_kw,
         task_plan_json=task_plan_json,
         user_id=user_id,
         user_email=user_email,
@@ -11126,6 +11432,8 @@ async def _generate_dagster_stream_inner(
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )
+    if run_id and _res is not None:
+        _res["claimed"] = True      # `run` owns the place now, and releases it itself
     if not run_id:
         yield _perror(
             "Failed to trigger Dagster job.",
@@ -11181,7 +11489,10 @@ async def _generate_dagster_stream_inner(
     # handled by _keepalive_wrap's `: keepalive\n\n` comment lines.
     # The accumulating-rows UI bug is fixed at its source.
 
-    # THE ONE DEADLINE IN THIS GENERATOR: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
+    # THE STALL BOUND (durable path only, `_ab.stall_s`): see `_ProgressWatch`. A run that does
+    # not move for `stall_s` of wall time ends in the failure card naming the step it is in.
+    #
+    # THE TICK CEILING: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
     # dagster, the same 15 minutes on the durable path), the ceiling for slow
     # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
     # ended by it, so a paused tick does not count toward it; the pause is bounded by
@@ -11192,404 +11503,483 @@ async def _generate_dagster_stream_inner(
     _ticks = 0
     _reauth_paused = False
     _session_expired = False
-    while _ticks < _ab.max_ticks:
-        await asyncio.sleep(_ab.poll_s)
+    _q_last = None      # last queue position emitted
+    _q_t0 = None        # monotonic time of the first answer_queued
+    _last_status = None # last observed status, for the withdraw on disconnect
+    _stall_s = getattr(_ab, "stall_s", None)
+    _watch = _ProgressWatch(_stall_s, _stall_clock()) if _stall_s else None
+    try:
+        while _ticks < _ab.max_ticks:
+            await asyncio.sleep(_ab.poll_s)
 
-        _vstate = VAULT.state(run_id)
-        if _vstate == "awaiting_reauth":
-            if not _reauth_paused:
-                _reauth_paused = True
-                yield _sse("run_awaiting_reauth", json.dumps({
-                    "run_id": run_id,
-                    "reason": VAULT.reauth_reason(run_id) or "token_needs_reauth",
-                    **{k: v for k, v in (VAULT.pause_record(run_id) or {}).items()
-                       if k in ("paused_call", "instruction")},
-                }))
-        else:
-            _ticks += 1
-            if _vstate == "session_expired":
-                _session_expired = True
-            if _reauth_paused:
-                _reauth_paused = False
-                if _vstate == "live":
-                    yield _sse("run_reauth_resumed", json.dumps({"run_id": run_id}))
-
-        status_data = await _ab.status(run_id)
-        if status_data.get("status") == "CANCELED":
-            VAULT.close(run_id)
-            break
-        if status_data.get("status") == "FAILURE":
-            # Read BEFORE the close: a run whose vault went `session_expired` between ticks
-            # is still recognised.
-            if VAULT.state(run_id) == "session_expired":
-                _session_expired = True
-            VAULT.close(run_id)
-            # ADR-0072 8.1 (ruled 2026-11-15): name the step that failed and the run's trace id. The
-            # backend says which step; the trace id is the backend's if it holds one, else the one this
-            # stream put in the run config. The cause names the path, never `dagster` on the durable one.
-            _f = await _ab.failure(run_id) or {}
-            _run_failure = {
-                "failed_step": _f.get("failed_step") or None,
-                "trace_id": _f.get("trace_id") or trace_id or None,
-            }
-            yield _perror(
-                "Pipeline failed.",
-                kind="retrieving",
-                retryable=False,
-                cause="session_expired" if _session_expired else _ab.failed_cause,
-                failed_step=_run_failure["failed_step"],
-                trace_id=_run_failure["trace_id"],
-            )
-            # Architect-ruled failure-mode-1 fix per
-            # [[optimistic-defaults-are-dishonest]]: the gateway sees
-            # the pipeline-failure signal; flip the bundle's status
-            # to 'failed' so the writer persists it honestly. Without
-            # this the writer would have applied an optimistic
-            # 'complete' default (now removed); even with the default
-            # gone, the bundle's status must carry the truth.
-            _artifact_bundle["status"] = "failed"
-            break
-
-        if status_data.get("status") == "SUCCESS":
-            VAULT.close(run_id)
-            is_success = True
-            break
-            
-        # Pull intermediate asset materializations from the supervisor.
-        # active_agent_roster surfaces:
-        #   - extracted_concepts → context_update (ontology terms in HUD)
-        # The historical personas list (drove AgentTeamLoader) is NOT
-        # emitted any more per Option A — see [[persona-split]]: the
-        # active roster was decorative theater, output-side persona
-        # lives on the verb edge and surfaces via route_decision.owner_persona.
-        #
-        # Phase 1 additions:
-        #   subtask_routing_decision → route_decision typed event
-        #   subtask_graph_trace      → graph_trace typed event
-        # Both projected from real supervisor asset metadata. The
-        # gateway emits the FIRST materialization per run; later
-        # subtasks' materializations are observed via Dagster (the
-        # audit trail) but not re-emitted to the UI — the Routing
-        # Decision card focuses on the primary route the user's
-        # answer flows through. Multi-subtask UI semantics is a
-        # future ADR.
-        mats = await _ab.events(run_id)
-        for mat in mats:
-            path = mat.get("assetKey", {}).get("path")
-            if path == ["active_agent_roster"] and "plan_emitted" not in emitted_steps:
-                concepts_list = []
-                for meta in mat.get("metadataEntries", []):
-                    if meta.get("label") == "extracted_concepts":
-                        try:
-                            json_str = meta.get("text") or meta.get("jsonString") or "[]"
-                            concepts_list = json.loads(json_str)
-                        except Exception as parse_err:
-                            logger.error("Failed to parse concepts metadata: %s", parse_err)
-
-                if concepts_list:
-                    logger.info("📡 Emitting SSE 'context_update' with ontology concepts: %s", concepts_list)
-                    yield _sse("context_update", json.dumps({
-                        "type": "ontology",
-                        "data": concepts_list,
+            _counted = False
+            _vstate = VAULT.state(run_id)
+            if _vstate == "awaiting_reauth":
+                if _watch is not None:
+                    _watch.hold(_stall_clock())
+                if not _reauth_paused:
+                    _reauth_paused = True
+                    yield _sse("run_awaiting_reauth", json.dumps({
+                        "run_id": run_id,
+                        "reason": VAULT.reauth_reason(run_id) or "token_needs_reauth",
+                        **{k: v for k, v in (VAULT.pause_record(run_id) or {}).items()
+                           if k in ("paused_call", "instruction")},
                     }))
+            else:
+                _ticks += 1
+                _counted = True
+                if _vstate == "session_expired":
+                    _session_expired = True
+                if _reauth_paused:
+                    _reauth_paused = False
+                    if _vstate == "live":
+                        yield _sse("run_reauth_resumed", json.dumps({"run_id": run_id}))
 
-                emitted_steps.add("plan_emitted")
-                logger.info("✅ Plan emission confirmed for run %s", run_id)
-
-            elif path == ["subtask_slots_decision"]:
-                # HOP 2: what the system UNDERSTOOD, as opposed to what it extracted.
-                #
-                # `resolved_intent` has always been written from /route_intent's
-                # ExtractIntent output — mode and entity_refs, captured before any
-                # resolution runs — and never updated. A field named for resolution
-                # holding extraction. The supervisor now emits the real thing at its
-                # disposition point, which is the only line where the accepted
-                # parameters, the REFUSED ones, the per-slot resolution outcomes and the
-                # route|ask|abstain decision all exist at once.
-                #
-                # OVERWRITES RATHER THAN MERGES, deliberately. Keeping the extraction
-                # under the same key beside the resolution would leave two answers to
-                # "what did the system understand" in one field, and the older one reads
-                # as current. The extraction is not lost — it is what /route_intent
-                # returned and it is recorded on that hop.
-                #
-                # NOT emitted as SSE: this is provenance for the artifact, not a step for
-                # the HUD, and inventing a UI event with no reader is the orphan-field
-                # shape this codebase has removed twice.
-                _slots_md = _metadata_dict(mat)
-
-                def _j(key: str, fallback):
-                    try:
-                        return json.loads(_slots_md.get(key) or "null") or fallback
-                    except (ValueError, TypeError):
-                        return fallback
-
-                # PRECEDENCE, order-independent. A run can have several subtasks and every
-                # materialization lands here. (1) A no-verb record (empty verb_iri, an early
-                # exit) must NOT replace a resolved_intent already taken from a routed record:
-                # a routed subtask wins over an early exit. (2) A routed record DOES replace a
-                # no-verb one. Keyed on a local flag, not on the bundle's prior contents: the
-                # ExtractIntent output seeded there first has no verb_iri contract.
-                _is_routed_rec = bool(_slots_md.get("verb_iri"))
-                if not _is_routed_rec and _resolved_from_routed:
-                    continue
-                if _is_routed_rec:
-                    _resolved_from_routed = True
-                _artifact_bundle["resolved_intent"] = {
-                    "verb_iri": _slots_md.get("verb_iri") or "",
-                    "disposition": _slots_md.get("disposition") or "",
-                    "accepted_slots": _j("accepted_slots", {}),
-                    # THE PROVENANCE RECORD. Read by `_accumulated_slots` on the next hop;
-                    # written nowhere until 2026-09-14, which made the whole chain-slot carry
-                    # inert in production with every seal over it green (R-057).
-                    "bound_slot_sources": _j("bound_slot_sources", {}),
-                    "refused_slots": _j("refused_slots", []),
-                    "slot_resolution": _j("slot_resolution", {}),
-                    # The subject the verb was chosen for — see the producer. Without it
-                    # `resolved_intent` names an action and not the thing acted on, and a
-                    # re-route cannot be dispatched from the artifact alone.
-                    "owner_persona": _slots_md.get("owner_persona") or "",
-                    "subject_uri": _slots_md.get("subject_uri") or "",
-                    "subject_instance_id": _slots_md.get("subject_instance_id") or "",
-                    "subject_instance_label": _slots_md.get("subject_instance_label") or "",
-                    # `refused` when engine-o refused the slot fill for want of a person
-                    # (dynamic_supervisor `FILL_SLOTS_REFUSED`; ruled 2026-10-16), so a census
-                    # row reading the artifact can count it. Classify path only: the direct
-                    # path never calls /fill_slots.
-                    "fill_slots": _slots_md.get("fill_slots") or "",
-                    "no_verb_reason": _slots_md.get("no_verb_reason") or "",
-                    "fallback_detail": _slots_md.get("fallback_detail") or "",
-                    "rejected_verb_iri": _slots_md.get("rejected_verb_iri") or "",
+            status_data = await _ab.status(run_id)
+            _last_status = status_data.get("status")
+            if _last_status == "LOST":
+                # No place and no run record yet (a restart): neither an admission nor an end.
+                # The run is replayed and either takes a slot again (admitted before) or
+                # persists the refusal below (it was waiting). Ruled 2026-11-24.
+                continue
+            if _last_status == "BUSY":
+                # The admission queue was FULL at entry (ruled 2026-11-16): refused at once,
+                # nobody waited. Never an answer_queued for it. Or the answer was WAITING when
+                # the service restarted (ruled 2026-11-24): refused, asked to ask again.
+                VAULT.close(run_id)
+                _busy = status_data.get("busy") or {}
+                if _busy.get("reason") == "restarted":
+                    yield _lost_error()
+                else:
+                    yield _busy_error(_busy.get("queue_max"))
+                _artifact_bundle["status"] = "failed"
+                break
+            if _last_status == "QUEUED":
+                # ADMISSION (ADR-0072 5, ruled 2026-11-16): the answer WAITS its turn. Queued
+                # time is not running time, so a queued tick is rolled back out of the
+                # ceiling (the increment above is undone, the reauth logic is untouched).
+                _q = await _ab.queue(run_id)
+                if _q is not None:
+                    if _counted:
+                        _ticks -= 1
+                    if _watch is not None:
+                        _watch.hold(_stall_clock())  # waiting its turn is not a stall
+                    if _q_t0 is None:
+                        _q_t0 = time.monotonic()
+                    if _q.get("position") != _q_last:
+                        _q_last = _q.get("position")
+                        yield _sse("answer_queued", json.dumps({
+                            "run_id": run_id, "position": _q["position"], "ahead": _q["ahead"]}))
+            elif _q_t0 is not None:
+                yield _sse("answer_admitted", json.dumps({
+                    "run_id": run_id, "waited_ms": int((time.monotonic() - _q_t0) * 1000)}))
+                _q_t0 = None
+            if status_data.get("status") == "CANCELED":
+                VAULT.close(run_id)
+                break
+            if status_data.get("status") == "FAILURE":
+                # Read BEFORE the close: a run whose vault went `session_expired` between ticks
+                # is still recognised.
+                if VAULT.state(run_id) == "session_expired":
+                    _session_expired = True
+                VAULT.close(run_id)
+                # ADR-0072 8.1 (ruled 2026-11-15): name the step that failed and the run's trace id. The
+                # backend says which step; the trace id is the backend's if it holds one, else the one this
+                # stream put in the run config. The cause names the path, never `dagster` on the durable one.
+                _f = await _ab.failure(run_id) or {}
+                _run_failure = {
+                    "failed_step": _f.get("failed_step") or None,
+                    "trace_id": _f.get("trace_id") or trace_id or None,
                 }
-                logger.info(
-                    "resolved_intent captured for run %s: verb=%s disposition=%s "
-                    "no_verb_reason=%s accepted=%d refused=%d",
-                    run_id,
-                    _slots_md.get("verb_iri") or "-",
-                    _slots_md.get("disposition") or "-",
-                    _slots_md.get("no_verb_reason") or "-",
-                    len(_artifact_bundle["resolved_intent"]["accepted_slots"] or {}),
-                    len(_artifact_bundle["resolved_intent"]["refused_slots"] or []),
+                yield _perror(
+                    "Pipeline failed.",
+                    kind="retrieving",
+                    retryable=False,
+                    cause="session_expired" if _session_expired else _ab.failed_cause,
+                    failed_step=_run_failure["failed_step"],
+                    trace_id=_run_failure["trace_id"],
                 )
+                # Architect-ruled failure-mode-1 fix per
+                # [[optimistic-defaults-are-dishonest]]: the gateway sees
+                # the pipeline-failure signal; flip the bundle's status
+                # to 'failed' so the writer persists it honestly. Without
+                # this the writer would have applied an optimistic
+                # 'complete' default (now removed); even with the default
+                # gone, the bundle's status must carry the truth.
+                _artifact_bundle["status"] = "failed"
+                break
 
-            elif (
-                path == ["subtask_routing_decision"]
-                and "route_decision_emitted" not in emitted_steps
-                # THE SUBTASK THE ANSWER CAME FROM, not the first to materialize.
-                # See _primary_routing_mat: a 30s timeout beats a 44s success to
-                # the finish line, so first-arrival systematically records the
-                # failing subtask for a run that grounded.
-                and mat is _primary_routing_mat(mats)
-            ):
-                decision = _project_route_decision(mat)
-                if decision is not None:
+            if status_data.get("status") == "SUCCESS":
+                VAULT.close(run_id)
+                is_success = True
+                break
+
+            if _watch is not None and not _reauth_paused:
+                _now = _stall_clock()
+                _watch.observe(await _ab.progress(run_id), _now)
+                if _watch.stalled(_now):
+                    # The stream stops waiting; the card names the step the run is in, and the trace
+                    # id the backend holds, else this stream's.
+                    VAULT.close(run_id)
+                    _f = await _ab.failure(run_id) or {}
+                    _run_failure = {
+                        "failed_step": _running_steps(await _ab.steps(run_id)) or _watch.running(),
+                        "trace_id": _f.get("trace_id") or trace_id or None,
+                        "stalled_s": int(_now - _watch.since),
+                    }
+                    yield _perror(
+                        "The answer stopped making progress.",
+                        kind="retrieving",
+                        retryable=False,
+                        cause="answer_run_stalled",
+                        failed_step=_run_failure["failed_step"],
+                        trace_id=_run_failure["trace_id"],
+                    )
+                    _artifact_bundle["status"] = "failed"
+                    break
+                
+            # Pull intermediate asset materializations from the supervisor.
+            # active_agent_roster surfaces:
+            #   - extracted_concepts → context_update (ontology terms in HUD)
+            # The historical personas list (drove AgentTeamLoader) is NOT
+            # emitted any more per Option A — see [[persona-split]]: the
+            # active roster was decorative theater, output-side persona
+            # lives on the verb edge and surfaces via route_decision.owner_persona.
+            #
+            # Phase 1 additions:
+            #   subtask_routing_decision → route_decision typed event
+            #   subtask_graph_trace      → graph_trace typed event
+            # Both projected from real supervisor asset metadata. The
+            # gateway emits the FIRST materialization per run; later
+            # subtasks' materializations are observed via Dagster (the
+            # audit trail) but not re-emitted to the UI — the Routing
+            # Decision card focuses on the primary route the user's
+            # answer flows through. Multi-subtask UI semantics is a
+            # future ADR.
+            mats = await _ab.events(run_id)
+            for mat in mats:
+                path = mat.get("assetKey", {}).get("path")
+                if path == ["active_agent_roster"] and "plan_emitted" not in emitted_steps:
+                    concepts_list = []
+                    for meta in mat.get("metadataEntries", []):
+                        if meta.get("label") == "extracted_concepts":
+                            try:
+                                json_str = meta.get("text") or meta.get("jsonString") or "[]"
+                                concepts_list = json.loads(json_str)
+                            except Exception as parse_err:
+                                logger.error("Failed to parse concepts metadata: %s", parse_err)
+
+                    if concepts_list:
+                        logger.info("📡 Emitting SSE 'context_update' with ontology concepts: %s", concepts_list)
+                        yield _sse("context_update", json.dumps({
+                            "type": "ontology",
+                            "data": concepts_list,
+                        }))
+
+                    emitted_steps.add("plan_emitted")
+                    logger.info("✅ Plan emission confirmed for run %s", run_id)
+
+                elif path == ["subtask_slots_decision"]:
+                    # HOP 2: what the system UNDERSTOOD, as opposed to what it extracted.
+                    #
+                    # `resolved_intent` has always been written from /route_intent's
+                    # ExtractIntent output — mode and entity_refs, captured before any
+                    # resolution runs — and never updated. A field named for resolution
+                    # holding extraction. The supervisor now emits the real thing at its
+                    # disposition point, which is the only line where the accepted
+                    # parameters, the REFUSED ones, the per-slot resolution outcomes and the
+                    # route|ask|abstain decision all exist at once.
+                    #
+                    # OVERWRITES RATHER THAN MERGES, deliberately. Keeping the extraction
+                    # under the same key beside the resolution would leave two answers to
+                    # "what did the system understand" in one field, and the older one reads
+                    # as current. The extraction is not lost — it is what /route_intent
+                    # returned and it is recorded on that hop.
+                    #
+                    # NOT emitted as SSE: this is provenance for the artifact, not a step for
+                    # the HUD, and inventing a UI event with no reader is the orphan-field
+                    # shape this codebase has removed twice.
+                    _slots_md = _metadata_dict(mat)
+
+                    def _j(key: str, fallback):
+                        try:
+                            return json.loads(_slots_md.get(key) or "null") or fallback
+                        except (ValueError, TypeError):
+                            return fallback
+
+                    # PRECEDENCE, order-independent. A run can have several subtasks and every
+                    # materialization lands here. (1) A no-verb record (empty verb_iri, an early
+                    # exit) must NOT replace a resolved_intent already taken from a routed record:
+                    # a routed subtask wins over an early exit. (2) A routed record DOES replace a
+                    # no-verb one. Keyed on a local flag, not on the bundle's prior contents: the
+                    # ExtractIntent output seeded there first has no verb_iri contract.
+                    _is_routed_rec = bool(_slots_md.get("verb_iri"))
+                    if not _is_routed_rec and _resolved_from_routed:
+                        continue
+                    if _is_routed_rec:
+                        _resolved_from_routed = True
+                    _artifact_bundle["resolved_intent"] = {
+                        "verb_iri": _slots_md.get("verb_iri") or "",
+                        "disposition": _slots_md.get("disposition") or "",
+                        "accepted_slots": _j("accepted_slots", {}),
+                        # THE PROVENANCE RECORD. Read by `_accumulated_slots` on the next hop;
+                        # written nowhere until 2026-09-14, which made the whole chain-slot carry
+                        # inert in production with every seal over it green (R-057).
+                        "bound_slot_sources": _j("bound_slot_sources", {}),
+                        "refused_slots": _j("refused_slots", []),
+                        "slot_resolution": _j("slot_resolution", {}),
+                        # The subject the verb was chosen for — see the producer. Without it
+                        # `resolved_intent` names an action and not the thing acted on, and a
+                        # re-route cannot be dispatched from the artifact alone.
+                        "owner_persona": _slots_md.get("owner_persona") or "",
+                        "subject_uri": _slots_md.get("subject_uri") or "",
+                        "subject_instance_id": _slots_md.get("subject_instance_id") or "",
+                        "subject_instance_label": _slots_md.get("subject_instance_label") or "",
+                        # `refused` when engine-o refused the slot fill for want of a person
+                        # (dynamic_supervisor `FILL_SLOTS_REFUSED`; ruled 2026-10-16), so a census
+                        # row reading the artifact can count it. Classify path only: the direct
+                        # path never calls /fill_slots.
+                        "fill_slots": _slots_md.get("fill_slots") or "",
+                        "no_verb_reason": _slots_md.get("no_verb_reason") or "",
+                        "fallback_detail": _slots_md.get("fallback_detail") or "",
+                        "rejected_verb_iri": _slots_md.get("rejected_verb_iri") or "",
+                    }
                     logger.info(
-                        "📡 Emitting SSE 'route_decision' for run %s: "
-                        "subject=%s verb=%s",
+                        "resolved_intent captured for run %s: verb=%s disposition=%s "
+                        "no_verb_reason=%s accepted=%d refused=%d",
                         run_id,
-                        decision.get("about", {}).get("uri"),
-                        decision.get("action", {}).get("iri"),
+                        _slots_md.get("verb_iri") or "-",
+                        _slots_md.get("disposition") or "-",
+                        _slots_md.get("no_verb_reason") or "-",
+                        len(_artifact_bundle["resolved_intent"]["accepted_slots"] or {}),
+                        len(_artifact_bundle["resolved_intent"]["refused_slots"] or []),
                     )
-                    yield _sse("route_decision", json.dumps(decision))
-                    # Hop 1: capture routing + refine produced_by sentinel.
-                    _artifact_bundle["routing"] = decision
-                    handled_by = (decision.get("handled_by") or {}) if isinstance(
-                        decision, dict
-                    ) else {}
-                    if handled_by:
-                        _artifact_bundle["produced_by"] = {
-                            "actor_type": "agent",
-                            "actor_id": handled_by.get(
-                                "engine_name"
-                            ) or handled_by.get(
-                                "name"
-                            ) or "pending",
-                            "endpoint": handled_by.get("endpoint"),
-                            "version": handled_by.get("version"),
-                        }
-                emitted_steps.add("route_decision_emitted")
 
-            elif (
-                path == ["subtask_graph_trace"]
-                and "graph_trace_emitted" not in emitted_steps
-                # THE THIRD SELECTION, unified 2026-09-06. The record and the card were
-                # keyed on `pick_primary`; this still took the first EMITTED trace — so on
-                # artifact-4 the trace claimed Program -> VarianceDecomposition while Engine A
-                # actually answered. Three selections over one choice, and I fixed two.
-                and mat is _primary_graph_trace_mat(mats)
-            ):
-                trace_nodes = _project_graph_trace(mat)
-                if trace_nodes:
-                    # Verb-leg alternates (the untaken compatible verbs) —
-                    # carried as a SIBLING field so the existing text-trail
-                    # panel (reads `.nodes`) is untouched while the
-                    # decision-path diagram can draw the branches not taken.
-                    alternates = _project_graph_trace_alternates(mat)
-                    logger.info(
-                        "📡 Emitting SSE 'graph_trace' for run %s: %d nodes, "
-                        "%d verb-alternates",
-                        run_id, len(trace_nodes), len(alternates),
-                    )
-                    yield _sse("graph_trace", json.dumps({
-                        "nodes": trace_nodes,
-                        "alternates": alternates,
-                    }))
-                    # Hop 1: accumulate into bundle (nodes unchanged;
-                    # alternates as a sibling so the durable write stays
-                    # backward-compatible).
-                    _artifact_bundle["graph_trace"] = trace_nodes
-                    _artifact_bundle["graph_trace_alternates"] = alternates
-                emitted_steps.add("graph_trace_emitted")
-
-            elif (
-                path == ["subtask_sources"]
-                and "sources_emitted" not in emitted_steps
-            ):
-                # Phase 3: sources from the picked engine. Same
-                # emit-once-per-run semantics as route_decision and
-                # graph_trace — first subtask wins. Multi-subtask UI
-                # semantics will revisit this.
-                projected_sources, _floor = _sources_event_payload(mat)
-                if projected_sources:
-                    logger.info(
-                        "📡 Emitting SSE 'sources' for run %s: %d source(s)",
-                        run_id, len(projected_sources),
-                    )
-                    yield _sse(
-                        "sources",
-                        json.dumps({"sources": projected_sources, "provenance_floor": _floor}),
-                    )
-                    # Hop 1: accumulate into bundle.
-                    _artifact_bundle["sources"] = projected_sources
-                    _artifact_bundle["provenance_floor"] = _floor
-                emitted_steps.add("sources_emitted")
-
-            elif (
-                path == ["subtask_access_denied"]
-                and "access_denied_emitted" not in emitted_steps
-            ):
-                # Bug 2: the data-plane can_read gate denied THIS user for
-                # the asset (the specific 403 signal, not an empty result or
-                # a code fumble). Emit a TYPED access_denied event so the UI
-                # surfaces the request-access flow (→ /access_requests)
-                # instead of an empty chart that hides the denial.
-                denial = _project_access_denied(mat)
-                if denial:
-                    # Attach the acting DOMAIN (from the routing already
-                    # projected this run — route_decision arrives before the
-                    # engine denial) so the UI's access-request routes to the
-                    # right approver audience (access_grant:<domain>).
-                    _routing = _artifact_bundle.get("routing") or {}
-                    _acting = (_routing.get("acting") or {}) if isinstance(_routing, dict) else {}
-                    _domains = _acting.get("domains") or []
-                    denial["domain"] = _domains[0] if _domains else ""
-                    logger.info(
-                        "📡 Emitting SSE 'access_denied' for run %s: %s domain=%s",
-                        run_id, denial.get("denied_assets"), denial.get("domain"),
-                    )
-                    yield _sse("access_denied", json.dumps(denial))
-                emitted_steps.add("access_denied_emitted")
-
-        # Map Dagster step transitions onto typed pipeline_stage events.
-        # The mapping projects the supervisor's REAL step keys (Dagster
-        # is the audit trail) onto the UI's 5 stage kinds. Some Dagster
-        # steps span multiple UI stages — `create_task_plan` runs BOTH
-        # /resolve (locating) AND /plan + classify_predicate (choosing),
-        # so its SUCCESS transition completes both stages.
-        #
-        #   create_task_plan      → locating, then choosing_action
-        #                           (/resolve runs first within the step,
-        #                           then /plan + classify_predicate; both
-        #                           must mark complete together because
-        #                           Dagster only emits ONE step transition)
-        #   execute_subtask-*     → retrieving (engine dispatch)
-        #   synthesize_stateful   → composing (Engine B synthesis)
-        #   generate_ui_payload   → composing (Engine F mapping) — same
-        #                           kind as synthesize; UI shows ONE
-        #                           composing row that stays loading
-        #                           until the final payload arrives.
-        STEP_TO_STARTED_KIND = {
-            # "locating" already started at line 1201 before the polling
-            # loop begins, so create_task_plan RUNNING only triggers the
-            # choosing_action started transition.
-            "create_task_plan": "choosing_action",
-            "synthesize_stateful": "composing",
-            "generate_ui_payload": "composing",
-        }
-        STEP_TO_COMPLETED_KINDS = {
-            "create_task_plan": ["locating", "choosing_action"],
-            "synthesize_stateful": ["composing"],
-            "generate_ui_payload": ["composing"],
-        }
-
-        def _step_started_kind(step_key: str) -> str | None:
-            # Dagster names dynamic-output step keys with SQUARE BRACKETS:
-            # `execute_subtask[task_0]`, not `execute_subtask-task_0`.
-            # The original `startswith("execute_subtask-")` matched the
-            # dash-form that the op never produced, so the "retrieving"
-            # stage's completion event was never emitted to the UI
-            # (every query rendered "Retrieving evidence — never
-            # confirmed" even when sources had landed and the engine
-            # had returned). Fix: match the prefix that handles BOTH
-            # forms (just `execute_subtask` — bare name or with `[..]`).
-            # Banked 2026-06-28 with relevance=0 fix; same SSE pipeline.
-            if step_key.startswith("execute_subtask"):
-                return "retrieving"
-            return STEP_TO_STARTED_KIND.get(step_key)
-
-        def _step_completed_kinds(step_key: str) -> list[str]:
-            if step_key.startswith("execute_subtask"):
-                return ["retrieving"]
-            return STEP_TO_COMPLETED_KINDS.get(step_key, [])
-
-        step_stats = await _ab.steps(run_id)
-        for stat in step_stats:
-            step_key = stat.get("stepKey", "")
-            status = stat.get("status", "")
-
-            if status == "RUNNING" and f"{step_key}_running" not in emitted_steps:
-                kind = _step_started_kind(step_key)
-                if not kind:
-                    continue
-                # Stage upserts by kind on the UI side — multiple
-                # execute_subtask-* steps all map to "retrieving" and
-                # only one row renders, which is the right semantics
-                # (the user sees "retrieving evidence", not a fan-out
-                # of per-engine subrows).
-                yield _stage(kind, "started", detail={"step_key": step_key})
-                emitted_steps.add(f"{step_key}_running")
-
-            elif status == "SUCCESS" and f"{step_key}_success" not in emitted_steps:
-                kinds = _step_completed_kinds(step_key)
-                if not kinds:
-                    continue
-                # Emit completions in the order the underlying sub-steps
-                # ran (e.g. /resolve before /classify_predicate inside
-                # create_task_plan). The UI's stage list renders in
-                # PIPELINE_KINDS order regardless, but emitting in the
-                # right semantic order keeps the audit-stream coherent.
-                for kind in kinds:
-                    yield _stage(kind, "completed", detail={"step_key": step_key})
-                emitted_steps.add(f"{step_key}_success")
-
-                # When create_task_plan succeeds, the supervisor is
-                # already in flight dispatching to the engine. Pre-emit
-                # "retrieving" started so the UI doesn't show a dead
-                # gap between "Choosing" green and execute_subtask
-                # actually transitioning to RUNNING (Dagster scheduling
-                # delay is ~1-3s; the user perceives that gap as
-                # "nothing is happening"). Reality-tracking: dispatch
-                # genuinely IS the next thing happening; surfacing it
-                # is honest, not synthetic. Idempotent via emitted_steps.
-                if (
-                    step_key == "create_task_plan"
-                    and "retrieving_pre_started" not in emitted_steps
+                elif (
+                    path == ["subtask_routing_decision"]
+                    and "route_decision_emitted" not in emitted_steps
+                    # THE SUBTASK THE ANSWER CAME FROM, not the first to materialize.
+                    # See _primary_routing_mat: a 30s timeout beats a 44s success to
+                    # the finish line, so first-arrival systematically records the
+                    # failing subtask for a run that grounded.
+                    and mat is _primary_routing_mat(mats)
                 ):
-                    yield _stage(
-                        "retrieving", "started",
-                        detail={"step_key": "create_task_plan_dispatch"},
-                    )
-                    emitted_steps.add("retrieving_pre_started")
+                    decision = _project_route_decision(mat)
+                    if decision is not None:
+                        logger.info(
+                            "📡 Emitting SSE 'route_decision' for run %s: "
+                            "subject=%s verb=%s",
+                            run_id,
+                            decision.get("about", {}).get("uri"),
+                            decision.get("action", {}).get("iri"),
+                        )
+                        yield _sse("route_decision", json.dumps(decision))
+                        # Hop 1: capture routing + refine produced_by sentinel.
+                        _artifact_bundle["routing"] = decision
+                        handled_by = (decision.get("handled_by") or {}) if isinstance(
+                            decision, dict
+                        ) else {}
+                        if handled_by:
+                            _artifact_bundle["produced_by"] = {
+                                "actor_type": "agent",
+                                "actor_id": handled_by.get(
+                                    "engine_name"
+                                ) or handled_by.get(
+                                    "name"
+                                ) or "pending",
+                                "endpoint": handled_by.get("endpoint"),
+                                "version": handled_by.get("version"),
+                            }
+                    emitted_steps.add("route_decision_emitted")
+
+                elif (
+                    path == ["subtask_graph_trace"]
+                    and "graph_trace_emitted" not in emitted_steps
+                    # THE THIRD SELECTION, unified 2026-09-06. The record and the card were
+                    # keyed on `pick_primary`; this still took the first EMITTED trace — so on
+                    # artifact-4 the trace claimed Program -> VarianceDecomposition while Engine A
+                    # actually answered. Three selections over one choice, and I fixed two.
+                    and mat is _primary_graph_trace_mat(mats)
+                ):
+                    trace_nodes = _project_graph_trace(mat)
+                    if trace_nodes:
+                        # Verb-leg alternates (the untaken compatible verbs) —
+                        # carried as a SIBLING field so the existing text-trail
+                        # panel (reads `.nodes`) is untouched while the
+                        # decision-path diagram can draw the branches not taken.
+                        alternates = _project_graph_trace_alternates(mat)
+                        logger.info(
+                            "📡 Emitting SSE 'graph_trace' for run %s: %d nodes, "
+                            "%d verb-alternates",
+                            run_id, len(trace_nodes), len(alternates),
+                        )
+                        yield _sse("graph_trace", json.dumps({
+                            "nodes": trace_nodes,
+                            "alternates": alternates,
+                        }))
+                        # Hop 1: accumulate into bundle (nodes unchanged;
+                        # alternates as a sibling so the durable write stays
+                        # backward-compatible).
+                        _artifact_bundle["graph_trace"] = trace_nodes
+                        _artifact_bundle["graph_trace_alternates"] = alternates
+                    emitted_steps.add("graph_trace_emitted")
+
+                elif (
+                    path == ["subtask_sources"]
+                    and "sources_emitted" not in emitted_steps
+                ):
+                    # Phase 3: sources from the picked engine. Same
+                    # emit-once-per-run semantics as route_decision and
+                    # graph_trace — first subtask wins. Multi-subtask UI
+                    # semantics will revisit this.
+                    projected_sources, _floor = _sources_event_payload(mat)
+                    if projected_sources:
+                        logger.info(
+                            "📡 Emitting SSE 'sources' for run %s: %d source(s)",
+                            run_id, len(projected_sources),
+                        )
+                        yield _sse(
+                            "sources",
+                            json.dumps({"sources": projected_sources, "provenance_floor": _floor}),
+                        )
+                        # Hop 1: accumulate into bundle.
+                        _artifact_bundle["sources"] = projected_sources
+                        _artifact_bundle["provenance_floor"] = _floor
+                    emitted_steps.add("sources_emitted")
+
+                elif (
+                    path == ["subtask_access_denied"]
+                    and "access_denied_emitted" not in emitted_steps
+                ):
+                    # Bug 2: the data-plane can_read gate denied THIS user for
+                    # the asset (the specific 403 signal, not an empty result or
+                    # a code fumble). Emit a TYPED access_denied event so the UI
+                    # surfaces the request-access flow (→ /access_requests)
+                    # instead of an empty chart that hides the denial.
+                    denial = _project_access_denied(mat)
+                    if denial:
+                        # Attach the acting DOMAIN (from the routing already
+                        # projected this run — route_decision arrives before the
+                        # engine denial) so the UI's access-request routes to the
+                        # right approver audience (access_grant:<domain>).
+                        _routing = _artifact_bundle.get("routing") or {}
+                        _acting = (_routing.get("acting") or {}) if isinstance(_routing, dict) else {}
+                        _domains = _acting.get("domains") or []
+                        denial["domain"] = _domains[0] if _domains else ""
+                        logger.info(
+                            "📡 Emitting SSE 'access_denied' for run %s: %s domain=%s",
+                            run_id, denial.get("denied_assets"), denial.get("domain"),
+                        )
+                        yield _sse("access_denied", json.dumps(denial))
+                    emitted_steps.add("access_denied_emitted")
+
+            # Map Dagster step transitions onto typed pipeline_stage events.
+            # The mapping projects the supervisor's REAL step keys (Dagster
+            # is the audit trail) onto the UI's 5 stage kinds. Some Dagster
+            # steps span multiple UI stages — `create_task_plan` runs BOTH
+            # /resolve (locating) AND /plan + classify_predicate (choosing),
+            # so its SUCCESS transition completes both stages.
+            #
+            #   create_task_plan      → locating, then choosing_action
+            #                           (/resolve runs first within the step,
+            #                           then /plan + classify_predicate; both
+            #                           must mark complete together because
+            #                           Dagster only emits ONE step transition)
+            #   execute_subtask-*     → retrieving (engine dispatch)
+            #   synthesize_stateful   → composing (Engine B synthesis)
+            #   generate_ui_payload   → composing (Engine F mapping) — same
+            #                           kind as synthesize; UI shows ONE
+            #                           composing row that stays loading
+            #                           until the final payload arrives.
+            STEP_TO_STARTED_KIND = {
+                # "locating" already started at line 1201 before the polling
+                # loop begins, so create_task_plan RUNNING only triggers the
+                # choosing_action started transition.
+                "create_task_plan": "choosing_action",
+                "synthesize_stateful": "composing",
+                "generate_ui_payload": "composing",
+            }
+            STEP_TO_COMPLETED_KINDS = {
+                "create_task_plan": ["locating", "choosing_action"],
+                "synthesize_stateful": ["composing"],
+                "generate_ui_payload": ["composing"],
+            }
+
+            def _step_started_kind(step_key: str) -> str | None:
+                # Dagster names dynamic-output step keys with SQUARE BRACKETS:
+                # `execute_subtask[task_0]`, not `execute_subtask-task_0`.
+                # The original `startswith("execute_subtask-")` matched the
+                # dash-form that the op never produced, so the "retrieving"
+                # stage's completion event was never emitted to the UI
+                # (every query rendered "Retrieving evidence — never
+                # confirmed" even when sources had landed and the engine
+                # had returned). Fix: match the prefix that handles BOTH
+                # forms (just `execute_subtask` — bare name or with `[..]`).
+                # Banked 2026-06-28 with relevance=0 fix; same SSE pipeline.
+                if step_key.startswith("execute_subtask"):
+                    return "retrieving"
+                return STEP_TO_STARTED_KIND.get(step_key)
+
+            def _step_completed_kinds(step_key: str) -> list[str]:
+                if step_key.startswith("execute_subtask"):
+                    return ["retrieving"]
+                return STEP_TO_COMPLETED_KINDS.get(step_key, [])
+
+            step_stats = await _ab.steps(run_id)
+            for stat in step_stats:
+                step_key = stat.get("stepKey", "")
+                status = stat.get("status", "")
+
+                if status == "RUNNING" and f"{step_key}_running" not in emitted_steps:
+                    kind = _step_started_kind(step_key)
+                    if not kind:
+                        continue
+                    # Stage upserts by kind on the UI side — multiple
+                    # execute_subtask-* steps all map to "retrieving" and
+                    # only one row renders, which is the right semantics
+                    # (the user sees "retrieving evidence", not a fan-out
+                    # of per-engine subrows).
+                    yield _stage(kind, "started", detail={"step_key": step_key})
+                    emitted_steps.add(f"{step_key}_running")
+
+                elif status == "SUCCESS" and f"{step_key}_success" not in emitted_steps:
+                    kinds = _step_completed_kinds(step_key)
+                    if not kinds:
+                        continue
+                    # Emit completions in the order the underlying sub-steps
+                    # ran (e.g. /resolve before /classify_predicate inside
+                    # create_task_plan). The UI's stage list renders in
+                    # PIPELINE_KINDS order regardless, but emitting in the
+                    # right semantic order keeps the audit-stream coherent.
+                    for kind in kinds:
+                        yield _stage(kind, "completed", detail={"step_key": step_key})
+                    emitted_steps.add(f"{step_key}_success")
+
+                    # When create_task_plan succeeds, the supervisor is
+                    # already in flight dispatching to the engine. Pre-emit
+                    # "retrieving" started so the UI doesn't show a dead
+                    # gap between "Choosing" green and execute_subtask
+                    # actually transitioning to RUNNING (Dagster scheduling
+                    # delay is ~1-3s; the user perceives that gap as
+                    # "nothing is happening"). Reality-tracking: dispatch
+                    # genuinely IS the next thing happening; surfacing it
+                    # is honest, not synthetic. Idempotent via emitted_steps.
+                    if (
+                        step_key == "create_task_plan"
+                        and "retrieving_pre_started" not in emitted_steps
+                    ):
+                        yield _stage(
+                            "retrieving", "started",
+                            detail={"step_key": "create_task_plan_dispatch"},
+                        )
+                        emitted_steps.add("retrieving_pre_started")
+
+    except (GeneratorExit, asyncio.CancelledError):
+        # A stream closed while its answer still WAITS: withdraw it, fire and forget (never
+        # awaited in this cancelled frame). No other exit withdraws.
+        if _last_status == "QUEUED":
+            _withdraw_quietly(_ab, run_id)
+        raise
 
     # THE ORDINARY PATH'S `review_request` CONSUMER (R-076). Before the payload fetch, and
     # whatever the run's outcome: see `_open_acceptances_from_run` for why both.
@@ -11641,9 +12031,11 @@ async def _generate_dagster_stream_inner(
             _card = result["payload"]
         else:
             _card = _failure_card(_run_failure["failed_step"], _run_failure["trace_id"],
-                                  session_expired=_session_expired)
+                                  session_expired=_session_expired,
+                                  stalled_s=_run_failure.get("stalled_s"))
         yield _sse("final_payload", json.dumps(_card))
-    else:
+    elif _last_status != "BUSY":
+        # A BUSY refusal has already said why (the queue is full); no second, generic error.
         yield _perror(
             "Timeout or failed to fetch UI payload.",
             kind="composing",
@@ -11666,7 +12058,7 @@ async def _generate_dagster_stream_inner(
 
 
 def _failure_card(failed_step: str | None, trace_id: str | None,
-                  session_expired: bool = False) -> dict:
+                  session_expired: bool = False, stalled_s: int | None = None) -> dict:
     """The card a failed run ends with when it produced none of its own (ADR-0072 8.1, ruled
     2026-11-15: "On a failed run the BFF delivers a failure card naming the step and the trace id;
     it never stays silent."). An absent value is said to be absent, never invented."""
@@ -11677,6 +12069,13 @@ def _failure_card(failed_step: str | None, trace_id: str | None,
         lines = ["# Your sign-in expired", "",
                  "This answer was waiting for you to sign in again, and the wait ran out, so it "
                  "was not finished. Ask the question again."]
+    elif stalled_s is not None:
+        # The run stopped moving and the stream stopped waiting for it (`_ProgressWatch`).
+        lines = ["# The answer stopped making progress", ""]
+        lines.append(f"It was at step `{step}`, and nothing moved for {stalled_s} seconds, so this "
+                     "answer was ended there. Ask the question again." if step else
+                     f"Nothing moved for {stalled_s} seconds, so this answer was ended. The step it "
+                     "was at was not recorded. Ask the question again.")
     else:
         lines = ["# The answer could not be completed", ""]
         lines.append(f"The run failed at step `{step}`." if step else
